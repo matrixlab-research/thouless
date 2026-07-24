@@ -268,6 +268,58 @@ class WFArray:
             )
         return links
 
+    def berry_connection(
+        self,
+        axis_idx=None,
+        state_idx=None,
+        *,
+        return_unitaries=False,
+        cartesian=False,
+    ):
+        links = self.links(axis_idx=axis_idx, state_idx=state_idx)
+        axes = (
+            np.arange(self.naxes, dtype=int)
+            if axis_idx is None
+            else np.atleast_1d(axis_idx).astype(int)
+        )
+        steps = []
+        for axis in axes:
+            differences = np.array(
+                [
+                    self.mesh.get_axis_range(axis, component)[1]
+                    - self.mesh.get_axis_range(axis, component)[0]
+                    for component in range(self.mesh.dim_total)
+                ]
+            )
+            nonzero = np.flatnonzero(~np.isclose(differences, 0.0))
+            if not len(nonzero):
+                raise ValueError(f"Could not determine step size along axis {axis}")
+            if cartesian:
+                reciprocal_step = (
+                    differences[: self.dim_k] @ self.lattice.recip_lat_vecs
+                    if self.dim_k
+                    else np.empty(0)
+                )
+                parameter_step = differences[self.dim_k :]
+                step = np.linalg.norm(
+                    np.concatenate([reciprocal_step, parameter_step])
+                )
+            else:
+                step = differences[nonzero[0]]
+            steps.append(float(step))
+
+        connection = np.empty_like(links)
+        for direction, step in enumerate(steps):
+            for mesh_index in np.ndindex(self.shape_mesh):
+                link = links[(direction,) + mesh_index]
+                if np.isnan(link).any():
+                    connection[(direction,) + mesh_index] = np.nan + 0j
+                else:
+                    connection[(direction,) + mesh_index] = np.asarray(
+                        _core.link_connection(link.tolist(), step)
+                    )
+        return (connection, links) if return_unitaries else connection
+
     def set_states(self, wfs, is_cell_periodic=True, is_spin_axis_flat=False):
         wfs = np.asarray(wfs, dtype=complex)
         expected = (
@@ -343,26 +395,34 @@ class WFArray:
     def berry_phase(
         self, axis_idx, state_idx=None, berry_evals=False, contin=True
     ):
-        if berry_evals:
-            raise NotImplementedError(
-                "Wilson-loop eigenphases are tracked in "
-                "https://github.com/matrixlab-research/thouless/issues/2"
-            )
         if not 0 <= axis_idx < self.naxes:
             raise ValueError("axis_idx is outside the mesh")
         frames = self.states(state_idx, flatten_spin_axis=True)
         frames = np.moveaxis(frames, axis_idx, 0)
         transverse_shape = frames.shape[1:-2]
-        output = np.empty(transverse_shape, dtype=float)
+        state_count = frames.shape[-2]
+        output_shape = (
+            transverse_shape + (state_count,)
+            if berry_evals
+            else transverse_shape
+        )
+        output = np.empty(output_shape, dtype=float)
         for transverse in np.ndindex(transverse_shape):
             line = frames[(slice(None),) + transverse]
             axis = self.mesh.axes[axis_idx]
             if axis.is_loop and not axis.has_endpoint:
                 closure = line[0] * self._basis_phase(axis_idx)
                 line = np.concatenate([line, closure[np.newaxis]], axis=0)
-            output[transverse] = _core.wilson_phase(line.tolist())
+            output[transverse] = (
+                _core.wilson_eigenphases(line.tolist())
+                if berry_evals
+                else _core.wilson_phase(line.tolist())
+            )
         if contin and output.ndim:
-            for axis in range(output.ndim):
+            continuation_axes = range(
+                output.ndim - 1 if berry_evals else output.ndim
+            )
+            for axis in continuation_axes:
                 output = np.unwrap(output, axis=axis)
         return output.item() if output.ndim == 0 else output
 

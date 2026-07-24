@@ -3,7 +3,12 @@ use pyo3::prelude::*;
 use thouless::differentiation::{finite_difference_uniform, DifferenceScheme};
 use thouless::geometry::ReciprocalPath;
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
-use thouless::topology::{parallel_transport_link, plaquette_flux, wilson_line_phase};
+use thouless::observables::project_diagonal_observable;
+use thouless::spectrum::hermitian_eigensystem;
+use thouless::topology::{
+    connection_from_link, parallel_transport_link, plaquette_flux, wilson_line_phase,
+    wilson_loop_eigenphases,
+};
 use thouless::{Complex64, ComplexMatrix};
 
 type HoppingInput = (usize, usize, Vec<i32>, Vec<Vec<Complex64>>);
@@ -228,6 +233,47 @@ fn transport_link(
 }
 
 #[pyfunction]
+fn wilson_eigenphases(frames: Vec<Vec<Vec<Complex64>>>) -> PyResult<Vec<f64>> {
+    let frames = frames
+        .into_iter()
+        .map(matrix_from_rows)
+        .collect::<PyResult<Vec<_>>>()?;
+    wilson_loop_eigenphases(&frames).map_err(value_error)
+}
+
+#[pyfunction]
+fn link_connection(
+    link: Vec<Vec<Complex64>>,
+    coordinate_step: f64,
+) -> PyResult<Vec<Vec<Complex64>>> {
+    let link = matrix_from_rows(link)?;
+    connection_from_link(&link, coordinate_step)
+        .map(|matrix| matrix_to_rows(&matrix))
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn diagonal_observable_matrix(
+    states: Vec<Vec<Complex64>>,
+    diagonal: Vec<f64>,
+) -> PyResult<Vec<Vec<Complex64>>> {
+    let states = matrix_from_rows(states)?;
+    project_diagonal_observable(&states, &diagonal)
+        .map(|matrix| matrix_to_rows(&matrix))
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn matrix_eigensystem(matrix: Vec<Vec<Complex64>>) -> PyResult<(Vec<f64>, Vec<Vec<Complex64>>)> {
+    let matrix = matrix_from_rows(matrix)?;
+    let solution = hermitian_eigensystem(&matrix, 1.0e-12).map_err(value_error)?;
+    Ok((
+        solution.eigenvalues().to_vec(),
+        matrix_to_rows(solution.eigenvectors()),
+    ))
+}
+
+#[pyfunction]
 fn reciprocal_path(
     primitive_vectors: Vec<Vec<f64>>,
     periodic_axes: Vec<usize>,
@@ -253,6 +299,10 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(wilson_phase, module)?)?;
     module.add_function(wrap_pyfunction!(berry_flux, module)?)?;
     module.add_function(wrap_pyfunction!(transport_link, module)?)?;
+    module.add_function(wrap_pyfunction!(wilson_eigenphases, module)?)?;
+    module.add_function(wrap_pyfunction!(link_connection, module)?)?;
+    module.add_function(wrap_pyfunction!(diagonal_observable_matrix, module)?)?;
+    module.add_function(wrap_pyfunction!(matrix_eigensystem, module)?)?;
     module.add_function(wrap_pyfunction!(reciprocal_path, module)?)?;
     Ok(())
 }

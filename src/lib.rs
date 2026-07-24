@@ -12,11 +12,13 @@ mod error;
 pub mod geometry;
 pub mod matrix;
 pub mod model;
+pub mod observables;
 pub mod spectrum;
 pub mod topology;
 
 pub use error::{
-    DifferentiationError, GeometryError, MatrixError, ModelError, SpectrumError, TopologyError,
+    DifferentiationError, GeometryError, MatrixError, ModelError, ObservableError, SpectrumError,
+    TopologyError,
 };
 pub use matrix::ComplexMatrix;
 pub use num_complex::Complex64;

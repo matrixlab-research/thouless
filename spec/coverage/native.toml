@@ -36,7 +36,7 @@ issue = "https://github.com/matrixlab-research/thouless/issues/1"
 [[capability]]
 id = "geometry.topology"
 description = "Berry geometry, Wilson loops, and topological invariants"
-native_api = "thouless::topology::{parallel_transport_link,wilson_line_phase,plaquette_flux}"
+native_api = "thouless::topology link, Wilson-loop, connection, and flux functions"
 test = "tests/native_topology.rs and pinned PythTB topology/link tests"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/2"
@@ -48,6 +48,14 @@ native_api = "not designed"
 test = "not implemented"
 status = "missing"
 issue = "https://github.com/matrixlab-research/thouless/issues/2"
+
+[[capability]]
+id = "observables.local"
+description = "Projection of local basis observables and position operators"
+native_api = "thouless::observables::project_diagonal_observable"
+test = "tests/native_observables.rs and pinned PythTB position workflows"
+status = "partial"
+issue = "https://github.com/matrixlab-research/thouless/issues/3"
 
 [[capability]]
 id = "transport.steady_state"

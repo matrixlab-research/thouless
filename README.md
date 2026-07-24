@@ -14,10 +14,10 @@ interfaces while calling the same Rust core.
 
 The repository currently implements reusable model construction, dense
 Hermitian assembly, eigensolvers, momentum derivatives, discrete Wilson phases
-and Berry fluxes in Rust, a Python extension, and partial PythTB 2.0
-compatibility. It does not yet implement the complete PythTB surface, complete
-topology and response theory, open-system transport, or the Kwant compatibility
-package.
+and Berry fluxes, reciprocal paths, parallel transport, and local-observable
+projection in Rust, a Python extension, and partial PythTB 2.0 compatibility.
+It does not yet implement the complete PythTB surface, complete topology and
+response theory, open-system transport, or the Kwant compatibility package.
 
 A green CI run currently means:
 

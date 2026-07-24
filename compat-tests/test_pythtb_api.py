@@ -61,3 +61,26 @@ def test_reciprocal_path_uses_cartesian_arc_length() -> None:
     assert points[-1] == pytest.approx([0.5, 0.5])
     assert nodes == pytest.approx([0.0, 0.5 * np.pi, 1.5 * np.pi])
     assert distances[-1] == pytest.approx(nodes[-1])
+
+
+def test_finite_position_projection_uses_rust_observable_core() -> None:
+    pythtb = require_compat_module("pythtb", ISSUE_URL)
+    model = pythtb.tb_model(
+        0,
+        1,
+        lat=[[1.0]],
+        orb=[[0.0], [2.0]],
+    )
+    eigenvectors = np.array(
+        [
+            [1 / np.sqrt(2), 1 / np.sqrt(2)],
+            [1 / np.sqrt(2), -1 / np.sqrt(2)],
+        ],
+        dtype=complex,
+    )
+
+    position = model.position_matrix(eigenvectors, 0)
+    expectation = model.position_expectation(eigenvectors, 0)
+
+    np.testing.assert_allclose(position, [[1.0, -1.0], [-1.0, 1.0]])
+    np.testing.assert_allclose(expectation, [1.0, 1.0])

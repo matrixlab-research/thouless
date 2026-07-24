@@ -343,6 +343,12 @@ pub enum TopologyError {
     IncompatibleFrames,
     /// Consecutive subspaces have a singular overlap.
     SingularOverlap,
+    /// A Wilson-loop eigendecomposition did not converge.
+    EigendecompositionFailed,
+    /// A Berry-connection link must be square.
+    NonSquareLink,
+    /// A Berry-connection coordinate step must be finite and nonzero.
+    InvalidConnectionStep,
 }
 
 impl fmt::Display for TopologyError {
@@ -358,6 +364,16 @@ impl fmt::Display for TopologyError {
                 write!(
                     formatter,
                     "consecutive state subspaces have singular overlap"
+                )
+            }
+            Self::EigendecompositionFailed => {
+                write!(formatter, "Wilson-loop eigendecomposition failed")
+            }
+            Self::NonSquareLink => write!(formatter, "parallel-transport link must be square"),
+            Self::InvalidConnectionStep => {
+                write!(
+                    formatter,
+                    "Berry-connection step must be finite and nonzero"
                 )
             }
         }
@@ -435,3 +451,35 @@ impl fmt::Display for GeometryError {
 }
 
 impl Error for GeometryError {}
+
+/// Errors raised while projecting observables into state subspaces.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ObservableError {
+    /// A state frame must contain at least one state and one basis component.
+    EmptyStateFrame,
+    /// A diagonal observable must provide one value per basis component.
+    InvalidDiagonalLength {
+        /// Required number of values.
+        expected: usize,
+        /// Supplied number of values.
+        actual: usize,
+    },
+    /// An observable value is NaN or infinity.
+    NonFiniteValue,
+}
+
+impl fmt::Display for ObservableError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyStateFrame => write!(formatter, "state frame must be nonempty"),
+            Self::InvalidDiagonalLength { expected, actual } => write!(
+                formatter,
+                "diagonal observable has {actual} values; expected {expected}"
+            ),
+            Self::NonFiniteValue => write!(formatter, "observable values must be finite"),
+        }
+    }
+}
+
+impl Error for ObservableError {}

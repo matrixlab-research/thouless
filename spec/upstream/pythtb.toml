@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 test_root = "tests"
 collection_status = "complete"
 collected_tests = 98
-strict_tests = 65
+strict_tests = 90
 python = "3.12"
 collection_command = "python -m pytest --collect-only -q"
 gap_issue = "https://github.com/matrixlab-research/thouless/issues/4"
@@ -32,7 +32,17 @@ strict_test_files = [
   "tests/test_examples/simple/test_simple.py",
   "tests/test_examples/trestle/test_trestle.py",
   "tests/test_examples/three_site/three_site_cycle/test_three_site_cycle.py",
+  "tests/test_examples/kane_mele/test_kane_mele.py",
+  "tests/test_examples/0dim/test_0dim.py",
+  "tests/test_examples/graphene/cone/test_cone.py",
+  "tests/test_examples/haldane/haldane_bp/test_haldane_bp.py",
+  "tests/test_examples/haldane/haldane_fin/test_haldane_fin.py",
+  "tests/test_examples/haldane/haldane_hwf/test_haldane_hwf.py",
+  "tests/test_examples/three_site/three_site_cycle_fin/test_three_site_cycle_fin.py",
+  "tests/test_tbmodel/test_different_modes.py",
+  "tests/test_tbmodel/test_dimr_dimk_different.py",
+  "tests/test_tbmodel/test_spin.py",
   "tests/test_wfarray/test_mesh_perm_wfa.py",
-  "tests/test_wfarray/test_links.py::test_links_periodic_without_endpoints",
-  "tests/test_wfarray/test_links.py::test_links_zero_out_closed_endpoint",
+  "tests/test_wfarray/test_links.py",
+  "tests/test_wfarray/test_wfa_mutation.py",
 ]

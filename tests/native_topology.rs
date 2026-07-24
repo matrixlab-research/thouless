@@ -1,4 +1,7 @@
-use thouless::topology::{parallel_transport_link, plaquette_flux, wilson_line_phase};
+use thouless::topology::{
+    connection_from_link, parallel_transport_link, plaquette_flux, wilson_line_phase,
+    wilson_loop_eigenphases,
+};
 use thouless::{Complex64, ComplexMatrix};
 
 fn frame(values: &[Complex64]) -> ComplexMatrix {
@@ -75,4 +78,32 @@ fn parallel_transport_link_is_unitary_for_rotated_frames() {
             assert!((product - Complex64::new(expected, 0.0)).norm() < 1.0e-12);
         }
     }
+}
+
+#[test]
+fn wilson_eigenphases_resolve_multiband_transport() {
+    let angle = 0.4;
+    let first = ComplexMatrix::identity(2);
+    let second = ComplexMatrix::new(
+        2,
+        2,
+        vec![
+            Complex64::from_polar(1.0, angle),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::from_polar(1.0, -angle),
+        ],
+    )
+    .unwrap();
+    let phases = wilson_loop_eigenphases(&[first, second]).unwrap();
+    assert!((phases[0] + angle).abs() < 1.0e-12);
+    assert!((phases[1] - angle).abs() < 1.0e-12);
+}
+
+#[test]
+fn unitary_link_logarithm_produces_hermitian_connection() {
+    let link = ComplexMatrix::scalar(Complex64::from_polar(1.0, 0.2));
+    let connection = connection_from_link(&link, 0.1).unwrap();
+    assert!((connection.get(0, 0).unwrap() - Complex64::new(-2.0, 0.0)).norm() < 1.0e-12);
+    assert!(connection.is_hermitian(1.0e-12).unwrap());
 }

@@ -591,6 +591,61 @@ class TBModel:
             k_list, return_eigvecs=eig_vectors, flatten_spin_axis=False
         )
 
+    def position_matrix(self, evecs, pos_dir):
+        if pos_dir in self.periodic_dirs:
+            raise ValueError(
+                "Can not compute position matrix elements along periodic direction!"
+            )
+        if not 0 <= pos_dir < self.dim_r:
+            raise ValueError("Direction out of range!")
+        if not isinstance(evecs, np.ndarray):
+            raise TypeError("evec must be a numpy array.")
+        expected_dimension = 3 if self.spinful else 2
+        if evecs.ndim != expected_dimension:
+            raise ValueError(
+                "evec has the wrong rank for the model's spin configuration"
+            )
+        states = evecs.reshape(evecs.shape[0], -1)
+        positions = np.repeat(self.orb_vecs[:, pos_dir], self.nspin)
+        return np.asarray(
+            _core.diagonal_observable_matrix(
+                states.tolist(),
+                positions.tolist(),
+            ),
+            dtype=complex,
+        )
+
+    def position_expectation(self, evecs, pos_dir):
+        matrix = self.position_matrix(evecs, pos_dir)
+        return np.asarray(np.real(np.diag(matrix)), dtype=float)
+
+    def position_hwf(
+        self,
+        evecs,
+        pos_dir,
+        hwf_evec=False,
+        basis="orbital",
+    ):
+        position = self.position_matrix(evecs, pos_dir)
+        centers, eigenvectors = _core.matrix_eigensystem(position.tolist())
+        centers = np.asarray(centers, dtype=float)
+        if not hwf_evec:
+            return centers
+        hybrid = np.asarray(eigenvectors, dtype=complex).T
+        normalized_basis = basis.lower().strip()
+        if normalized_basis in ("wavefunction", "bloch"):
+            return centers, hybrid
+        if normalized_basis != "orbital":
+            raise ValueError(
+                "Basis must be either 'wavefunction', 'bloch', or 'orbital'"
+            )
+        orbital_hybrid = hybrid @ evecs.reshape(evecs.shape[0], -1)
+        if self.spinful:
+            orbital_hybrid = orbital_hybrid.reshape(
+                hybrid.shape[0], self.norb, self.nspin
+            )
+        return centers, orbital_hybrid
+
     def k_uniform_mesh(self, mesh_size):
         sizes = tuple(int(size) for size in mesh_size)
         if len(sizes) != self.dim_k:

@@ -1,5 +1,6 @@
 //! Gauge-invariant discrete topology for sampled state subspaces.
 
+use nalgebra::linalg::Schur;
 use nalgebra::DMatrix;
 
 use crate::{Complex64, ComplexMatrix, TopologyError};
@@ -75,6 +76,75 @@ pub fn parallel_transport_link(
     }
     ComplexMatrix::new(link.nrows(), link.ncols(), entries)
         .map_err(|_| TopologyError::IncompatibleFrames)
+}
+
+/// Returns the ordered Wilson-loop unitary for a sampled state-frame path.
+pub fn wilson_loop_unitary(frames: &[ComplexMatrix]) -> Result<ComplexMatrix, TopologyError> {
+    validate_frames(frames)?;
+    let state_count = frames[0].rows();
+    let mut loop_unitary = DMatrix::<Complex64>::identity(state_count, state_count);
+    for pair in frames.windows(2) {
+        let link = parallel_transport_link(&pair[0], &pair[1])?;
+        let link = DMatrix::from_row_slice(state_count, state_count, link.as_slice());
+        loop_unitary *= link;
+    }
+    let mut entries = Vec::with_capacity(state_count * state_count);
+    for row in 0..state_count {
+        for column in 0..state_count {
+            entries.push(loop_unitary[(row, column)]);
+        }
+    }
+    ComplexMatrix::new(state_count, state_count, entries)
+        .map_err(|_| TopologyError::IncompatibleFrames)
+}
+
+/// Returns sorted negative phases of the Wilson-loop eigenvalues.
+pub fn wilson_loop_eigenphases(frames: &[ComplexMatrix]) -> Result<Vec<f64>, TopologyError> {
+    let loop_unitary = wilson_loop_unitary(frames)?;
+    let matrix = DMatrix::from_row_slice(
+        loop_unitary.rows(),
+        loop_unitary.columns(),
+        loop_unitary.as_slice(),
+    );
+    let eigenvalues = matrix
+        .eigenvalues()
+        .ok_or(TopologyError::EigendecompositionFailed)?;
+    let mut phases: Vec<f64> = eigenvalues.iter().map(|value| -value.arg()).collect();
+    phases.sort_by(f64::total_cmp);
+    Ok(phases)
+}
+
+/// Converts a unitary parallel-transport link into a Hermitian connection.
+///
+/// The principal matrix logarithm is evaluated through the complex Schur
+/// decomposition, giving `A = -log(U) / (i Δκ)`.
+pub fn connection_from_link(
+    link: &ComplexMatrix,
+    coordinate_step: f64,
+) -> Result<ComplexMatrix, TopologyError> {
+    if link.rows() != link.columns() {
+        return Err(TopologyError::NonSquareLink);
+    }
+    if !coordinate_step.is_finite() || coordinate_step == 0.0 {
+        return Err(TopologyError::InvalidConnectionStep);
+    }
+    let dimension = link.rows();
+    let matrix = DMatrix::from_row_slice(dimension, dimension, link.as_slice());
+    let (vectors, triangular) = Schur::new(matrix).unpack();
+    let mut phases = DMatrix::<Complex64>::zeros(dimension, dimension);
+    for index in 0..dimension {
+        phases[(index, index)] =
+            Complex64::new(-triangular[(index, index)].arg() / coordinate_step, 0.0);
+    }
+    let connection = &vectors * phases * vectors.adjoint();
+    let mut entries = Vec::with_capacity(dimension * dimension);
+    for row in 0..dimension {
+        for column in 0..dimension {
+            entries.push(connection[(row, column)]);
+        }
+    }
+    ComplexMatrix::new(dimension, dimension, entries)
+        .map_err(|_| TopologyError::EigendecompositionFailed)
 }
 
 fn validate_frames(frames: &[ComplexMatrix]) -> Result<(), TopologyError> {
