@@ -223,15 +223,23 @@ def _solution(syst, energy, args, params, channel_counts=None):
     counts = []
     for index, lead in enumerate(syst.leads):
         if hasattr(lead, "modes"):
-            count = (
-                len(
-                    lead.modes(
-                        energy, args=args, params=params
-                    )[0].momenta
-                )
-                // 2
+            propagating, stabilized = lead.modes(
+                energy, args=args, params=params
             )
+            count = len(propagating.momenta) // 2
             counts.append(count)
+            if getattr(lead, "_uses_stabilized_selfenergy", False):
+                interface_selfenergy = np.asarray(
+                    stabilized.selfenergy(),
+                    dtype=complex,
+                )
+                selfenergies[index] = _embed_interface_matrix(
+                    syst,
+                    index,
+                    interface_selfenergy,
+                    args,
+                    params,
+                )
             gamma = 1j * (
                 selfenergies[index] - selfenergies[index].conj().T
             )
@@ -387,17 +395,40 @@ def _mode_factors(syst, lead_info, selfenergies, args, params):
     offsets = syst._site_slices(args, params)
     incoming = []
     outgoing = []
-    for data, info, selfenergy, interface in zip(
-        lead_data,
-        lead_info,
-        selfenergies,
-        syst.lead_interfaces,
-        strict=True,
+    for index, (data, info, selfenergy, interface) in enumerate(
+        zip(
+            lead_data,
+            lead_info,
+            selfenergies,
+            syst.lead_interfaces,
+            strict=True,
+        )
     ):
         if not hasattr(info, "momenta"):
             empty = np.empty((device.shape[0], 0), dtype=complex)
             incoming.append(empty)
             outgoing.append(empty)
+            continue
+        if getattr(
+            syst.leads[index],
+            "_uses_stabilized_selfenergy",
+            False,
+        ):
+            gamma = 1j * (
+                np.asarray(selfenergy)
+                - np.asarray(selfenergy).conj().T
+            )
+            eigenvalues, eigenvectors = np.linalg.eigh(
+                0.5 * (gamma + gamma.conj().T)
+            )
+            mode_count = len(info.momenta) // 2
+            order = np.argsort(eigenvalues)[::-1][:mode_count]
+            factors = (
+                eigenvectors[:, order]
+                * np.sqrt(np.maximum(eigenvalues[order], 0.0))
+            )
+            incoming.append(factors)
+            outgoing.append(factors)
             continue
         coupling = np.asarray(data[2], dtype=complex)
         sigma = np.asarray(selfenergy, dtype=complex)

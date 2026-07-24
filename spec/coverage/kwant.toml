@@ -14,14 +14,16 @@ source_entries = [
   "Builder",
   "TranslationalSymmetry",
   "HoppingKind",
+  "ModesLead",
+  "SelfEnergyLead",
   "FiniteSystem",
   "InfiniteSystem",
 ]
 compat_entry = "python/kwant"
 rust_capability = "model.structure"
 public_test = "compat-tests/test_kwant_api.py"
-source_test = "pinned builder construction, symmetry, finalization, Hamiltonian, sparse-submatrix, pickling, fill, dangling, and hopping-kind tests"
-actual_result = "22 passed"
+source_test = "complete pinned builder module: construction, key validation, symmetry operators, finalization, Hamiltonian, parameter binding and renaming, low-level and automatically attached leads, lead padding, Peierls phase insertion, sparse-submatrix, pickling, fill, dangling, and hopping-kind behavior"
+actual_result = "32 source tests passed"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
@@ -31,8 +33,8 @@ source_entries = ["general", "chain", "square", "triangular", "honeycomb", "cubi
 compat_entry = "python/kwant/lattice"
 rust_capability = "model.structure"
 public_test = "compat-tests/test_kwant_api.py"
-source_test = "pinned lattice construction, neighbors, constraints, and norbs tests"
-actual_result = "16 passed"
+source_test = "complete pinned lattice module: construction, neighbors, constraints, exact translational fundamental domains, reversal, and norbs"
+actual_result = "18 source tests passed"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
@@ -53,8 +55,8 @@ source_entries = ["Bands", "modes", "selfenergy", "PropagatingModes", "Stabilize
 compat_entry = "python/kwant/physics"
 rust_capability = "transport.steady_state"
 public_test = "pinned infinite-system operator workflow"
-source_test = "pinned sparse-solver modes, self-energy, singular-lead, and precalculation workflows"
-actual_result = "lead modes and projected zero-broadening self-energies exercised by 16 sparse-solver source tests"
+source_test = "complete pinned band-dispersion module plus low-level modes/self-energy lead replacement and sparse-solver modes, self-energy, singular-lead, and precalculation workflows"
+actual_result = "7 band-dispersion, 1 low-level lead-protocol, and 16 sparse-solver source tests passed"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
@@ -66,6 +68,17 @@ rust_capability = "transport.steady_state"
 public_test = "compat-tests/test_kwant_api.py"
 source_test = "complete pinned operator module: construction, finite/infinite continuity, scattering and spin currents, gauge covariance, sparse matrices, parameter binding, and pickling"
 actual_result = "13 source tests and entry-point smoke passed"
+status = "partial"
+issue = "https://github.com/matrixlab-research/thouless/issues/5"
+
+[[interface]]
+name = "transport statistics"
+source_entries = ["two_terminal_shotnoise"]
+compat_entry = "python/kwant/physics"
+rust_capability = "transport.steady_state"
+public_test = "pinned two-terminal scattering workflow"
+source_test = "complete pinned shot-noise module"
+actual_result = "2 source tests passed"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 

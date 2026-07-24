@@ -11,7 +11,7 @@ test_modules = 24
 static_test_functions = 241
 collection_status = "blocked"
 collection_blocker = "The source test suite imports compiled Cython extensions before collection."
-strict_tests = 67
+strict_tests = 89
 strict_test_nodes = [
   "kwant/tests/test_lattice.py::test_closest",
   "kwant/tests/test_lattice.py::test_general",
@@ -23,7 +23,10 @@ strict_test_nodes = [
   "kwant/tests/test_lattice.py::test_lattice_constraints",
   "kwant/tests/test_lattice.py::test_symmetry_act",
   "kwant/tests/test_lattice.py::test_symmetry_has_subgroup",
+  "kwant/tests/test_lattice.py::test_translational_symmetry",
+  "kwant/tests/test_lattice.py::test_translational_symmetry_reversed",
   "kwant/tests/test_builder.py::test_site_families",
+  "kwant/tests/test_builder.py::test_bad_keys",
   "kwant/tests/test_builder.py::test_construction_and_indexing",
   "kwant/tests/test_builder.py::test_hermitian_conjugation",
   "kwant/tests/test_builder.py::test_value_equality_and_identity",
@@ -35,11 +38,21 @@ strict_test_nodes = [
   "kwant/tests/test_builder.py::test_builder_with_symmetry",
   "kwant/tests/test_builder.py::test_HoppingKind",
   "kwant/tests/test_builder.py::test_invalid_HoppingKind",
+  "kwant/tests/test_builder.py::test_ModesLead_and_SelfEnergyLead",
   "kwant/tests/test_builder.py::test_neighbors_not_in_single_domain",
   "kwant/tests/test_builder.py::test_update",
   "kwant/tests/test_builder.py::test_site_pickle",
   "kwant/tests/test_builder.py::test_fill",
+  "kwant/tests/test_builder.py::test_fill_sticky",
+  "kwant/tests/test_builder.py::test_attach_lead",
+  "kwant/tests/test_builder.py::test_attach_lead_incomplete_unit_cell",
   "kwant/tests/test_builder.py::test_closest",
+  "kwant/tests/test_builder.py::test_argument_passing",
+  "kwant/tests/test_builder.py::test_discrete_symmetries",
+  "kwant/tests/test_builder.py::test_parameter_substitution",
+  "kwant/tests/test_builder.py::test_subs",
+  "kwant/tests/test_builder.py::test_finalization_preserves_padding",
+  "kwant/tests/test_builder.py::test_add_peierls_phase",
   "kwant/tests/test_system.py::test_hamiltonian_submatrix",
   "kwant/tests/test_system.py::test_pickling",
   "kwant/tests/test_operator.py::test_operator_construction",
@@ -67,5 +80,7 @@ strict_test_nodes = [
   "kwant/solvers/tests/test_solvers.py::test_ldos[sparse()]",
   "kwant/solvers/tests/test_solvers.py::test_wavefunc_ldos_consistency[sparse()]",
   "kwant/solvers/tests/test_solvers.py::test_arg_passing[sparse()]",
+  "kwant/physics/tests/test_dispersion.py",
+  "kwant/physics/tests/test_noise.py",
 ]
 gap_issue = "https://github.com/matrixlab-research/thouless/issues/5"

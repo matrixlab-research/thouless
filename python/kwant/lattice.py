@@ -262,35 +262,98 @@ class TranslationalSymmetry(Symmetry):
         if np.linalg.matrix_rank(array) < array.shape[0]:
             raise ValueError("Translation periods must be linearly independent.")
         self.periods = array
-        self._family_periods = {}
+        self.site_family_data = {}
+        self.is_reversed = False
 
     @property
     def num_directions(self):
         return len(self.periods)
 
     def add_site_family(self, family, other_vectors=None):
-        if family in self._family_periods:
+        if family in self.site_family_data:
             return
-        reduced = self.periods @ np.linalg.pinv(family.prim_vecs)
-        rounded = np.rint(reduced)
-        if not np.allclose(reduced, rounded, atol=1e-8) or not np.allclose(
-            rounded @ family.prim_vecs, self.periods, atol=1e-8
+        primitive = np.asarray(family.prim_vecs, dtype=float)
+        if self.periods.shape[1] != primitive.shape[1]:
+            raise ValueError(
+                "Lattice and symmetry have different spatial dimensions"
+            )
+        lattice_periods = self.periods @ np.linalg.pinv(primitive)
+        integer_periods = np.rint(lattice_periods).astype(int)
+        if not np.allclose(
+            lattice_periods, integer_periods, atol=1e-8
+        ) or not np.allclose(
+            integer_periods @ primitive, self.periods, atol=1e-8
         ):
             raise ValueError("Symmetry periods are not commensurate with the lattice.")
-        self._family_periods[family] = rounded.astype(int)
+
+        lattice_dimension = primitive.shape[0]
+        columns = [
+            np.asarray(period, dtype=int)
+            for period in integer_periods
+        ]
+        if other_vectors is not None:
+            other_vectors = np.asarray(other_vectors)
+            if other_vectors.ndim != 2:
+                raise ValueError("other_vectors must be a two-dimensional array")
+            if not np.all(other_vectors == np.rint(other_vectors)):
+                raise ValueError("other_vectors must contain only integers")
+            columns.extend(
+                np.asarray(vector, dtype=int)
+                for vector in other_vectors
+            )
+        if (
+            len(columns) > lattice_dimension
+            or np.linalg.matrix_rank(np.column_stack(columns))
+            < len(columns)
+        ):
+            raise ValueError(
+                "Symmetry periods and other_vectors must be independent"
+            )
+        for axis in range(lattice_dimension):
+            if len(columns) == lattice_dimension:
+                break
+            candidate = np.eye(lattice_dimension, dtype=int)[:, axis]
+            trial = np.column_stack([*columns, candidate])
+            if np.linalg.matrix_rank(trial) > len(columns):
+                columns.append(candidate)
+        basis = np.column_stack(columns)
+        determinant = int(round(np.linalg.det(basis)))
+        if determinant == 0:
+            raise ValueError("Could not construct a lattice fundamental domain")
+        adjugate = np.rint(
+            determinant * np.linalg.inv(basis)
+        ).astype(int)
+        if determinant < 0:
+            determinant = -determinant
+            adjugate = -adjugate
+        direction_count = self.num_directions
+        self.site_family_data[family] = (
+            ta.array(basis[:, :direction_count], int),
+            ta.array(adjugate[:direction_count, :], int),
+            determinant,
+        )
 
     def tag_period(self, family):
         self.add_site_family(family)
-        periods = self._family_periods[family]
-        if len(periods) != 1:
+        periods = self.site_family_data[family][0]
+        if periods.shape[1] != 1:
             raise NotImplementedError("Only one-dimensional lead symmetry is implemented")
-        return periods[0]
+        period = np.asarray(periods)[:, 0]
+        return -period if self.is_reversed else period
 
     def which(self, site):
         self.add_site_family(site.family)
-        periods = self._family_periods[site.family]
-        coefficients = np.linalg.lstsq(periods.T, np.asarray(site.tag), rcond=None)[0]
-        return tuple(np.floor(coefficients + 1e-10).astype(int))
+        _, adjugate_rows, determinant = self.site_family_data[
+            site.family
+        ]
+        numerators = (
+            np.asarray(adjugate_rows, dtype=int)
+            @ np.asarray(site.tag, dtype=int)
+        )
+        result = np.floor_divide(numerators, determinant)
+        if self.is_reversed:
+            result = -result
+        return ta.array(result, int)
 
     def act(self, element, a, b=None):
         raw_element = np.asarray(element)
@@ -303,7 +366,12 @@ class TranslationalSymmetry(Symmetry):
 
         def shifted(site):
             self.add_site_family(site.family)
-            delta = element @ self._family_periods[site.family]
+            periods = np.asarray(
+                self.site_family_data[site.family][0], dtype=int
+            )
+            delta = periods @ element
+            if self.is_reversed:
+                delta = -delta
             return site.family(*(np.asarray(site.tag) + delta))
 
         return shifted(a) if b is None else (shifted(a), shifted(b))
@@ -316,7 +384,10 @@ class TranslationalSymmetry(Symmetry):
         return first, self.act(tuple(-value for value in element), b)
 
     def reversed(self):
-        return type(self)(*(-self.periods))
+        result = type(self)(*(-self.periods))
+        result.site_family_data = self.site_family_data
+        result.is_reversed = not self.is_reversed
+        return result
 
     def has_subgroup(self, other):
         if isinstance(other, type(None)):

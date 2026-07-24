@@ -6,8 +6,8 @@ import copy
 import inspect
 import itertools
 import warnings
-from collections import OrderedDict, deque
-from functools import total_ordering
+from collections import Counter, OrderedDict, deque
+from functools import total_ordering, update_wrapper
 
 import numpy as np
 
@@ -16,6 +16,10 @@ from thouless import _core
 
 class UserCodeError(RuntimeError):
     """Exception raised when a user-supplied value function fails."""
+
+
+class _ParameterError(TypeError):
+    """Invalid framework-level parameter binding."""
 
 
 class HermConjOfFunc:
@@ -32,6 +36,178 @@ class HermConjOfFunc:
     @property
     def __signature__(self):
         return inspect.signature(self.function)
+
+
+class _Substituted:
+    """Callable view that gives a value function new parameter names."""
+
+    def __init__(self, func, params):
+        self.func = func
+        self.params = tuple(params)
+        update_wrapper(self, func)
+
+    def __eq__(self, other):
+        return (
+            isinstance(other, _Substituted)
+            and self.func == other.func
+            and self.params == other.params
+        )
+
+    def __hash__(self):
+        return hash((self.func, self.params))
+
+    @property
+    def __signature__(self):
+        original = inspect.signature(self.func)
+        return original.replace(
+            parameters=[
+                parameter.replace(name=name)
+                for parameter, name in zip(
+                    original.parameters.values(), self.params, strict=True
+                )
+            ]
+        )
+
+    def __call__(self, *args, **kwargs):
+        original_names = tuple(inspect.signature(self.func).parameters)
+        renamed = dict(zip(self.params, original_names, strict=True))
+        translated = {renamed.get(name, name): value for name, value in kwargs.items()}
+        return self.func(*args, **translated)
+
+
+def _substitute_params(func, substitutions):
+    """Return a callable with parameter names changed simultaneously."""
+
+    if not callable(func):
+        raise TypeError("Parameter substitution requires a callable value")
+    if isinstance(func, _Substituted):
+        old_params = func.params
+        base_func = func.func
+    else:
+        old_params = tuple(inspect.signature(func).parameters)
+        base_func = func
+    new_params = tuple(substitutions.get(name, name) for name in old_params)
+    duplicates = sorted(
+        name for name, count in Counter(new_params).items() if count > 1
+    )
+    if duplicates:
+        duplicate_names = ", ".join(repr(name) for name in duplicates)
+        raise ValueError(
+            "Cannot rename parameters "
+            f"{duplicate_names}: parameters with the same name exist"
+        )
+    if new_params == old_params:
+        return func
+    return _Substituted(base_func, new_params)
+
+
+def _value_parameters(value, site_arguments):
+    """Return the explicit scientific parameters of a value callable."""
+
+    if not callable(value):
+        return frozenset()
+    try:
+        parameters = tuple(inspect.signature(value).parameters.values())
+    except (TypeError, ValueError):
+        return None
+    if any(
+        parameter.kind
+        in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        for parameter in parameters
+    ):
+        return None
+    return frozenset(parameter.name for parameter in parameters[site_arguments:])
+
+
+def _builder_parameters(builder):
+    """Collect all named parameters required by a builder's value functions."""
+
+    result = set()
+    values = itertools.chain(
+        ((value, 1) for value in builder._sites.values()),
+        ((value, 2) for value in builder._hoppings.values()),
+    )
+    for value, site_arguments in values:
+        parameters = _value_parameters(value, site_arguments)
+        if parameters is None:
+            return None
+        result.update(parameters)
+    return frozenset(result)
+
+
+def _site_operator(specification, sites, args, params, *, default=0):
+    """Assemble an onsite operator over the orbital basis of ``sites``."""
+
+    from scipy import sparse as scipy_sparse
+
+    orbital_counts = [site.family.norbs for site in sites]
+    if any(count is None for count in orbital_counts):
+        raise ValueError("Discrete symmetries require site orbital counts")
+    total = sum(orbital_counts)
+
+    if not callable(specification) and not isinstance(specification, dict):
+        array = np.asarray(specification)
+        if array.ndim == 0:
+            return scipy_sparse.identity(total, dtype=complex) * array
+        if array.shape == (total, total):
+            return scipy_sparse.csr_matrix(array)
+
+    blocks = []
+    for site, orbitals in zip(sites, orbital_counts, strict=True):
+        if isinstance(specification, dict):
+            value = specification.get(site.family, default)
+        elif callable(specification):
+            value = _evaluate(specification, (site,), args, params)
+        else:
+            value = specification
+        array = np.asarray(value)
+        if array.ndim == 0:
+            array = complex(array) * np.eye(orbitals)
+        if array.shape != (orbitals, orbitals):
+            raise ValueError(
+                "Discrete-symmetry onsite block has incompatible shape"
+            )
+        blocks.append(scipy_sparse.csr_matrix(array))
+    return scipy_sparse.block_diag(blocks, format="csr")
+
+
+def _discrete_symmetry(builder, sites, args, params):
+    from .physics import DiscreteSymmetry
+
+    projectors = None
+    if builder.conservation_law is not None:
+        law = _site_operator(
+            builder.conservation_law,
+            sites,
+            args,
+            params,
+        ).toarray()
+        eigenvalues, eigenvectors = np.linalg.eigh(law)
+        rounded = np.rint(eigenvalues)
+        if not np.allclose(eigenvalues, rounded):
+            raise ValueError("Conservation law must have integer eigenvalues")
+        projectors = [
+            eigenvectors[:, rounded == eigenvalue]
+            for eigenvalue in sorted(set(rounded))
+        ]
+
+    operators = []
+    for specification in (
+        builder.time_reversal,
+        builder.particle_hole,
+        builder.chiral,
+    ):
+        operators.append(
+            None
+            if specification is None
+            else _site_operator(
+                specification,
+                sites,
+                args,
+                params,
+            )
+        )
+    return DiscreteSymmetry(projectors, *operators)
 
 
 def _conjugate(value):
@@ -235,6 +411,59 @@ class BuilderLead:
         return InfiniteSystem(self.builder, self.interface)
 
 
+def _ensure_lead_signature(function):
+    """Adapt the legacy ``(energy, args)`` lead callback convention."""
+
+    parameters = inspect.signature(function).parameters.values()
+    if any(
+        parameter.name == "params"
+        or parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    ):
+        return function
+
+    def wrapper(energy, args=(), *, params=None):
+        return function(energy, args)
+
+    return wrapper
+
+
+class SelfEnergyLead:
+    """Lead defined by a retarded self-energy callback."""
+
+    def __init__(self, selfenergy_func, interface, parameters):
+        self.selfenergy_func = _ensure_lead_signature(selfenergy_func)
+        self.interface = tuple(interface)
+        self.parameters = frozenset(parameters)
+
+    def finalized(self):
+        return self
+
+    def selfenergy(self, energy, args=(), *, params=None):
+        return self.selfenergy_func(energy, args, params=params)
+
+
+class ModesLead:
+    """Lead defined by propagating and stabilized mode callbacks."""
+
+    _uses_stabilized_selfenergy = True
+
+    def __init__(self, modes_func, interface, parameters):
+        self.modes_func = _ensure_lead_signature(modes_func)
+        self.interface = tuple(interface)
+        self.parameters = frozenset(parameters)
+
+    def finalized(self):
+        return self
+
+    def modes(self, energy, args=(), *, params=None):
+        return self.modes_func(energy, args, params=params)
+
+    def selfenergy(self, energy, args=(), *, params=None):
+        stabilized = self.modes(energy, args=args, params=params)[1]
+        return stabilized.selfenergy()
+
+
 class _Graph:
     def __init__(self, node_count, undirected_edges):
         self.num_nodes = int(node_count)
@@ -279,14 +508,14 @@ def _evaluate(value, sites, args, params):
     if not callable(value):
         return value
     if args and params is not None:
-        raise TypeError("'args' and 'params' are mutually exclusive")
+        raise _ParameterError("'args' and 'params' are mutually exclusive")
     if params is None:
         return value(*sites, *args)
     signature = inspect.signature(value)
     names = list(signature.parameters)[len(sites) :]
     missing = [name for name in names if name not in params]
     if missing:
-        raise TypeError(f"Missing required arguments: {missing}")
+        raise _ParameterError(f"Missing required arguments: {missing}")
     return value(*sites, **{name: params[name] for name in names})
 
 
@@ -427,6 +656,12 @@ class Builder:
             keys = list(key)
         except TypeError as error:
             raise TypeError("Builder key is not a site, hopping, or iterable") from error
+        if keys and any(isinstance(item, Site) for item in keys) and not all(
+            isinstance(item, Site) for item in keys
+        ):
+            raise TypeError(
+                "A Builder key sequence cannot mix sites and hoppings"
+            )
         for item in keys:
             self[item] = value
 
@@ -446,7 +681,14 @@ class Builder:
         if callable(key):
             del self[key(self)]
             return
-        for item in list(key):
+        keys = list(key)
+        if keys and any(isinstance(item, Site) for item in keys) and not all(
+            isinstance(item, Site) for item in keys
+        ):
+            raise TypeError(
+                "A Builder key sequence cannot mix sites and hoppings"
+            )
+        for item in keys:
             del self[item]
 
     def sites(self):
@@ -535,6 +777,57 @@ class Builder:
         for hopping, value in other.hopping_value_pairs():
             self[hopping] = value
         self.leads.extend(other.leads)
+
+    def substituted(self, **substitutions):
+        """Return a copy whose value-function parameters have new names."""
+
+        if self.leads:
+            raise ValueError(
+                "Parameter substitution must be done before attaching leads"
+            )
+
+        callable_values = []
+        seen = set()
+        system_parameters = set()
+        for values, site_arguments in (
+            (self._sites.values(), 1),
+            (self._hoppings.values(), 2),
+        ):
+            for value in values:
+                if not callable(value):
+                    continue
+                identity = id(value)
+                if identity not in seen:
+                    seen.add(identity)
+                    callable_values.append(value)
+                parameters = _value_parameters(value, site_arguments)
+                if parameters is not None:
+                    system_parameters.update(parameters)
+
+        unused = set(substitutions).difference(system_parameters)
+        if unused:
+            warnings.warn(
+                "Parameters "
+                f"{unused} are not used by any onsite or hopping value "
+                "function in this system.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+        replacements = {
+            id(value): _substitute_params(value, substitutions)
+            for value in callable_values
+        }
+        result = copy.copy(self)
+        result._sites = OrderedDict(
+            (site, replacements.get(id(value), value))
+            for site, value in self._sites.items()
+        )
+        result._hoppings = OrderedDict(
+            (hopping, replacements.get(id(value), value))
+            for hopping, value in self._hoppings.items()
+        )
+        return result
 
     def closest(self, position):
         position = np.asarray(position, dtype=float)
@@ -632,7 +925,8 @@ class Builder:
                 if site in processed:
                     continue
                 processed.add(site)
-                if site not in self:
+                site_was_present = site in self
+                if not site_was_present:
                     self[site] = template[site]
                     added.append(site)
                     if len(added) > max_sites:
@@ -688,7 +982,6 @@ class Builder:
                         neighbor_fd in self
                         and neighbor_fd not in processed
                         and neighbor_fd not in queued
-                        and shape(neighbor_fd)
                     ):
                         queue.append(neighbor_fd)
                         queued.add(neighbor_fd)
@@ -710,13 +1003,116 @@ class Builder:
             raise
 
     def attach_lead(self, lead_builder, origin=None, add_cells=0):
-        if not isinstance(lead_builder, Builder) or not lead_builder.symmetry.num_directions:
+        if self.symmetry.num_directions:
+            raise ValueError("Leads can only be attached to finite builders")
+        if not isinstance(lead_builder, Builder):
+            raise ValueError("A lead must be a Builder with translational symmetry")
+        if add_cells < 0 or int(add_cells) != add_cells:
+            raise ValueError("add_cells must be a non-negative integer")
+        if not lead_builder.symmetry.num_directions:
             raise ValueError("A lead must be a Builder with translational symmetry")
         if lead_builder.symmetry.num_directions != 1:
             raise ValueError("A lead must have exactly one translational direction")
-        interface = self._interface_sites(lead_builder, origin)
-        self.leads.append(BuilderLead(copy.copy(lead_builder), interface))
-        return []
+
+        symmetry = lead_builder.symmetry
+        hopping_range = max(
+            (
+                abs(int(symmetry.which(second)[0]))
+                for _, second in lead_builder.hoppings()
+            ),
+            default=0,
+        )
+        if hopping_range > 1:
+            expanded = Builder(
+                symmetry.subgroup((hopping_range,)),
+                conservation_law=lead_builder.conservation_law,
+                time_reversal=lead_builder.time_reversal,
+                particle_hole=lead_builder.particle_hole,
+                chiral=lead_builder.chiral,
+            )
+            expanded.fill(
+                lead_builder,
+                lambda site: True,
+                list(lead_builder.sites()),
+                max_sites=float("inf"),
+            )
+            lead_builder = expanded
+            symmetry = expanded.symmetry
+
+        lead_sites = tuple(lead_builder.sites())
+        if not lead_sites:
+            raise ValueError("Lead to be attached contains no sites")
+        lead_families = {site.family for site in lead_sites}
+        system_families = {site.family for site in self.sites()}
+        missing_families = lead_families.difference(system_families)
+        if missing_families:
+            raise ValueError(
+                "Lead site families do not appear in the scattering region: "
+                f"{tuple(missing_families)}"
+            )
+
+        domains = {
+            int(symmetry.which(site)[0])
+            for site in self.sites()
+            if site.family in lead_families
+            and symmetry.to_fd(site) in lead_builder
+        }
+        if origin is not None:
+            origin_domain = int(symmetry.which(origin)[0])
+            domains = {
+                domain for domain in domains if domain <= origin_domain
+            }
+        if not domains:
+            raise ValueError("Builder does not intersect with the lead")
+        original_maximum_domain = max(domains)
+        maximum_domain = original_maximum_domain + int(add_cells)
+        minimum_domain = min(domains)
+
+        def lead_shape(site):
+            domain = int(symmetry.which(site)[0])
+            if domain < minimum_domain:
+                return False
+            return domain <= maximum_domain + 1
+
+        next_cell = {
+            symmetry.act((maximum_domain + 1,), site)
+            for site in lead_sites
+        }
+        all_added = self.fill(
+            lead_builder,
+            lead_shape,
+            next_cell,
+            max_sites=float("inf"),
+        )
+        del self[next_cell]
+
+        interface = set()
+        for site in lead_sites:
+            for neighbor in lead_builder.neighbors(site):
+                translated = symmetry.act(
+                    (maximum_domain + 1,),
+                    neighbor,
+                )
+                if int(symmetry.which(translated)[0]) == maximum_domain:
+                    interface.add(translated)
+        added = [
+            site
+            for site in all_added
+            if site not in next_cell
+            and (
+                site in interface
+                or original_maximum_domain
+                < int(symmetry.which(site)[0])
+                <= maximum_domain
+            )
+        ]
+        unwanted = set(all_added).difference(next_cell, added)
+        if unwanted:
+            del self[unwanted]
+        self.leads.append(
+            BuilderLead(lead_builder, interface, added)
+        )
+        return added
 
     def _interface_sites(self, lead, origin=None):
         lead_sites = tuple(lead.sites())
@@ -769,6 +1165,7 @@ class InfiniteSystem:
     def __init__(self, builder, interface_order=None):
         self._builder = copy.copy(builder)
         self.symmetry = builder.symmetry
+        self.parameters = _builder_parameters(builder)
         if self.symmetry.num_directions != 1:
             raise ValueError(
                 "Infinite systems require exactly one translational direction"
@@ -867,6 +1264,8 @@ class InfiniteSystem:
             self.hoppings.append((Other, None))
 
     def hamiltonian(self, first, second, *args, params=None):
+        if args and params is not None:
+            raise TypeError("'args' and 'params' are mutually exclusive")
         first = int(first)
         second = int(second)
         first_site = self.sites[first]
@@ -889,6 +1288,8 @@ class InfiniteSystem:
                 args,
                 params,
             )
+        except _ParameterError:
+            raise
         except Exception as error:
             function = (
                 self._builder._sites[first_site]
@@ -902,6 +1303,14 @@ class InfiniteSystem:
             raise UserCodeError(
                 f'Error occurred in user-supplied value function "{name}"'
             ) from error
+
+    def discrete_symmetry(self, args=(), *, params=None):
+        return _discrete_symmetry(
+            self._builder,
+            self.sites[: self.cell_size],
+            args,
+            params,
+        )
 
     def _site_dofs(self, args=(), params=None):
         return [
@@ -995,9 +1404,16 @@ class InfiniteSystem:
         square_hopping = np.zeros_like(cell)
         square_hopping[:, : hopping.shape[1]] = hopping
         shifted = cell - float(energy) * np.eye(cell.shape[0])
-        return physics.modes(shifted, square_hopping)
+        propagating, stabilized = physics.modes(shifted, square_hopping)
+        stabilized._selfenergy = self._surface_selfenergy(
+            energy,
+            args,
+            params,
+            len(propagating.momenta) // 2,
+        )
+        return propagating, stabilized
 
-    def selfenergy(self, energy=0, args=(), *, params=None):
+    def _surface_selfenergy(self, energy, args, params, mode_count):
         cell = self.cell_hamiltonian(args=args, params=params)
         inter_cell = self.inter_cell_hopping(args=args, params=params)
         cell_dimension, interface_dimension = inter_cell.shape
@@ -1007,9 +1423,14 @@ class InfiniteSystem:
         cell_to_previous[:, :interface_dimension] = inter_cell
         lead_hopping = cell_to_previous.conj().T
         coupling = inter_cell.conj().T
-        dummy_device = np.zeros(
-            (interface_dimension, interface_dimension), dtype=complex
+        probe_scale = (
+            1.0
+            + np.linalg.norm(cell, np.inf)
+            + np.linalg.norm(coupling, np.inf) ** 2
         )
+        dummy_device = (
+            float(energy) + probe_scale
+        ) * np.eye(interface_dimension, dtype=complex)
         lead_data = [
             (
                 cell.tolist(),
@@ -1028,9 +1449,6 @@ class InfiniteSystem:
             - np.asarray(wide[0], dtype=complex)
         )
         gamma = 1j * (sigma - sigma.conj().T)
-        mode_count = len(
-            self.modes(energy, args=args, params=params)[0].momenta
-        ) // 2
         eigenvalues, eigenvectors = np.linalg.eigh(
             0.5 * (gamma + gamma.conj().T)
         )
@@ -1044,6 +1462,22 @@ class InfiniteSystem:
             gamma = np.zeros_like(sigma)
         return 0.5 * (sigma + sigma.conj().T) - 0.5j * gamma
 
+    def selfenergy(self, energy=0, args=(), *, params=None):
+        from . import physics
+
+        cell = self.cell_hamiltonian(args=args, params=params)
+        hopping = self.inter_cell_hopping(args=args, params=params)
+        square_hopping = np.zeros_like(cell)
+        square_hopping[:, : hopping.shape[1]] = hopping
+        shifted = cell - float(energy) * np.eye(cell.shape[0])
+        propagating, _ = physics.modes(shifted, square_hopping)
+        return self._surface_selfenergy(
+            energy,
+            args,
+            params,
+            len(propagating.momenta) // 2,
+        )
+
     def reversed(self):
         return self._builder.reversed().finalized()
 
@@ -1053,6 +1487,7 @@ class FiniteSystem:
 
     def __init__(self, builder):
         self._builder = copy.copy(builder)
+        self.parameters = _builder_parameters(builder)
         self.sites = tuple(sorted(builder.sites()))
         self.id_by_site = {site: index for index, site in enumerate(self.sites)}
         undirected_edges = [
@@ -1071,11 +1506,22 @@ class FiniteSystem:
             self.hoppings.append((Other, None))
         finalized_leads = []
         lead_interfaces = []
+        lead_paddings = []
         for lead in builder.leads:
             finalized_leads.append(lead.finalized())
             if isinstance(lead, BuilderLead):
                 try:
                     interface = [self.id_by_site[site] for site in lead.interface]
+                except KeyError as error:
+                    raise ValueError(
+                        "Lead is attached to a site that does not belong "
+                        f"to the scattering region: {error.args[0]!r}"
+                    ) from error
+            elif hasattr(lead, "interface"):
+                try:
+                    interface = [
+                        self.id_by_site[site] for site in lead.interface
+                    ]
                 except KeyError as error:
                     raise ValueError(
                         "Lead is attached to a site that does not belong "
@@ -1087,14 +1533,36 @@ class FiniteSystem:
                     for site in builder._interface_sites(lead)
                 ]
             lead_interfaces.append(np.asarray(interface, dtype=int))
+            padding = (
+                lead.padding if isinstance(lead, BuilderLead) else ()
+            )
+            lead_paddings.append(
+                np.asarray(
+                    [
+                        self.id_by_site[site]
+                        for site in padding
+                        if site in self.id_by_site
+                    ],
+                    dtype=int,
+                )
+            )
         self.leads = list(finalized_leads)
         self.lead_interfaces = tuple(lead_interfaces)
+        self.lead_paddings = tuple(lead_paddings)
 
     def _evaluated_onsites(self, args=(), params=None):
         return [
             _evaluate(self._builder._sites[site], (site,), args, params)
             for site in self.sites
         ]
+
+    def discrete_symmetry(self, args=(), *, params=None):
+        return _discrete_symmetry(
+            self._builder,
+            self.sites,
+            args,
+            params,
+        )
 
     def _site_dofs(self, args=(), params=None):
         return [
@@ -1113,6 +1581,8 @@ class FiniteSystem:
         return offsets
 
     def hamiltonian(self, first, second, *args, params=None):
+        if args and params is not None:
+            raise TypeError("'args' and 'params' are mutually exclusive")
         first = int(first)
         second = int(second)
         first_site = self.sites[first]
@@ -1131,6 +1601,8 @@ class FiniteSystem:
                 args,
                 params,
             )
+        except _ParameterError:
+            raise
         except Exception as error:
             function = (
                 self._builder._sites[first_site]
@@ -1163,11 +1635,18 @@ class FiniteSystem:
         offsets = [0]
         for count in dofs:
             offsets.append(offsets[-1] + count)
-        dimension = max((len(site.pos) for site in self.sites), default=0)
+        site_positions = []
+        for site in self.sites:
+            try:
+                position = np.asarray(site.pos, dtype=float)
+            except AttributeError:
+                position = np.empty(0, dtype=float)
+            site_positions.append(position)
+        dimension = max((len(position) for position in site_positions), default=0)
         primitive = np.eye(dimension)
         positions = [
-            np.pad(np.asarray(site.pos, dtype=float), (0, dimension - len(site.pos)))
-            for site in self.sites
+            np.pad(position, (0, dimension - len(position)))
+            for position in site_positions
         ]
         onsites = []
         for value, count in zip(onsite_values, dofs, strict=True):
@@ -1231,6 +1710,37 @@ class FiniteSystem:
         for lead, interface in zip(
             self._builder.leads, self.lead_interfaces, strict=True
         ):
+            if isinstance(lead, (ModesLead, SelfEnergyLead)):
+                device_basis = np.concatenate(
+                    [
+                        np.arange(offsets[index], offsets[index + 1])
+                        for index in interface
+                    ]
+                )
+                interface_dimension = len(device_basis)
+                cell = np.zeros(
+                    (interface_dimension, interface_dimension),
+                    dtype=complex,
+                )
+                lead_hopping = np.zeros_like(cell)
+                coupling = np.zeros(
+                    (device.shape[0], interface_dimension),
+                    dtype=complex,
+                )
+                coupling[
+                    np.ix_(
+                        device_basis,
+                        np.arange(interface_dimension),
+                    )
+                ] = np.eye(interface_dimension)
+                lead_data.append(
+                    (
+                        cell.tolist(),
+                        lead_hopping.tolist(),
+                        coupling.tolist(),
+                    )
+                )
+                continue
             lead_builder = lead.builder if isinstance(lead, BuilderLead) else lead
             lead_system = lead_builder.finalized()
             cell = lead_system.cell_hamiltonian(args=args, params=params)
@@ -1269,16 +1779,160 @@ class FiniteSystem:
         return result
 
 
+def _peierls_phase(field):
+    """Return a straight-bond Peierls phase in symmetric gauge."""
+
+    def phase(first, second):
+        first_position = np.asarray(first.pos, dtype=float)
+        second_position = np.asarray(second.pos, dtype=float)
+        midpoint = 0.5 * (first_position + second_position)
+        local_field = field(midpoint) if callable(field) else field
+        local_field = np.asarray(local_field, dtype=float)
+        if np.all(local_field == 0):
+            return 1.0 + 0.0j
+        if len(first_position) == 2:
+            magnetic_field = (
+                float(local_field)
+                if local_field.ndim == 0
+                else float(local_field[-1])
+            )
+            flux = magnetic_field * (
+                first_position[0] * second_position[1]
+                - first_position[1] * second_position[0]
+            )
+        elif len(first_position) == 3:
+            magnetic_field = (
+                np.full(3, float(local_field))
+                if local_field.ndim == 0
+                else local_field
+            )
+            flux = float(
+                np.dot(
+                    magnetic_field,
+                    np.cross(first_position, second_position),
+                )
+            )
+        else:
+            raise ValueError(
+                "Peierls phases require two- or three-dimensional positions"
+            )
+        return np.exp(1j * np.pi * flux)
+
+    return phase
+
+
+def _phase_wrapped_hopping(value, parameter):
+    if callable(value):
+        original_parameters = list(inspect.signature(value).parameters.values())
+
+        def hopping(first, second, *args, **params):
+            phase = params.pop(parameter)
+            return value(first, second, *args, **params) * phase(first, second)
+
+        update_wrapper(hopping, value)
+    else:
+        original_parameters = [
+            inspect.Parameter("site1", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("site2", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ]
+
+        def hopping(first, second, *args, **params):
+            if args:
+                raise TypeError("Constant hopping accepts only a Peierls phase")
+            phase = params.pop(parameter)
+            if params:
+                raise TypeError(
+                    f"Unexpected hopping parameters: {sorted(params)}"
+                )
+            return value * phase(first, second)
+
+    hopping.__signature__ = inspect.Signature(
+        [
+            *original_parameters,
+            inspect.Parameter(
+                parameter,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            ),
+        ]
+    )
+    return hopping
+
+
+def _builder_with_peierls_phase(builder, parameter):
+    result = Builder(
+        builder.symmetry,
+        conservation_law=builder.conservation_law,
+        particle_hole=builder.particle_hole,
+        chiral=builder.chiral,
+    )
+    result._sites = builder._sites.copy()
+    result._hoppings = OrderedDict(
+        (
+            hopping,
+            _phase_wrapped_hopping(value, parameter),
+        )
+        for hopping, value in builder._hoppings.items()
+    )
+    for index, lead in enumerate(builder.leads):
+        if not isinstance(lead, BuilderLead):
+            raise ValueError(
+                "Peierls phase insertion requires builder-defined leads"
+            )
+        result.leads.append(
+            BuilderLead(
+                _builder_with_peierls_phase(
+                    lead.builder,
+                    f"{parameter}_lead{index}",
+                ),
+                lead.interface,
+                lead.padding,
+            )
+        )
+    return result
+
+
+def add_peierls_phase(builder, peierls_parameter="phi", fix_gauge=True):
+    """Insert explicit bond-phase parameters into a builder and its leads."""
+
+    if not isinstance(builder, Builder):
+        raise TypeError("add_peierls_phase expects a Builder")
+    phased = _builder_with_peierls_phase(builder, peierls_parameter).finalized()
+    if not fix_gauge:
+        return phased
+
+    lead_count = len(builder.leads)
+
+    def gauge(field, *lead_fields):
+        if len(lead_fields) != lead_count:
+            raise ValueError(
+                f"Expected {lead_count} lead magnetic fields, "
+                f"received {len(lead_fields)}"
+            )
+        parameters = {peierls_parameter: _peierls_phase(field)}
+        parameters.update(
+            {
+                f"{peierls_parameter}_lead{index}": _peierls_phase(lead_field)
+                for index, lead_field in enumerate(lead_fields)
+            }
+        )
+        return parameters
+
+    return phased, gauge
+
+
 __all__ = [
+    "add_peierls_phase",
     "Builder",
     "BuilderLead",
     "FiniteSystem",
     "HoppingKind",
     "HermConjOfFunc",
     "InfiniteSystem",
+    "ModesLead",
     "NoSymmetry",
     "Site",
     "SiteFamily",
+    "SelfEnergyLead",
     "Symmetry",
     "UserCodeError",
 ]
