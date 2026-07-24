@@ -1,11 +1,13 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use thouless::differentiation::{finite_difference_uniform, DifferenceScheme};
+use thouless::geometry::ReciprocalPath;
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
 use thouless::topology::{plaquette_flux, wilson_line_phase};
 use thouless::{Complex64, ComplexMatrix};
 
 type HoppingInput = (usize, usize, Vec<i32>, Vec<Vec<Complex64>>);
+type ReciprocalPathOutput = (Vec<Vec<f64>>, Vec<f64>, Vec<f64>);
 
 fn value_error(error: impl std::fmt::Display) -> PyErr {
     PyValueError::new_err(error.to_string())
@@ -213,6 +215,23 @@ fn berry_flux(corners: Vec<Vec<Vec<Complex64>>>) -> PyResult<f64> {
     plaquette_flux(&corners).map_err(value_error)
 }
 
+#[pyfunction]
+fn reciprocal_path(
+    primitive_vectors: Vec<Vec<f64>>,
+    periodic_axes: Vec<usize>,
+    nodes: Vec<Vec<f64>>,
+    sample_count: usize,
+) -> PyResult<ReciprocalPathOutput> {
+    let lattice =
+        thouless::model::Lattice::new(primitive_vectors, periodic_axes).map_err(value_error)?;
+    let path = ReciprocalPath::through(&lattice, &nodes, sample_count).map_err(value_error)?;
+    Ok((
+        path.reduced_points().to_vec(),
+        path.distances().to_vec(),
+        path.node_distances().to_vec(),
+    ))
+}
+
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(hamiltonian, module)?)?;
@@ -221,5 +240,6 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(finite_difference, module)?)?;
     module.add_function(wrap_pyfunction!(wilson_phase, module)?)?;
     module.add_function(wrap_pyfunction!(berry_flux, module)?)?;
+    module.add_function(wrap_pyfunction!(reciprocal_path, module)?)?;
     Ok(())
 }

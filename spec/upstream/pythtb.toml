@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 test_root = "tests"
 collection_status = "complete"
 collected_tests = 98
-strict_tests = 51
+strict_tests = 57
 python = "3.12"
 collection_command = "python -m pytest --collect-only -q"
 gap_issue = "https://github.com/matrixlab-research/thouless/issues/4"
@@ -25,4 +25,10 @@ strict_test_files = [
   "tests/test_wfarray/test_wfa_init.py",
   "tests/test_wfarray/test_invariants_wfa.py",
   "tests/test_examples/graphene/cone/test_cone_hardcode.py",
+  "tests/test_examples/buckled_layer/test_buckled_layer.py",
+  "tests/test_examples/checkerboard/test_checkerboard.py",
+  "tests/test_examples/graphene/graphene/test_graphene.py",
+  "tests/test_examples/haldane/haldane/test_haldane.py",
+  "tests/test_examples/simple/test_simple.py",
+  "tests/test_examples/trestle/test_trestle.py",
 ]

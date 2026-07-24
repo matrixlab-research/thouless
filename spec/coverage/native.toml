@@ -26,6 +26,14 @@ status = "missing"
 issue = "https://github.com/matrixlab-research/thouless/issues/3"
 
 [[capability]]
+id = "geometry.reciprocal_sampling"
+description = "Metric-aware reciprocal paths and meshes"
+native_api = "thouless::geometry::ReciprocalPath"
+test = "tests/native_geometry.rs and pinned band-structure examples"
+status = "partial"
+issue = "https://github.com/matrixlab-research/thouless/issues/1"
+
+[[capability]]
 id = "geometry.topology"
 description = "Berry geometry, Wilson loops, and topological invariants"
 native_api = "thouless::topology::{wilson_line_phase,plaquette_flux}"

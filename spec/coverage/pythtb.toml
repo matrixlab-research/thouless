@@ -34,12 +34,21 @@ source_entries = [
   "make_supercell",
   "reduce_dim",
   "remove_orb",
-  "k_uniform_mesh",
-  "k_path",
 ]
 compat_entry = "python/pythtb"
 rust_capability = "geometry.finite"
 public_test = "compat-tests/test_pythtb_api.py"
+status = "partial"
+issue = "https://github.com/matrixlab-research/thouless/issues/4"
+
+[[interface]]
+name = "reciprocal-space sampling"
+source_entries = ["k_uniform_mesh", "k_path"]
+compat_entry = "python/pythtb"
+rust_capability = "geometry.reciprocal_sampling"
+public_test = "compat-tests/test_pythtb_api.py"
+source_test = "six pinned band-structure example tests"
+actual_result = "6 passed"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/4"
 

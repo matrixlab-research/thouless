@@ -598,6 +598,9 @@ class TBModel:
         axes = [np.arange(size) / size for size in sizes]
         return np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, self.dim_k)
 
+    def k_path(self, k_nodes, nk, report=False):
+        return self._lattice.k_path(k_nodes, nk, report)
+
     def cut_piece(
         self,
         num_cells,

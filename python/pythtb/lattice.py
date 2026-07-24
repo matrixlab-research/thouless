@@ -6,6 +6,8 @@ import copy
 
 import numpy as np
 
+from thouless import _core
+
 
 class Lattice:
     """Real-space primitive vectors, orbitals, and selected periodic axes."""
@@ -145,6 +147,44 @@ class Lattice:
 
     def copy(self):
         return copy.copy(self)
+
+    def k_path(self, k_nodes, nk, report=False):
+        if isinstance(k_nodes, str):
+            if self.dim_k != 1:
+                raise ValueError("named k-paths are only defined in one dimension")
+            presets = {
+                "full": [[0.0], [0.5], [1.0]],
+                "fullc": [[-0.5], [0.0], [0.5]],
+                "half": [[0.0], [0.5]],
+            }
+            if k_nodes not in presets:
+                raise ValueError(f"unknown one-dimensional k-path {k_nodes!r}")
+            nodes = np.asarray(presets[k_nodes], dtype=float)
+        else:
+            nodes = np.asarray(k_nodes, dtype=float)
+            if nodes.ndim == 1 and self.dim_k == 1:
+                nodes = nodes[:, np.newaxis]
+        if nodes.ndim != 2 or nodes.shape[1] != self.dim_k:
+            raise ValueError(
+                f"Dimension mismatch: kpts shape {nodes.shape}, model dim {self.dim_k}"
+            )
+
+        points, distances, node_distances = _core.reciprocal_path(
+            self.lat_vecs.tolist(),
+            self.periodic_dirs,
+            nodes.tolist(),
+            int(nk),
+        )
+        points = np.asarray(points, dtype=float)
+        distances = np.asarray(distances, dtype=float)
+        node_distances = np.asarray(node_distances, dtype=float)
+        if report:
+            print("----- k_path report -----")
+            print("Real-space lattice vectors:\n", self.lat_vecs[self.periodic_dirs])
+            print("Nodes (reduced coords):\n", nodes)
+            print("Node distances (cumulative):", node_distances)
+            print("-------------------------")
+        return points, distances, node_distances
 
     def cut_piece(self, num_cells, periodic_dir):
         if not isinstance(num_cells, int):

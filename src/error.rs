@@ -365,3 +365,73 @@ impl fmt::Display for TopologyError {
 }
 
 impl Error for TopologyError {}
+
+/// Errors raised while sampling paths in reciprocal space.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum GeometryError {
+    /// Reciprocal-space paths require at least one periodic direction.
+    NoPeriodicDirections,
+    /// A path requires at least two nodes.
+    InsufficientPathNodes,
+    /// A path node has the wrong reduced-coordinate dimension.
+    InvalidPathNode {
+        /// Index of the invalid node.
+        node: usize,
+        /// Required number of reduced components.
+        expected: usize,
+        /// Supplied number of reduced components.
+        actual: usize,
+    },
+    /// The requested number of samples cannot represent every path node.
+    InsufficientPathSamples {
+        /// Minimum number of samples.
+        minimum: usize,
+        /// Requested number of samples.
+        actual: usize,
+    },
+    /// A path node contains NaN or infinity.
+    NonFinitePathNode,
+    /// The selected periodic primitive vectors are numerically singular.
+    SingularPeriodicGeometry,
+    /// Every segment in the path has zero Cartesian length.
+    ZeroLengthPath,
+}
+
+impl fmt::Display for GeometryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoPeriodicDirections => {
+                write!(formatter, "reciprocal paths require a periodic lattice")
+            }
+            Self::InsufficientPathNodes => write!(formatter, "a path requires at least two nodes"),
+            Self::InvalidPathNode {
+                node,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "path node {node} has {actual} components; expected {expected}"
+            ),
+            Self::InsufficientPathSamples { minimum, actual } => write!(
+                formatter,
+                "path requires at least {minimum} samples, but {actual} were requested"
+            ),
+            Self::NonFinitePathNode => write!(formatter, "path nodes must be finite"),
+            Self::SingularPeriodicGeometry => {
+                write!(
+                    formatter,
+                    "periodic primitive vectors are numerically singular"
+                )
+            }
+            Self::ZeroLengthPath => {
+                write!(
+                    formatter,
+                    "path must contain a nonzero Cartesian displacement"
+                )
+            }
+        }
+    }
+}
+
+impl Error for GeometryError {}

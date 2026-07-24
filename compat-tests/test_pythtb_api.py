@@ -5,6 +5,7 @@ These tests are not a substitute for the pinned upstream test suite.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from conftest import require_compat_module
@@ -41,3 +42,22 @@ def test_wavefunction_array_entry_points_exist() -> None:
     wavefunctions = pythtb.wf_array(model, [9])
     assert callable(wavefunctions.solve_on_grid)
     assert callable(wavefunctions.berry_phase)
+
+
+def test_reciprocal_path_uses_cartesian_arc_length() -> None:
+    pythtb = require_compat_module("pythtb", ISSUE_URL)
+    lattice = pythtb.Lattice(
+        [[2.0, 0.0], [0.0, 1.0]],
+        [[0.0, 0.0]],
+        periodic_dirs=[0, 1],
+    )
+
+    points, distances, nodes = lattice.k_path(
+        [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5]],
+        7,
+    )
+
+    assert points[0] == pytest.approx([0.0, 0.0])
+    assert points[-1] == pytest.approx([0.5, 0.5])
+    assert nodes == pytest.approx([0.0, 0.5 * np.pi, 1.5 * np.pi])
+    assert distances[-1] == pytest.approx(nodes[-1])
