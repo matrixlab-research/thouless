@@ -64,7 +64,10 @@ impl fmt::Display for ModelError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidRealDimension => {
-                write!(formatter, "the embedding dimension must be greater than zero")
+                write!(
+                    formatter,
+                    "the embedding dimension must be greater than zero"
+                )
             }
             Self::TooManyTranslationVectors {
                 real_dimension,
@@ -94,7 +97,10 @@ impl fmt::Display for ModelError {
                 "orbital position has {actual} components; expected {expected}"
             ),
             Self::UnknownOrbital { index } => {
-                write!(formatter, "orbital index {index} does not belong to the model")
+                write!(
+                    formatter,
+                    "orbital index {index} does not belong to the model"
+                )
             }
             Self::InvalidCellOffset { expected, actual } => write!(
                 formatter,

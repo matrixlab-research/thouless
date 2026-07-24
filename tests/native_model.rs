@@ -15,9 +15,7 @@ fn one_model_represents_periodic_and_finite_translation_structures() {
 fn builder_preserves_orbital_identity_and_hermitian_hopping_convention() {
     let lattice = Lattice::new(1, vec![vec![1.0]]).expect("valid chain lattice");
     let mut builder = ModelBuilder::new(lattice);
-    let orbital = builder
-        .add_orbital("s", [0.0])
-        .expect("valid orbital");
+    let orbital = builder.add_orbital("s", [0.0]).expect("valid orbital");
     builder.set_onsite(orbital, 0.25).expect("valid onsite");
     builder
         .add_hopping(orbital, orbital, [1], Complex64::new(-1.0, 0.5))
@@ -34,12 +32,8 @@ fn builder_preserves_orbital_identity_and_hermitian_hopping_convention() {
 fn reverse_hopping_is_rejected_because_hermitian_partner_is_implicit() {
     let lattice = Lattice::new(1, vec![vec![1.0]]).expect("valid chain lattice");
     let mut builder = ModelBuilder::new(lattice);
-    let left = builder
-        .add_orbital("left", [0.0])
-        .expect("valid orbital");
-    let right = builder
-        .add_orbital("right", [0.5])
-        .expect("valid orbital");
+    let left = builder.add_orbital("left", [0.0]).expect("valid orbital");
+    let right = builder.add_orbital("right", [0.5]).expect("valid orbital");
     builder
         .add_hopping(left, right, [1], Complex64::new(-1.0, 0.25))
         .expect("first hopping is valid");

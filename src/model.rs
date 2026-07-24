@@ -309,9 +309,7 @@ fn is_same_or_hermitian_partner(
     to: OrbitalId,
     cell_offset: &[i32],
 ) -> bool {
-    let same = existing.from == from
-        && existing.to == to
-        && existing.cell_offset == cell_offset;
+    let same = existing.from == from && existing.to == to && existing.cell_offset == cell_offset;
     let partner = existing.from == to
         && existing.to == from
         && existing.cell_offset.len() == cell_offset.len()
