@@ -17,6 +17,7 @@ pub mod observables;
 pub mod spectrum;
 pub mod topology;
 pub mod transform;
+pub mod transport;
 
 pub use error::{
     DifferentiationError, GeometryError, MatrixError, ModelError, ObservableError, SpectrumError,

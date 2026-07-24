@@ -60,6 +60,7 @@ jobs:
           maturin==1.14.1
           numpy==2.5.1
           pytest==8.3.5
+          tinyarray==1.2.5
       - name: Build the repository compatibility extension
         run: .venv/bin/maturin develop
       - name: Validate coverage matrices
@@ -81,3 +82,15 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/python
           PYTHONDONTWRITEBYTECODE: "1"
         run: .venv/bin/python tools/run_upstream_pythtb.py /tmp/pythtb-upstream
+      - name: Fetch the pinned Kwant source tests
+        run: >-
+          git clone
+          --branch v1.5.0
+          --depth 1
+          https://gitlab.kwant-project.org/kwant/kwant.git
+          /tmp/kwant-upstream
+      - name: Run the strict Kwant 1.5 source-test slice
+        env:
+          PYTHONPATH: ${{ github.workspace }}/python
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: .venv/bin/python tools/run_upstream_kwant.py /tmp/kwant-upstream

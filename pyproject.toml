@@ -7,7 +7,7 @@ name = "thouless"
 version = "0.0.0"
 description = "Rust-native tight-binding, topology, and steady-state quantum transport"
 requires-python = ">=3.12"
-dependencies = ["numpy>=2.0"]
+dependencies = ["numpy>=2.0", "tinyarray>=1.2"]
 
 [tool.maturin]
 manifest-path = "crates/thouless-python/Cargo.toml"

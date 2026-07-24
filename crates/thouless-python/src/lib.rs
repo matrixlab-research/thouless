@@ -10,9 +10,15 @@ use thouless::topology::{
     wilson_line_phase, wilson_loop_eigenphases,
 };
 use thouless::transform::{change_nonperiodic_vector, make_supercell, remove_orbitals};
+use thouless::transport::{solve_open_system, LeadContact, SurfaceGreenOptions};
 use thouless::{Complex64, ComplexMatrix};
 
 type HoppingInput = (usize, usize, Vec<i32>, Vec<Vec<Complex64>>);
+type LeadInput = (
+    Vec<Vec<Complex64>>,
+    Vec<Vec<Complex64>>,
+    Vec<Vec<Complex64>>,
+);
 type ModelOutput = (
     Vec<Vec<f64>>,
     Vec<usize>,
@@ -363,6 +369,40 @@ fn finite_difference(
 }
 
 #[pyfunction]
+fn open_system_transmissions(
+    device_hamiltonian: Vec<Vec<Complex64>>,
+    leads: Vec<LeadInput>,
+    energy: f64,
+) -> PyResult<Vec<Vec<f64>>> {
+    let device_hamiltonian = matrix_from_rows(device_hamiltonian)?;
+    let leads = leads
+        .into_iter()
+        .map(|(cell, hopping, coupling)| {
+            LeadContact::new(
+                matrix_from_rows(cell)?,
+                matrix_from_rows(hopping)?,
+                matrix_from_rows(coupling)?,
+            )
+            .map_err(value_error)
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let solution = solve_open_system(
+        &device_hamiltonian,
+        &leads,
+        energy,
+        SurfaceGreenOptions::default(),
+    )
+    .map_err(value_error)?;
+    (0..leads.len())
+        .map(|drain| {
+            (0..leads.len())
+                .map(|source| solution.transmission(drain, source).map_err(value_error))
+                .collect()
+        })
+        .collect()
+}
+
+#[pyfunction]
 fn wilson_phase(frames: Vec<Vec<Vec<Complex64>>>) -> PyResult<f64> {
     let frames = frames
         .into_iter()
@@ -476,6 +516,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(uniform_grid_chern, module)?)?;
     module.add_function(wrap_pyfunction!(momentum_derivatives, module)?)?;
     module.add_function(wrap_pyfunction!(finite_difference, module)?)?;
+    module.add_function(wrap_pyfunction!(open_system_transmissions, module)?)?;
     module.add_function(wrap_pyfunction!(wilson_phase, module)?)?;
     module.add_function(wrap_pyfunction!(berry_flux, module)?)?;
     module.add_function(wrap_pyfunction!(transport_link, module)?)?;

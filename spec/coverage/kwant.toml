@@ -20,7 +20,9 @@ source_entries = [
 compat_entry = "python/kwant"
 rust_capability = "model.structure"
 public_test = "compat-tests/test_kwant_api.py"
-status = "missing"
+source_test = "pinned builder construction, symmetry, finalization, Hamiltonian, dangling, and hopping-kind tests"
+actual_result = "15 passed"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
 [[interface]]
@@ -29,7 +31,9 @@ source_entries = ["general", "chain", "square", "triangular", "honeycomb", "cubi
 compat_entry = "python/kwant/lattice"
 rust_capability = "model.structure"
 public_test = "compat-tests/test_kwant_api.py"
-status = "missing"
+source_test = "pinned lattice construction, neighbors, constraints, and norbs tests"
+actual_result = "11 passed"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
 [[interface]]
@@ -38,7 +42,8 @@ source_entries = ["smatrix", "greens_function", "wave_function", "ldos"]
 compat_entry = "python/kwant/solvers"
 rust_capability = "transport.steady_state"
 public_test = "compat-tests/test_kwant_api.py"
-status = "missing"
+actual_result = "ballistic-chain smoke passed"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
 [[interface]]
@@ -56,7 +61,8 @@ source_entries = ["Density", "Current", "Source"]
 compat_entry = "python/kwant/operator"
 rust_capability = "transport.steady_state"
 public_test = "compat-tests/test_kwant_api.py"
-status = "missing"
+actual_result = "entry-point smoke passed"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
 [[interface]]

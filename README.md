@@ -19,7 +19,8 @@ transport, local-observable projection, and structure-preserving model
 transformations in Rust. The Python extension and partial PythTB 2.0 layer pass
 95 of the 98 pinned upstream tests without changing their tolerances. It does
 not yet implement the complete PythTB surface, complete topology and response
-theory, open-system transport, or the Kwant compatibility package.
+theory, complete open-system transport, or the complete Kwant compatibility
+surface.
 
 A green CI run currently means:
 
@@ -102,10 +103,12 @@ maturin develop
 PYTHONPATH=python python -m pytest -q -ra compat-tests
 ```
 
-Kwant compatibility tests currently skip against issue #5. The strict PythTB
-runner executes 95 pinned source tests through the repository-built extension;
-the remaining three tests are tracked in issue #4. A skip without a linked
-issue is a CI error.
+The Kwant ballistic smoke contract executes through the Rust transport core,
+and a strict 26-test upstream slice validates the compatibility layer;
+remaining Kwant gaps are tracked in issue #5. The strict PythTB runner executes
+95 pinned source tests through the repository-built extension; the remaining
+three tests are tracked in issue #4. A skip without a linked issue is a CI
+error.
 
 ## Source baselines
 
