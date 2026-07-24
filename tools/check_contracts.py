@@ -16,6 +16,9 @@ except ModuleNotFoundError:  # Python 3.10 and older
 
 ROOT = Path(__file__).resolve().parents[1]
 COVERAGE = ROOT / "spec" / "coverage"
+AGENT_ENTRYPOINT = ROOT / "AGENTS.md"
+AGENT_INSTRUCTION = ROOT / "instructions" / "scientific-software-reimplementation.md"
+AGENT_INSTRUCTION_REFERENCE = "instructions/scientific-software-reimplementation.md"
 ISSUE_PATTERN = re.compile(
     r"^https://github\.com/matrixlab-research/thouless/issues/[1-9][0-9]*$"
 )
@@ -64,7 +67,32 @@ def check_compatibility_test(path: Path) -> None:
         fail(f"{path.relative_to(ROOT)} can bypass the compatibility import guard")
 
 
+def check_agent_instructions() -> None:
+    if not AGENT_ENTRYPOINT.is_file():
+        fail("AGENTS.md is missing")
+    if not AGENT_INSTRUCTION.is_file():
+        fail(f"{AGENT_INSTRUCTION.relative_to(ROOT)} is missing")
+
+    entrypoint = AGENT_ENTRYPOINT.read_text(encoding="utf-8")
+    if AGENT_INSTRUCTION_REFERENCE not in entrypoint:
+        fail("AGENTS.md does not point to the repository reimplementation instruction")
+
+    instruction = AGENT_INSTRUCTION.read_text(encoding="utf-8")
+    required_terms = (
+        "Rust-native API",
+        "PythTB 2.0",
+        "Kwant 1.5",
+        "GitHub Issues",
+        "held-out",
+        "Prohibit Fitting to Known Tests",
+    )
+    missing_terms = [term for term in required_terms if term not in instruction]
+    if missing_terms:
+        fail(f"agent instruction is missing required terms: {missing_terms}")
+
+
 def main() -> None:
+    check_agent_instructions()
     matrices = sorted(COVERAGE.glob("*.toml"))
     if not matrices:
         fail("no coverage matrices found")
@@ -77,7 +105,10 @@ def main() -> None:
     for test in tests:
         check_compatibility_test(test)
 
-    print(f"validated {len(matrices)} coverage matrices and {len(tests)} test modules")
+    print(
+        f"validated agent instructions, {len(matrices)} coverage matrices, "
+        f"and {len(tests)} test modules"
+    )
 
 
 if __name__ == "__main__":

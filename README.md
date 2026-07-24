@@ -26,6 +26,18 @@ A green CI run currently means:
 It does **not** mean that the scientific package or compatibility targets are
 complete.
 
+## Agent instructions
+
+All coding agents must begin with [`AGENTS.md`](AGENTS.md), which points to the
+complete repository instruction:
+[`instructions/scientific-software-reimplementation.md`](instructions/scientific-software-reimplementation.md).
+
+The instruction defines the first-principles Rust API rule, complete
+PythTB/Kwant compatibility objective, GitHub issue audit trail, source-test
+policy, anti-overfitting requirements, held-out boundary, and status semantics.
+CI verifies that this instruction remains present and reachable from
+`AGENTS.md`.
+
 ## Architecture
 
 ```text
