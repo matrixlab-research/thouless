@@ -51,8 +51,9 @@ name = "lead modes and self-energies"
 source_entries = ["Bands", "modes", "selfenergy", "PropagatingModes", "StabilizedModes"]
 compat_entry = "python/kwant/physics"
 rust_capability = "transport.steady_state"
-public_test = "not implemented"
-status = "missing"
+public_test = "pinned infinite-system operator workflow"
+actual_result = "propagating modes exercised by the complete operator source-test module"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
 [[interface]]
@@ -61,7 +62,8 @@ source_entries = ["Density", "Current", "Source"]
 compat_entry = "python/kwant/operator"
 rust_capability = "transport.steady_state"
 public_test = "compat-tests/test_kwant_api.py"
-actual_result = "entry-point smoke passed"
+source_test = "complete pinned operator module: construction, finite/infinite continuity, scattering and spin currents, gauge covariance, sparse matrices, parameter binding, and pickling"
+actual_result = "13 source tests and entry-point smoke passed"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
@@ -69,7 +71,8 @@ issue = "https://github.com/matrixlab-research/thouless/issues/5"
 name = "optional scientific modules"
 source_entries = ["kpm", "continuum", "wraparound", "digest", "rmt", "plotter"]
 compat_entry = "python/kwant"
-rust_capability = "not inventoried"
-public_test = "not implemented"
-status = "missing"
+rust_capability = "compatibility utility layer; native migration pending"
+public_test = "pinned gauge-covariant operator workflow"
+actual_result = "digest and class-A random-unitary utilities implemented; remaining optional modules missing"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"

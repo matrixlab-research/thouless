@@ -29,6 +29,10 @@ class HermConjOfFunc:
         array = np.asarray(result)
         return array.conj().T if array.ndim else np.conj(result)
 
+    @property
+    def __signature__(self):
+        return inspect.signature(self.function)
+
 
 def _conjugate(value):
     if value is None:
@@ -292,6 +296,8 @@ def _block(value, rows, columns, onsite=False):
         if rows != columns:
             raise ValueError("scalar hopping requires equal orbital dimensions")
         result = complex(array) * np.eye(rows, dtype=complex)
+    elif array.ndim == 1 and array.size == rows * columns:
+        result = array.reshape(rows, columns).copy()
     elif array.shape == (rows, columns):
         result = array.copy()
     else:
@@ -311,6 +317,12 @@ def _onsite_dimension(value, default):
         return default
     if array.ndim == 2 and array.shape[0] == array.shape[1]:
         return array.shape[0]
+    if (
+        default is not None
+        and array.ndim == 1
+        and array.size == default * default
+    ):
+        return default
     raise ValueError("Onsite values must be scalars or square matrices")
 
 
@@ -700,21 +712,50 @@ class Builder:
     def attach_lead(self, lead_builder, origin=None, add_cells=0):
         if not isinstance(lead_builder, Builder) or not lead_builder.symmetry.num_directions:
             raise ValueError("A lead must be a Builder with translational symmetry")
-        interface = self._interface_site(lead_builder)
-        self.leads.append(BuilderLead(copy.copy(lead_builder), [interface]))
+        if lead_builder.symmetry.num_directions != 1:
+            raise ValueError("A lead must have exactly one translational direction")
+        interface = self._interface_sites(lead_builder, origin)
+        self.leads.append(BuilderLead(copy.copy(lead_builder), interface))
         return []
 
-    def _interface_site(self, lead):
+    def _interface_sites(self, lead, origin=None):
         lead_sites = tuple(lead.sites())
         if not lead_sites:
             raise ValueError("lead has no sites")
-        families = {site.family for site in lead_sites}
-        candidates = [site for site in self.sites() if site.family in families]
+        lead_orbits = set(lead_sites)
+        interface_orbits = {
+            site
+            for site in lead_sites
+            if any(
+                int(lead.symmetry.which(neighbor)[0]) == 1
+                for neighbor in lead.neighbors(site)
+            )
+        }
+        candidates = [
+            site
+            for site in self.sites()
+            if site.family in {lead_site.family for lead_site in lead_sites}
+            and lead.symmetry.to_fd(site) in lead_orbits
+        ]
         if not candidates:
             raise ValueError("lead has no matching interface site")
-        first_family = lead_sites[0].family
-        tag_period = lead.symmetry.tag_period(first_family)
-        return max(candidates, key=lambda site: np.dot(site.tag, tag_period))
+        maximum_domain = max(
+            int(lead.symmetry.which(site)[0]) for site in candidates
+        )
+        if origin is not None:
+            maximum_domain = min(
+                maximum_domain,
+                int(lead.symmetry.which(origin)[0]),
+            )
+        interface = [
+            site
+            for site in candidates
+            if int(lead.symmetry.which(site)[0]) == maximum_domain
+            and lead.symmetry.to_fd(site) in interface_orbits
+        ]
+        if len(interface) != len(interface_orbits):
+            raise ValueError("Builder does not completely interrupt the lead")
+        return sorted(interface)
 
     def finalized(self):
         if self.symmetry.num_directions:
@@ -946,6 +987,16 @@ class InfiniteSystem:
             params=params,
         )
 
+    def modes(self, energy=0, args=(), *, params=None):
+        from . import physics
+
+        cell = self.cell_hamiltonian(args=args, params=params)
+        hopping = self.inter_cell_hopping(args=args, params=params)
+        square_hopping = np.zeros_like(cell)
+        square_hopping[:, : hopping.shape[1]] = hopping
+        shifted = cell - float(energy) * np.eye(cell.shape[0])
+        return physics.modes(shifted, square_hopping)
+
     def reversed(self):
         return self._builder.reversed().finalized()
 
@@ -984,7 +1035,10 @@ class FiniteSystem:
                         f"to the scattering region: {error.args[0]!r}"
                     ) from error
             else:
-                interface = [self.id_by_site[builder._interface_site(lead)]]
+                interface = [
+                    self.id_by_site[site]
+                    for site in builder._interface_sites(lead)
+                ]
             lead_interfaces.append(np.asarray(interface, dtype=int))
         self.leads = tuple(finalized_leads)
         self.lead_interfaces = tuple(lead_interfaces)

@@ -67,18 +67,7 @@ def _solution(syst, energy, args, params):
 
 
 def _scattering_matrix(green, broadenings):
-    factors = []
-    for broadening in broadenings:
-        matrix = np.asarray(broadening, dtype=complex)
-        eigenvalues, eigenvectors = np.linalg.eigh(
-            0.5 * (matrix + matrix.conj().T)
-        )
-        scale = max(float(np.max(eigenvalues, initial=0.0)), 1.0)
-        propagating = eigenvalues > 1.0e-10 * scale
-        factors.append(
-            eigenvectors[:, propagating]
-            * np.sqrt(np.maximum(eigenvalues[propagating], 0.0))
-        )
+    factors = _broadening_factors(broadenings)
     offsets = np.cumsum([0, *(factor.shape[1] for factor in factors)])
     data = np.zeros((offsets[-1], offsets[-1]), dtype=complex)
     slices = tuple(
@@ -92,6 +81,25 @@ def _scattering_matrix(green, broadenings):
                 block += np.eye(block.shape[0])
             data[slices[drain], slices[source]] = block
     return data, slices
+
+
+def _broadening_factors(broadenings):
+    factors = []
+    for broadening in broadenings:
+        matrix = np.asarray(broadening, dtype=complex)
+        eigenvalues, eigenvectors = np.linalg.eigh(
+            0.5 * (matrix + matrix.conj().T)
+        )
+        order = np.argsort(eigenvalues)[::-1]
+        eigenvalues = eigenvalues[order]
+        eigenvectors = eigenvectors[:, order]
+        scale = max(float(np.max(eigenvalues, initial=0.0)), 1.0)
+        propagating = eigenvalues > 1.0e-10 * scale
+        factors.append(
+            eigenvectors[:, propagating]
+            * np.sqrt(np.maximum(eigenvalues[propagating], 0.0))
+        )
+    return factors
 
 
 def smatrix(syst, energy=0, args=(), out_leads=None, in_leads=None, *, params=None, **kwargs):
@@ -126,14 +134,32 @@ def ldos(syst, energy=0, args=(), *, params=None, **kwargs):
     return -np.imag(np.diag(green)) / np.pi
 
 
+class WaveFunction:
+    def __init__(self, states):
+        self._states = tuple(np.asarray(value, dtype=complex) for value in states)
+        self.num_orb = self._states[0].shape[1] if self._states else 0
+
+    def __call__(self, lead):
+        return self._states[int(lead)]
+
+
+def wave_function(syst, energy=0, args=(), *, params=None, **kwargs):
+    green, _, broadenings, _ = _solution(syst, energy, args, params)
+    factors = _broadening_factors(broadenings)
+    states = [(green @ factor).T for factor in factors]
+    return WaveFunction(states)
+
+
 default = sys.modules[__name__]
 
 
 __all__ = [
     "GreensFunction",
     "SMatrix",
+    "WaveFunction",
     "default",
     "greens_function",
     "ldos",
     "smatrix",
+    "wave_function",
 ]

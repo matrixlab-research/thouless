@@ -1,9 +1,16 @@
 """Kwant 1.5 compatibility layer backed by the Thouless Rust core."""
 
-from . import builder, lattice, operator, solvers
+from . import builder, digest, lattice, operator, physics, rmt, solvers
 from .builder import Builder, HoppingKind, Site, SiteFamily, UserCodeError
 from .lattice import TranslationalSymmetry
-from .solvers import GreensFunction, SMatrix, greens_function, ldos, smatrix
+from .solvers import (
+    GreensFunction,
+    SMatrix,
+    greens_function,
+    ldos,
+    smatrix,
+    wave_function,
+)
 
 __version__ = "1.5.0+thouless"
 
@@ -17,10 +24,14 @@ __all__ = [
     "TranslationalSymmetry",
     "UserCodeError",
     "builder",
+    "digest",
     "lattice",
     "operator",
+    "physics",
+    "rmt",
     "greens_function",
     "ldos",
     "solvers",
     "smatrix",
+    "wave_function",
 ]

@@ -11,7 +11,7 @@ test_modules = 24
 static_test_functions = 241
 collection_status = "blocked"
 collection_blocker = "The source test suite imports compiled Cython extensions before collection."
-strict_tests = 38
+strict_tests = 51
 strict_test_nodes = [
   "kwant/tests/test_lattice.py::test_closest",
   "kwant/tests/test_lattice.py::test_general",
@@ -42,5 +42,14 @@ strict_test_nodes = [
   "kwant/tests/test_builder.py::test_closest",
   "kwant/tests/test_system.py::test_hamiltonian_submatrix",
   "kwant/tests/test_system.py::test_pickling",
+  "kwant/tests/test_operator.py::test_operator_construction",
+  "kwant/tests/test_operator.py::test_opservables_finite",
+  "kwant/tests/test_operator.py::test_tocoo",
+  "kwant/tests/test_operator.py::test_arg_passing",
+  "kwant/tests/test_operator.py::test_pickling",
+  "kwant/tests/test_operator.py::test_opservables_infinite",
+  "kwant/tests/test_operator.py::test_opservables_scattering",
+  "kwant/tests/test_operator.py::test_opservables_spin",
+  "kwant/tests/test_operator.py::test_opservables_gauged",
 ]
 gap_issue = "https://github.com/matrixlab-research/thouless/issues/5"
