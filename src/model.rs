@@ -335,6 +335,70 @@ impl ModelBuilder {
         Ok(())
     }
 
+    /// Adds a hopping block, summing it into an existing term or its partner.
+    ///
+    /// Exact structural transformations can map several source-cell terms onto
+    /// one directed hopping. This operation preserves that sum while retaining
+    /// the builder's single-term canonical representation.
+    pub fn add_hopping_block_sum(
+        &mut self,
+        target: OrbitalId,
+        source: OrbitalId,
+        cell_offset: impl IntoIterator<Item = i32>,
+        amplitude: ComplexMatrix,
+    ) -> Result<(), ModelError> {
+        let target_degrees = self.orbital(target)?.degrees_of_freedom;
+        let source_degrees = self.orbital(source)?.degrees_of_freedom;
+        validate_shape(&amplitude, target_degrees, source_degrees)?;
+        let cell_offset: Vec<i32> = cell_offset.into_iter().collect();
+        if cell_offset.len() != self.lattice.real_dimension() {
+            return Err(ModelError::InvalidCellOffset {
+                expected: self.lattice.real_dimension(),
+                actual: cell_offset.len(),
+            });
+        }
+        if target == source && cell_offset.iter().all(|component| *component == 0) {
+            return Err(ModelError::SelfHoppingAtHome);
+        }
+
+        for existing in &mut self.hoppings {
+            let same = existing.target == target
+                && existing.source == source
+                && existing.cell_offset == cell_offset;
+            let partner = existing.target == source
+                && existing.source == target
+                && existing
+                    .cell_offset
+                    .iter()
+                    .zip(&cell_offset)
+                    .all(|(left, right)| *left == -*right);
+            if !same && !partner {
+                continue;
+            }
+            let contribution = if partner {
+                amplitude.adjoint()
+            } else {
+                amplitude
+            };
+            for row in 0..existing.amplitude.rows() {
+                for column in 0..existing.amplitude.columns() {
+                    existing
+                        .amplitude
+                        .add_entry(row, column, contribution.get(row, column)?)?;
+                }
+            }
+            return Ok(());
+        }
+
+        self.hoppings.push(Hopping {
+            target,
+            source,
+            cell_offset,
+            amplitude,
+        });
+        Ok(())
+    }
+
     /// Finalizes structural validation and returns an immutable model.
     pub fn build(self) -> Result<TightBindingModel, ModelError> {
         if self.orbitals.is_empty() {
@@ -392,6 +456,12 @@ impl TightBindingModel {
     #[must_use]
     pub fn onsite(&self, orbital: OrbitalId) -> Option<&ComplexMatrix> {
         self.onsite.get(orbital.index())
+    }
+
+    /// Returns all onsite blocks in orbital order.
+    #[must_use]
+    pub fn onsite_blocks(&self) -> &[ComplexMatrix] {
+        &self.onsite
     }
 
     /// Returns all explicit hopping blocks.

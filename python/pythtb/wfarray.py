@@ -93,6 +93,15 @@ class WFArray:
     def energies(self):
         return self._energies
 
+    def empty_like(self, nstates=None):
+        """Create an unfilled wavefunction array on the same lattice and mesh."""
+        return type(self)(
+            self.lattice,
+            self.mesh,
+            nstates=self.nstates if nstates is None else int(nstates),
+            spinful=self.spinful,
+        )
+
     def __getitem__(self, index):
         return self._wfs[index]
 
@@ -391,6 +400,55 @@ class WFArray:
         if self._energies is None:
             self._energies = np.empty(self.shape_mesh + (self.nstates,), dtype=float)
         self._energies[tuple(mesh_indices)] = values
+
+    def position_matrix(self, pos_dir, mesh_idx, state_idx=None):
+        if not hasattr(self, "_model"):
+            raise ValueError("Position operators require states solved from a model")
+        indices = (
+            np.arange(self.nstates, dtype=int)
+            if state_idx is None
+            else np.atleast_1d(state_idx).astype(int)
+        )
+        if np.any(indices < 0) or np.any(indices >= self.nstates):
+            raise IndexError("state index is outside the WFArray")
+        states = self._wfs[tuple(mesh_idx)][indices]
+        return self._model.position_matrix(states, int(pos_dir))
+
+    def position_expectation(self, pos_dir, mesh_idx=None, state_idx=None):
+        if mesh_idx is not None:
+            matrix = self.position_matrix(pos_dir, mesh_idx, state_idx)
+            return np.asarray(np.real(np.diag(matrix)), dtype=float)
+        values = []
+        for index in np.ndindex(self.shape_mesh):
+            matrix = self.position_matrix(pos_dir, index, state_idx)
+            values.append(np.asarray(np.real(np.diag(matrix)), dtype=float))
+        state_count = self.nstates if state_idx is None else len(np.atleast_1d(state_idx))
+        return np.asarray(values).reshape(self.shape_mesh + (state_count,))
+
+    def position_hwf(
+        self,
+        pos_dir,
+        mesh_idx,
+        state_idx=None,
+        hwf_evec=False,
+        basis="wavefunction",
+    ):
+        if not hasattr(self, "_model"):
+            raise ValueError("Position operators require states solved from a model")
+        indices = (
+            np.arange(self.nstates, dtype=int)
+            if state_idx is None
+            else np.atleast_1d(state_idx).astype(int)
+        )
+        if np.any(indices < 0) or np.any(indices >= self.nstates):
+            raise IndexError("state index is outside the WFArray")
+        states = self._wfs[tuple(mesh_idx)][indices]
+        return self._model.position_hwf(
+            states,
+            int(pos_dir),
+            hwf_evec=bool(hwf_evec),
+            basis=basis,
+        )
 
     def berry_phase(
         self, axis_idx, state_idx=None, berry_evals=False, contin=True

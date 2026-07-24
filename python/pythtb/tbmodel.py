@@ -646,6 +646,128 @@ class TBModel:
             )
         return centers, orbital_hybrid
 
+    def chern_number(
+        self,
+        plane,
+        nks,
+        occ_idxs=None,
+        *,
+        param_periods=None,
+        diff_scheme="central",
+        diff_order=4,
+        use_tensorflow=False,
+        **params,
+    ):
+        """Compute a first Chern number from Rust-evaluated occupied subspaces."""
+        sizes = tuple(int(size) for size in nks)
+        if len(sizes) != self.dim_k:
+            raise ValueError("nks must provide one entry per periodic direction.")
+        if not isinstance(plane, tuple) or len(plane) != 2:
+            raise ValueError("plane must be a tuple of two axis indices.")
+        first, second = (int(plane[0]), int(plane[1]))
+        if first == second:
+            raise ValueError("Chern number plane indices must be different.")
+        occupied = (
+            list(range(self.nstate // 2))
+            if occ_idxs is None
+            else np.atleast_1d(occ_idxs).astype(int).tolist()
+        )
+        if use_tensorflow:
+            warnings.warn(
+                "Thouless evaluates Chern numbers in its Rust core; "
+                "use_tensorflow is ignored."
+            )
+        if diff_scheme not in ("central", "forward"):
+            raise ValueError("diff_scheme must be 'central' or 'forward'")
+        if diff_order < 1:
+            raise ValueError("diff_order must be positive")
+
+        has_sweep = any(np.asarray(value).ndim != 0 for value in params.values())
+        if not has_sweep:
+            values, spectator_shape = _core.uniform_grid_chern(
+                *self._backend_args(params),
+                list(sizes),
+                [first, second],
+                occupied,
+            )
+            result = np.asarray(values, dtype=float)
+            if spectator_shape:
+                return result.reshape(tuple(spectator_shape))
+            return float(result[0])
+
+        return self._chern_number_with_parameter_sweeps(
+            (first, second),
+            sizes,
+            occupied,
+            {} if param_periods is None else dict(param_periods),
+            params,
+        )
+
+    def _chern_number_with_parameter_sweeps(
+        self,
+        plane,
+        sizes,
+        occupied,
+        param_periods,
+        params,
+    ):
+        from .mesh import Mesh
+        from .wfarray import WFArray
+
+        scalar_params = {}
+        sweep_names = []
+        sweep_values = []
+        for name, value in params.items():
+            array = np.asarray(value)
+            if array.ndim == 0:
+                scalar_params[name] = array.item()
+            elif array.ndim == 1 and array.size >= 2:
+                sweep_names.append(name)
+                sweep_values.append(array.astype(float))
+            else:
+                raise ValueError(
+                    f"Swept parameter {name!r} must be a 1D array "
+                    "with at least two samples."
+                )
+        if scalar_params:
+            model = self.copy().set_parameters(scalar_params)
+        else:
+            model = self
+
+        coordinate_axes = [
+            np.arange(size, dtype=float) / size for size in sizes
+        ] + sweep_values
+        grids = np.meshgrid(*coordinate_axes, indexing="ij")
+        points = np.stack(grids, axis=-1)
+        mesh = Mesh(
+            ["k"] * self.dim_k + ["l"] * len(sweep_names),
+            axis_names=[f"k_{axis}" for axis in range(self.dim_k)] + sweep_names,
+            dim_k=self.dim_k,
+        )
+        mesh.build_custom(points)
+        for axis in range(self.dim_k):
+            mesh.loop(axis, axis, winds_bz=True)
+        for parameter_index, (name, values) in enumerate(
+            zip(sweep_names, sweep_values, strict=True)
+        ):
+            if name not in param_periods:
+                continue
+            axis = self.dim_k + parameter_index
+            component = self.dim_k + parameter_index
+            period = float(param_periods[name])
+            duplicate_endpoint = np.isclose(values[-1] - values[0], period) or np.isclose(
+                values[-1], values[0]
+            )
+            mesh.loop(axis, component, closed=bool(duplicate_endpoint))
+
+        wavefunctions = WFArray(
+            model.lattice,
+            mesh,
+            spinful=model.spinful,
+        )
+        wavefunctions.solve_model(model)
+        return wavefunctions.chern_number(plane=plane, state_idx=occupied)
+
     def k_uniform_mesh(self, mesh_size):
         sizes = tuple(int(size) for size in mesh_size)
         if len(sizes) != self.dim_k:
@@ -655,6 +777,121 @@ class TBModel:
 
     def k_path(self, k_nodes, nk, report=False):
         return self._lattice.k_path(k_nodes, nk, report)
+
+    def _replace_from_backend(self, data):
+        (
+            primitive_vectors,
+            periodic_axes,
+            orbital_positions,
+            degrees_of_freedom,
+            onsite_blocks,
+            hoppings,
+        ) = data
+        if any(int(degrees) != self.nspin for degrees in degrees_of_freedom):
+            raise ValueError(
+                "Transformed model has internal degrees of freedom "
+                "incompatible with the PythTB spin convention."
+            )
+        self._lattice = Lattice(
+            primitive_vectors,
+            orbital_positions,
+            periodic_axes,
+        )
+        blocks = np.asarray(onsite_blocks, dtype=complex)
+        self._site_energies = (
+            blocks
+            if self.spinful
+            else np.asarray(blocks[:, 0, 0].real, dtype=float)
+        )
+        self._hoppings = [
+            {
+                "target": int(target),
+                "source": int(source),
+                "offset": tuple(int(value) for value in offset),
+                "amplitude": np.asarray(amplitude, dtype=complex),
+            }
+            for target, source, offset, amplitude in hoppings
+        ]
+
+    def remove_orb(self, to_remove):
+        """Remove orbital subspaces and compact all remaining hopping indices."""
+        if isinstance(to_remove, int):
+            indices = [to_remove]
+        elif isinstance(to_remove, (list, np.ndarray)):
+            indices = list(to_remove)
+        else:
+            raise TypeError("to_remove must be an integer or a list of integers.")
+        for index in indices:
+            if not isinstance(index, int):
+                raise TypeError("All indices in to_remove must be integers.")
+            if index < 0 or index >= self.norb:
+                raise ValueError("Index out of bounds.")
+        if len(indices) != len(set(indices)):
+            raise ValueError("All indices in to_remove must be unique.")
+        if self._onsite_providers or self._hopping_providers:
+            raise ValueError(
+                "Resolve parameter-dependent terms with set_parameters before "
+                "removing orbitals."
+            )
+        transformed = _core.remove_model_orbitals(
+            *self._backend_args({}),
+            indices,
+        )
+        self._replace_from_backend(transformed)
+
+    def change_nonperiodic_vector(
+        self,
+        fin_dir,
+        new_latt_vec=None,
+        to_home=True,
+    ):
+        """Change one open real-space basis vector without moving the geometry."""
+        if not isinstance(fin_dir, int):
+            raise TypeError("Argument fin_dir must be an integer")
+        if self._onsite_providers or self._hopping_providers:
+            raise ValueError(
+                "Resolve parameter-dependent terms with set_parameters before "
+                "changing lattice vectors."
+            )
+        replacement = (
+            None
+            if new_latt_vec is None
+            else np.asarray(new_latt_vec, dtype=float).tolist()
+        )
+        transformed = _core.change_model_nonperiodic_vector(
+            *self._backend_args({}),
+            fin_dir,
+            bool(to_home),
+            replacement,
+        )
+        self._replace_from_backend(transformed)
+
+    def make_supercell(
+        self,
+        sc_red_lat,
+        return_sc_vectors=False,
+        to_home=True,
+    ):
+        """Return a commensurate model generated by a Rust core transformation."""
+        integer_basis = np.asarray(sc_red_lat)
+        if integer_basis.shape != (self.dim_r, self.dim_r):
+            raise ValueError("Dimension of sc_red_lat array must be dim_r*dim_r")
+        if not np.issubdtype(integer_basis.dtype, np.integer):
+            raise TypeError("sc_red_lat array elements must be integers")
+        if self._onsite_providers or self._hopping_providers:
+            raise ValueError(
+                "Resolve parameter-dependent terms with set_parameters before "
+                "constructing a supercell."
+            )
+        transformed, translations = _core.make_model_supercell(
+            *self._backend_args({}),
+            integer_basis.astype(int).tolist(),
+            bool(to_home),
+        )
+        result = self.copy()
+        result._replace_from_backend(transformed)
+        translations = np.asarray(translations, dtype=int)
+        return (result, translations) if return_sc_vectors else result
 
     def cut_piece(
         self,

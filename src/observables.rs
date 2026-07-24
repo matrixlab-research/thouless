@@ -43,3 +43,25 @@ pub fn project_diagonal_observable(
     }
     Ok(projected)
 }
+
+/// Decomposes a two-state operator into identity and Pauli coefficients.
+pub fn pauli_coefficients(matrix: &ComplexMatrix) -> Result<[Complex64; 4], ObservableError> {
+    if matrix.shape() != (2, 2) {
+        return Err(ObservableError::InvalidPauliShape {
+            rows: matrix.rows(),
+            columns: matrix.columns(),
+        });
+    }
+    let half = Complex64::new(0.5, 0.0);
+    let imaginary_half = Complex64::new(0.0, 0.5);
+    let m00 = matrix.as_slice()[0];
+    let m01 = matrix.as_slice()[1];
+    let m10 = matrix.as_slice()[2];
+    let m11 = matrix.as_slice()[3];
+    Ok([
+        half * (m00 + m11),
+        half * (m01 + m10),
+        imaginary_half * (m01 - m10),
+        half * (m00 - m11),
+    ])
+}

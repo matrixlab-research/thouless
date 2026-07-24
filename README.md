@@ -13,11 +13,13 @@ interfaces while calling the same Rust core.
 **Incomplete implementation.**
 
 The repository currently implements reusable model construction, dense
-Hermitian assembly, eigensolvers, momentum derivatives, discrete Wilson phases
-and Berry fluxes, reciprocal paths, parallel transport, and local-observable
-projection in Rust, a Python extension, and partial PythTB 2.0 compatibility.
-It does not yet implement the complete PythTB surface, complete topology and
-response theory, open-system transport, or the Kwant compatibility package.
+Hermitian assembly, eigensolvers, momentum derivatives, discrete Wilson phases,
+Berry fluxes and uniform-grid Chern numbers, reciprocal paths, parallel
+transport, local-observable projection, and structure-preserving model
+transformations in Rust. The Python extension and partial PythTB 2.0 layer pass
+95 of the 98 pinned upstream tests without changing their tolerances. It does
+not yet implement the complete PythTB surface, complete topology and response
+theory, open-system transport, or the Kwant compatibility package.
 
 A green CI run currently means:
 
@@ -100,8 +102,9 @@ maturin develop
 PYTHONPATH=python python -m pytest -q -ra compat-tests
 ```
 
-Kwant compatibility tests currently skip against issue #5. PythTB compatibility
-tests execute through the repository-built extension. A skip without a linked
+Kwant compatibility tests currently skip against issue #5. The strict PythTB
+runner executes 95 pinned source tests through the repository-built extension;
+the remaining three tests are tracked in issue #4. A skip without a linked
 issue is a CI error.
 
 ## Source baselines

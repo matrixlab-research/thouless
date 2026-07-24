@@ -3,16 +3,26 @@ use pyo3::prelude::*;
 use thouless::differentiation::{finite_difference_uniform, DifferenceScheme};
 use thouless::geometry::ReciprocalPath;
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
-use thouless::observables::project_diagonal_observable;
+use thouless::observables::{pauli_coefficients, project_diagonal_observable};
 use thouless::spectrum::hermitian_eigensystem;
 use thouless::topology::{
-    connection_from_link, parallel_transport_link, plaquette_flux, wilson_line_phase,
-    wilson_loop_eigenphases,
+    chern_numbers_on_uniform_grid, connection_from_link, parallel_transport_link, plaquette_flux,
+    wilson_line_phase, wilson_loop_eigenphases,
 };
+use thouless::transform::{change_nonperiodic_vector, make_supercell, remove_orbitals};
 use thouless::{Complex64, ComplexMatrix};
 
 type HoppingInput = (usize, usize, Vec<i32>, Vec<Vec<Complex64>>);
+type ModelOutput = (
+    Vec<Vec<f64>>,
+    Vec<usize>,
+    Vec<Vec<f64>>,
+    Vec<usize>,
+    Vec<Vec<Vec<Complex64>>>,
+    Vec<HoppingInput>,
+);
 type ReciprocalPathOutput = (Vec<Vec<f64>>, Vec<f64>, Vec<f64>);
+type SupercellOutput = (ModelOutput, Vec<Vec<i32>>);
 
 fn value_error(error: impl std::fmt::Display) -> PyErr {
     PyValueError::new_err(error.to_string())
@@ -91,6 +101,36 @@ fn orbital_id(orbitals: &[OrbitalId], index: usize) -> PyResult<OrbitalId> {
         .ok_or_else(|| PyValueError::new_err(format!("unknown orbital index {index}")))
 }
 
+fn model_to_output(model: &TightBindingModel) -> ModelOutput {
+    (
+        model.lattice().primitive_vectors().to_vec(),
+        model.lattice().periodic_axes().to_vec(),
+        model
+            .orbitals()
+            .iter()
+            .map(|orbital| orbital.reduced_position().to_vec())
+            .collect(),
+        model
+            .orbitals()
+            .iter()
+            .map(thouless::model::Orbital::degrees_of_freedom)
+            .collect(),
+        model.onsite_blocks().iter().map(matrix_to_rows).collect(),
+        model
+            .hoppings()
+            .iter()
+            .map(|hopping| {
+                (
+                    hopping.target().index(),
+                    hopping.source().index(),
+                    hopping.cell_offset().to_vec(),
+                    matrix_to_rows(hopping.amplitude()),
+                )
+            })
+            .collect(),
+    )
+}
+
 #[pyfunction]
 fn hamiltonian(
     primitive_vectors: Vec<Vec<f64>>,
@@ -138,6 +178,134 @@ fn eigensystem(
         solution.eigenvalues().to_vec(),
         matrix_to_rows(solution.eigenvectors()),
     ))
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn remove_model_orbitals(
+    primitive_vectors: Vec<Vec<f64>>,
+    periodic_axes: Vec<usize>,
+    orbital_positions: Vec<Vec<f64>>,
+    degrees_of_freedom: Vec<usize>,
+    onsite_blocks: Vec<Vec<Vec<Complex64>>>,
+    hoppings: Vec<HoppingInput>,
+    removed: Vec<usize>,
+) -> PyResult<ModelOutput> {
+    let model = build_model(
+        primitive_vectors,
+        periodic_axes,
+        orbital_positions,
+        degrees_of_freedom,
+        onsite_blocks,
+        hoppings,
+    )?;
+    remove_orbitals(&model, &removed)
+        .map(|transformed| model_to_output(&transformed))
+        .map_err(value_error)
+}
+
+#[pyfunction]
+#[pyo3(signature = (
+    primitive_vectors,
+    periodic_axes,
+    orbital_positions,
+    degrees_of_freedom,
+    onsite_blocks,
+    hoppings,
+    direction,
+    move_periodic_to_home,
+    replacement=None
+))]
+#[allow(clippy::too_many_arguments)]
+fn change_model_nonperiodic_vector(
+    primitive_vectors: Vec<Vec<f64>>,
+    periodic_axes: Vec<usize>,
+    orbital_positions: Vec<Vec<f64>>,
+    degrees_of_freedom: Vec<usize>,
+    onsite_blocks: Vec<Vec<Vec<Complex64>>>,
+    hoppings: Vec<HoppingInput>,
+    direction: usize,
+    move_periodic_to_home: bool,
+    replacement: Option<Vec<f64>>,
+) -> PyResult<ModelOutput> {
+    let model = build_model(
+        primitive_vectors,
+        periodic_axes,
+        orbital_positions,
+        degrees_of_freedom,
+        onsite_blocks,
+        hoppings,
+    )?;
+    change_nonperiodic_vector(
+        &model,
+        direction,
+        replacement.as_deref(),
+        move_periodic_to_home,
+    )
+    .map(|transformed| model_to_output(&transformed))
+    .map_err(value_error)
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn make_model_supercell(
+    primitive_vectors: Vec<Vec<f64>>,
+    periodic_axes: Vec<usize>,
+    orbital_positions: Vec<Vec<f64>>,
+    degrees_of_freedom: Vec<usize>,
+    onsite_blocks: Vec<Vec<Vec<Complex64>>>,
+    hoppings: Vec<HoppingInput>,
+    integer_basis: Vec<Vec<i32>>,
+    move_periodic_to_home: bool,
+) -> PyResult<SupercellOutput> {
+    let model = build_model(
+        primitive_vectors,
+        periodic_axes,
+        orbital_positions,
+        degrees_of_freedom,
+        onsite_blocks,
+        hoppings,
+    )?;
+    make_supercell(&model, &integer_basis, move_periodic_to_home)
+        .map(|result| {
+            (
+                model_to_output(result.model()),
+                result.translations().to_vec(),
+            )
+        })
+        .map_err(value_error)
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn uniform_grid_chern(
+    primitive_vectors: Vec<Vec<f64>>,
+    periodic_axes: Vec<usize>,
+    orbital_positions: Vec<Vec<f64>>,
+    degrees_of_freedom: Vec<usize>,
+    onsite_blocks: Vec<Vec<Vec<Complex64>>>,
+    hoppings: Vec<HoppingInput>,
+    samples: Vec<usize>,
+    plane: Vec<usize>,
+    occupied_states: Vec<usize>,
+) -> PyResult<(Vec<f64>, Vec<usize>)> {
+    if plane.len() != 2 {
+        return Err(PyValueError::new_err(
+            "Chern plane must contain exactly two directions",
+        ));
+    }
+    let model = build_model(
+        primitive_vectors,
+        periodic_axes,
+        orbital_positions,
+        degrees_of_freedom,
+        onsite_blocks,
+        hoppings,
+    )?;
+    let result =
+        chern_numbers_on_uniform_grid(&model, &samples, [plane[0], plane[1]], &occupied_states)
+            .map_err(value_error)?;
+    Ok((result.values().to_vec(), result.spectator_shape().to_vec()))
 }
 
 #[pyfunction]
@@ -274,6 +442,14 @@ fn matrix_eigensystem(matrix: Vec<Vec<Complex64>>) -> PyResult<(Vec<f64>, Vec<Ve
 }
 
 #[pyfunction]
+fn pauli_decompose(matrix: Vec<Vec<Complex64>>) -> PyResult<Vec<Complex64>> {
+    let matrix = matrix_from_rows(matrix)?;
+    pauli_coefficients(&matrix)
+        .map(|values| values.to_vec())
+        .map_err(value_error)
+}
+
+#[pyfunction]
 fn reciprocal_path(
     primitive_vectors: Vec<Vec<f64>>,
     periodic_axes: Vec<usize>,
@@ -294,6 +470,10 @@ fn reciprocal_path(
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(hamiltonian, module)?)?;
     module.add_function(wrap_pyfunction!(eigensystem, module)?)?;
+    module.add_function(wrap_pyfunction!(remove_model_orbitals, module)?)?;
+    module.add_function(wrap_pyfunction!(change_model_nonperiodic_vector, module)?)?;
+    module.add_function(wrap_pyfunction!(make_model_supercell, module)?)?;
+    module.add_function(wrap_pyfunction!(uniform_grid_chern, module)?)?;
     module.add_function(wrap_pyfunction!(momentum_derivatives, module)?)?;
     module.add_function(wrap_pyfunction!(finite_difference, module)?)?;
     module.add_function(wrap_pyfunction!(wilson_phase, module)?)?;
@@ -303,6 +483,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(link_connection, module)?)?;
     module.add_function(wrap_pyfunction!(diagonal_observable_matrix, module)?)?;
     module.add_function(wrap_pyfunction!(matrix_eigensystem, module)?)?;
+    module.add_function(wrap_pyfunction!(pauli_decompose, module)?)?;
     module.add_function(wrap_pyfunction!(reciprocal_path, module)?)?;
     Ok(())
 }

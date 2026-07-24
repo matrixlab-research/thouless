@@ -1,8 +1,9 @@
 //! Rust-native building blocks for tight-binding, topology, and steady-state
 //! quantum transport.
 //!
-//! The crate is in its bootstrap stage. The currently implemented surface is
-//! limited to model construction and structural invariants. Numerical
+//! The implementation is incomplete, but already includes model construction,
+//! dense spectral algorithms, reciprocal geometry, discrete topology,
+//! observables, and structure-preserving model transformations. Remaining
 //! capabilities are tracked in the repository coverage matrices and issues.
 
 #![forbid(unsafe_code)]
@@ -15,6 +16,7 @@ pub mod model;
 pub mod observables;
 pub mod spectrum;
 pub mod topology;
+pub mod transform;
 
 pub use error::{
     DifferentiationError, GeometryError, MatrixError, ModelError, ObservableError, SpectrumError,

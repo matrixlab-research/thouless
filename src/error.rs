@@ -467,6 +467,13 @@ pub enum ObservableError {
     },
     /// An observable value is NaN or infinity.
     NonFiniteValue,
+    /// Pauli decomposition requires a two-by-two matrix.
+    InvalidPauliShape {
+        /// Supplied number of rows.
+        rows: usize,
+        /// Supplied number of columns.
+        columns: usize,
+    },
 }
 
 impl fmt::Display for ObservableError {
@@ -478,6 +485,10 @@ impl fmt::Display for ObservableError {
                 "diagonal observable has {actual} values; expected {expected}"
             ),
             Self::NonFiniteValue => write!(formatter, "observable values must be finite"),
+            Self::InvalidPauliShape { rows, columns } => write!(
+                formatter,
+                "Pauli decomposition requires a 2x2 matrix, got {rows}x{columns}"
+            ),
         }
     }
 }
