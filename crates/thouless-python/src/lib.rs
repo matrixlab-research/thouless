@@ -374,11 +374,12 @@ fn finite_difference(
         .map_err(value_error)
 }
 
-#[pyfunction]
+#[pyfunction(signature = (device_hamiltonian, leads, energy, broadening=None))]
 fn open_system_transmissions(
     device_hamiltonian: Vec<Vec<Complex64>>,
     leads: Vec<LeadInput>,
     energy: f64,
+    broadening: Option<f64>,
 ) -> PyResult<Vec<Vec<f64>>> {
     let device_hamiltonian = matrix_from_rows(device_hamiltonian)?;
     let leads = leads
@@ -392,13 +393,12 @@ fn open_system_transmissions(
             .map_err(value_error)
         })
         .collect::<PyResult<Vec<_>>>()?;
-    let solution = solve_open_system(
-        &device_hamiltonian,
-        &leads,
-        energy,
-        SurfaceGreenOptions::default(),
-    )
-    .map_err(value_error)?;
+    let mut options = SurfaceGreenOptions::default();
+    if let Some(broadening) = broadening {
+        options.broadening = broadening;
+    }
+    let solution =
+        solve_open_system(&device_hamiltonian, &leads, energy, options).map_err(value_error)?;
     (0..leads.len())
         .map(|drain| {
             (0..leads.len())
@@ -408,11 +408,12 @@ fn open_system_transmissions(
         .collect()
 }
 
-#[pyfunction]
+#[pyfunction(signature = (device_hamiltonian, leads, energy, broadening=None))]
 fn open_system_solution(
     device_hamiltonian: Vec<Vec<Complex64>>,
     leads: Vec<LeadInput>,
     energy: f64,
+    broadening: Option<f64>,
 ) -> PyResult<OpenSystemOutput> {
     let device_hamiltonian = matrix_from_rows(device_hamiltonian)?;
     let leads = leads
@@ -426,13 +427,12 @@ fn open_system_solution(
             .map_err(value_error)
         })
         .collect::<PyResult<Vec<_>>>()?;
-    let solution = solve_open_system(
-        &device_hamiltonian,
-        &leads,
-        energy,
-        SurfaceGreenOptions::default(),
-    )
-    .map_err(value_error)?;
+    let mut options = SurfaceGreenOptions::default();
+    if let Some(broadening) = broadening {
+        options.broadening = broadening;
+    }
+    let solution =
+        solve_open_system(&device_hamiltonian, &leads, energy, options).map_err(value_error)?;
     let transmissions = (0..leads.len())
         .map(|drain| {
             (0..leads.len())

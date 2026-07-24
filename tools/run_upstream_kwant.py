@@ -44,6 +44,12 @@ def main() -> int:
     tests_package = types.ModuleType("kwant.tests")
     tests_package.__path__ = [str(checkout / "kwant" / "tests")]
     sys.modules["kwant.tests"] = tests_package
+    kwant.solvers.__path__ = []
+    solver_tests_package = types.ModuleType("kwant.solvers.tests")
+    solver_tests_package.__path__ = [
+        str(checkout / "kwant" / "solvers" / "tests")
+    ]
+    sys.modules["kwant.solvers.tests"] = solver_tests_package
 
     test_nodes = [str(checkout / node) for node in manifest["strict_test_nodes"]]
     return pytest.main(["-q", "-ra", *test_nodes])

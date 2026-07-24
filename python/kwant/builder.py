@@ -997,6 +997,53 @@ class InfiniteSystem:
         shifted = cell - float(energy) * np.eye(cell.shape[0])
         return physics.modes(shifted, square_hopping)
 
+    def selfenergy(self, energy=0, args=(), *, params=None):
+        cell = self.cell_hamiltonian(args=args, params=params)
+        inter_cell = self.inter_cell_hopping(args=args, params=params)
+        cell_dimension, interface_dimension = inter_cell.shape
+        cell_to_previous = np.zeros(
+            (cell_dimension, cell_dimension), dtype=complex
+        )
+        cell_to_previous[:, :interface_dimension] = inter_cell
+        lead_hopping = cell_to_previous.conj().T
+        coupling = inter_cell.conj().T
+        dummy_device = np.zeros(
+            (interface_dimension, interface_dimension), dtype=complex
+        )
+        lead_data = [
+            (
+                cell.tolist(),
+                lead_hopping.tolist(),
+                coupling.tolist(),
+            )
+        ]
+        _, narrow, _, _ = _core.open_system_solution(
+            dummy_device.tolist(), lead_data, float(energy)
+        )
+        _, wide, _, _ = _core.open_system_solution(
+            dummy_device.tolist(), lead_data, float(energy), 2.0e-6
+        )
+        sigma = (
+            2 * np.asarray(narrow[0], dtype=complex)
+            - np.asarray(wide[0], dtype=complex)
+        )
+        gamma = 1j * (sigma - sigma.conj().T)
+        mode_count = len(
+            self.modes(energy, args=args, params=params)[0].momenta
+        ) // 2
+        eigenvalues, eigenvectors = np.linalg.eigh(
+            0.5 * (gamma + gamma.conj().T)
+        )
+        order = np.argsort(eigenvalues)[::-1][:mode_count]
+        if len(order):
+            vectors = eigenvectors[:, order]
+            gamma = (
+                vectors * np.maximum(eigenvalues[order], 0.0)
+            ) @ vectors.conj().T
+        else:
+            gamma = np.zeros_like(sigma)
+        return 0.5 * (sigma + sigma.conj().T) - 0.5j * gamma
+
     def reversed(self):
         return self._builder.reversed().finalized()
 
@@ -1040,7 +1087,7 @@ class FiniteSystem:
                     for site in builder._interface_sites(lead)
                 ]
             lead_interfaces.append(np.asarray(interface, dtype=int))
-        self.leads = tuple(finalized_leads)
+        self.leads = list(finalized_leads)
         self.lead_interfaces = tuple(lead_interfaces)
 
     def _evaluated_onsites(self, args=(), params=None):
@@ -1190,11 +1237,12 @@ class FiniteSystem:
             inter_cell = lead_system.inter_cell_hopping(args=args, params=params)
             cell_dimension = cell.shape[0]
             interface_dimension = inter_cell.shape[1]
-            hopping = np.zeros(
+            cell_to_previous = np.zeros(
                 (cell_dimension, cell_dimension),
                 dtype=complex,
             )
-            hopping[:, :interface_dimension] = inter_cell
+            cell_to_previous[:, :interface_dimension] = inter_cell
+            lead_hopping = cell_to_previous.conj().T
             device_basis = np.concatenate(
                 [
                     np.arange(offsets[index], offsets[index + 1])
@@ -1207,7 +1255,9 @@ class FiniteSystem:
                 )
             coupling = np.zeros((device.shape[0], cell_dimension), dtype=complex)
             coupling[device_basis, :] = inter_cell.conj().T
-            lead_data.append((cell.tolist(), hopping.tolist(), coupling.tolist()))
+            lead_data.append(
+                (cell.tolist(), lead_hopping.tolist(), coupling.tolist())
+            )
         return device, lead_data
 
     def precalculate(self, energy=0, args=(), leads=None, what="modes", *, params=None):
@@ -1215,6 +1265,7 @@ class FiniteSystem:
             raise ValueError("what must be 'modes', 'selfenergy', or 'all'")
         result = copy.copy(self)
         result._precalculated_energy = float(energy)
+        result._precalculated_what = what
         return result
 
 
