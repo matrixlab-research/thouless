@@ -7,8 +7,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod differentiation;
 mod error;
+pub mod matrix;
 pub mod model;
+pub mod spectrum;
 
-pub use error::ModelError;
+pub use error::{DifferentiationError, MatrixError, ModelError, SpectrumError};
+pub use matrix::ComplexMatrix;
 pub use num_complex::Complex64;

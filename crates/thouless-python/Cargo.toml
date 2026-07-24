@@ -1,0 +1,17 @@
+[package]
+name = "thouless-python"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.81"
+license = "MIT"
+publish = false
+
+[lib]
+name = "_core"
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[dependencies]
+pyo3 = { version = "0.23.5", features = ["num-complex"] }
+thouless = { path = "../.." }

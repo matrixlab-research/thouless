@@ -1,0 +1,26 @@
+schema_version = 1
+package = "PythTB"
+version = "2.0.0"
+repository = "https://github.com/pythtb/pythtb"
+tag = "v2.0.0"
+commit = "0f3bb0b8588101cafbdf428c70fb43c9302fe7cf"
+license = "GPL-3.0-or-later"
+test_root = "tests"
+collection_status = "complete"
+collected_tests = 98
+strict_tests = 48
+python = "3.12"
+collection_command = "python -m pytest --collect-only -q"
+gap_issue = "https://github.com/matrixlab-research/thouless/issues/4"
+
+strict_test_files = [
+  "tests/test_package.py",
+  "tests/test_lattice/test_lattice_init.py",
+  "tests/test_tbmodel/test_initialization.py",
+  "tests/test_tbmodel/test_set_onsite.py",
+  "tests/test_tbmodel/test_parameterize.py",
+  "tests/test_tbmodel/test_ham_vel.py",
+  "tests/tests_mesh/test_mesh_init.py",
+  "tests/tests_mesh/test_mesh_build_grid.py",
+  "tests/test_wfarray/test_wfa_init.py",
+]

@@ -1,0 +1,14 @@
+schema_version = 1
+package = "Kwant"
+version = "1.5.0"
+repository = "https://gitlab.kwant-project.org/kwant/kwant.git"
+tag = "v1.5.0"
+tag_object = "14c11d546994e31348c4fe74b1f9594ddafaa589"
+commit = "de315f171270d62ee2412c4084260c912cc4d58f"
+license = "BSD-2-Clause"
+test_root = "kwant"
+test_modules = 24
+static_test_functions = 241
+collection_status = "blocked"
+collection_blocker = "The source test suite imports compiled Cython extensions before collection."
+gap_issue = "https://github.com/matrixlab-research/thouless/issues/5"

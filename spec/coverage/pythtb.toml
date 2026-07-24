@@ -2,16 +2,18 @@ schema_version = 1
 source_package = "PythTB"
 source_version = "2.0.0"
 source_repository = "https://github.com/pythtb/pythtb"
+source_commit = "0f3bb0b8588101cafbdf428c70fb43c9302fe7cf"
+collected_tests = 98
 inventory_status = "incomplete"
 inventory_issue = "https://github.com/matrixlab-research/thouless/issues/4"
 
 [[interface]]
-name = "tb_model construction and mutation"
-source_entries = ["tb_model", "set_onsite", "set_hop"]
+name = "lattice and model construction"
+source_entries = ["Lattice", "TBModel", "tb_model", "set_onsite", "set_hop"]
 compat_entry = "python/pythtb"
 rust_capability = "model.structure"
 public_test = "compat-tests/test_pythtb_api.py"
-status = "missing"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/4"
 
 [[interface]]
@@ -20,7 +22,7 @@ source_entries = ["solve_one", "solve_all"]
 compat_entry = "python/pythtb"
 rust_capability = "spectrum.periodic"
 public_test = "compat-tests/test_pythtb_api.py"
-status = "missing"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/4"
 
 [[interface]]
@@ -36,12 +38,14 @@ source_entries = [
 compat_entry = "python/pythtb"
 rust_capability = "geometry.finite"
 public_test = "compat-tests/test_pythtb_api.py"
-status = "missing"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/4"
 
 [[interface]]
-name = "wavefunction arrays and Berry quantities"
+name = "meshes, wavefunction arrays, and Berry quantities"
 source_entries = [
+  "Mesh",
+  "WFArray",
   "wf_array",
   "solve_on_grid",
   "solve_on_one_point",
@@ -52,7 +56,7 @@ source_entries = [
 compat_entry = "python/pythtb"
 rust_capability = "geometry.topology"
 public_test = "compat-tests/test_pythtb_api.py"
-status = "missing"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/4"
 
 [[interface]]

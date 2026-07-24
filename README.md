@@ -10,17 +10,20 @@ interfaces while calling the same Rust core.
 
 ## Current status
 
-**Incomplete bootstrap.**
+**Incomplete implementation.**
 
-The repository currently implements only model-construction objects and their
-structural invariants. It does not yet implement eigensolvers, topology,
-response theory, open-system transport, or either compatibility package.
+The repository currently implements the first reusable vertical slice:
+model construction, dense Hermitian assembly, a Rust eigensolver, a Python
+extension, and partial PythTB 2.0 compatibility. It does not yet implement the
+complete PythTB surface, topology, response theory, open-system transport, or
+the Kwant compatibility package.
 
 A green CI run currently means:
 
-- the implemented Rust model invariants pass;
+- the implemented Rust model and spectral invariants pass;
 - the coverage matrices are internally consistent;
 - compatibility tests cannot accidentally run against the original packages;
+- the implemented PythTB smoke contracts execute through the Rust extension;
 - every intentionally skipped compatibility suite links to an open issue.
 
 It does **not** mean that the scientific package or compatibility targets are
@@ -57,7 +60,7 @@ The first native module is:
 use thouless::model::{Lattice, ModelBuilder};
 use thouless::Complex64;
 
-let lattice = Lattice::new(1, vec![vec![1.0]])?;
+let lattice = Lattice::new(vec![vec![1.0]], vec![0])?;
 let mut builder = ModelBuilder::new(lattice);
 let orbital = builder.add_orbital("s", [0.0])?;
 builder.set_onsite(orbital, 0.25)?;
@@ -73,9 +76,10 @@ let model = builder.build()?;
   entry points.
 - `spec/coverage/` maps scientific capabilities and source interfaces to tests,
   implementation status, and GitHub issues.
-- The exact upstream source-test manifests still need to be pinned in
-  [PythTB issue #4](https://github.com/matrixlab-research/thouless/issues/4)
-  and [Kwant issue #5](https://github.com/matrixlab-research/thouless/issues/5).
+- Exact upstream source and test baselines are pinned in `spec/upstream/`.
+  Remaining PythTB and Kwant failures are tracked in
+  [issue #4](https://github.com/matrixlab-research/thouless/issues/4) and
+  [issue #5](https://github.com/matrixlab-research/thouless/issues/5).
 - Isolated held-out validation is tracked in
   [issue #6](https://github.com/matrixlab-research/thouless/issues/6).
 
@@ -90,11 +94,14 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 python tools/check_contracts.py
-python -m pytest -q -ra compat-tests
+python -m pip install maturin numpy pytest
+maturin develop
+PYTHONPATH=python python -m pytest -q -ra compat-tests
 ```
 
-The compatibility tests are expected to skip until the repository supplies
-`python/pythtb` and `python/kwant`. A skip without a linked issue is a CI error.
+Kwant compatibility tests currently skip against issue #5. PythTB compatibility
+tests execute through the repository-built extension. A skip without a linked
+issue is a CI error.
 
 ## Source baselines
 

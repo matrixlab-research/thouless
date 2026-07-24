@@ -16,6 +16,7 @@ except ModuleNotFoundError:  # Python 3.10 and older
 
 ROOT = Path(__file__).resolve().parents[1]
 COVERAGE = ROOT / "spec" / "coverage"
+UPSTREAM = ROOT / "spec" / "upstream"
 AGENT_ENTRYPOINT = ROOT / "AGENTS.md"
 AGENT_INSTRUCTION = ROOT / "instructions" / "scientific-software-reimplementation.md"
 AGENT_INSTRUCTION_REFERENCE = "instructions/scientific-software-reimplementation.md"
@@ -26,6 +27,7 @@ ISSUE_IN_TEXT_PATTERN = re.compile(
     r"https://github\.com/matrixlab-research/thouless/issues/[1-9][0-9]*"
 )
 VALID_STATUSES = {"implemented", "partial", "missing", "blocked"}
+COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 def fail(message: str) -> None:
@@ -67,6 +69,24 @@ def check_compatibility_test(path: Path) -> None:
         fail(f"{path.relative_to(ROOT)} can bypass the compatibility import guard")
 
 
+def check_upstream_manifest(path: Path) -> None:
+    with path.open("rb") as source:
+        document = tomllib.load(source)
+    if not COMMIT_PATTERN.match(document.get("commit", "")):
+        fail(f"{path.name} does not pin an exact source commit")
+    if not ISSUE_PATTERN.match(document.get("gap_issue", "")):
+        fail(f"{path.name} does not link its compatibility gap issue")
+    status = document.get("collection_status")
+    if status == "complete":
+        if document.get("collected_tests", 0) < 1:
+            fail(f"{path.name} has no collected test count")
+    elif status == "blocked":
+        if not document.get("collection_blocker"):
+            fail(f"{path.name} has a blocked collection without a reason")
+    else:
+        fail(f"{path.name} has invalid collection status {status!r}")
+
+
 def check_agent_instructions() -> None:
     if not AGENT_ENTRYPOINT.is_file():
         fail("AGENTS.md is missing")
@@ -99,6 +119,12 @@ def main() -> None:
     for matrix in matrices:
         check_matrix(matrix)
 
+    manifests = sorted(UPSTREAM.glob("*.toml"))
+    if not manifests:
+        fail("no upstream test manifests found")
+    for manifest in manifests:
+        check_upstream_manifest(manifest)
+
     tests = sorted((ROOT / "compat-tests").glob("test_*.py"))
     if not tests:
         fail("no compatibility smoke tests found")
@@ -107,7 +133,7 @@ def main() -> None:
 
     print(
         f"validated agent instructions, {len(matrices)} coverage matrices, "
-        f"and {len(tests)} test modules"
+        f"{len(manifests)} upstream manifests, and {len(tests)} test modules"
     )
 
 

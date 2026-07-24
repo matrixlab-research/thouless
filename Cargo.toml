@@ -11,5 +11,10 @@ keywords = ["tight-binding", "topology", "quantum-transport"]
 categories = ["science"]
 publish = false
 
+[workspace]
+members = [".", "crates/thouless-python"]
+resolver = "2"
+
 [dependencies]
+nalgebra = "0.33.2"
 num-complex = "0.4.6"
