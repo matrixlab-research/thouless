@@ -332,3 +332,36 @@ impl From<MatrixError> for DifferentiationError {
         Self::Matrix(error)
     }
 }
+
+/// Errors raised by discrete geometric and topological calculations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TopologyError {
+    /// A Wilson line requires at least two state frames.
+    InsufficientFrames,
+    /// Every frame must contain the same nonempty subspace and basis.
+    IncompatibleFrames,
+    /// Consecutive subspaces have a singular overlap.
+    SingularOverlap,
+}
+
+impl fmt::Display for TopologyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InsufficientFrames => {
+                write!(formatter, "a Wilson line requires at least two frames")
+            }
+            Self::IncompatibleFrames => {
+                write!(formatter, "state frames have incompatible shapes")
+            }
+            Self::SingularOverlap => {
+                write!(
+                    formatter,
+                    "consecutive state subspaces have singular overlap"
+                )
+            }
+        }
+    }
+}
+
+impl Error for TopologyError {}

@@ -41,6 +41,10 @@ def main() -> int:
     # package and never satisfy themselves with the original implementation.
     import pythtb  # noqa: F401
 
+    # Some upstream example tests import shared helpers from tests.utils. Make
+    # those test-only modules importable after locking the pythtb module above.
+    sys.path.insert(0, str(checkout))
+
     test_paths = [str(checkout / path) for path in manifest["strict_test_files"]]
     return pytest.main(["-q", "-ra", *test_paths])
 

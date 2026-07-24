@@ -12,7 +12,8 @@ mod error;
 pub mod matrix;
 pub mod model;
 pub mod spectrum;
+pub mod topology;
 
-pub use error::{DifferentiationError, MatrixError, ModelError, SpectrumError};
+pub use error::{DifferentiationError, MatrixError, ModelError, SpectrumError, TopologyError};
 pub use matrix::ComplexMatrix;
 pub use num_complex::Complex64;

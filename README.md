@@ -12,11 +12,12 @@ interfaces while calling the same Rust core.
 
 **Incomplete implementation.**
 
-The repository currently implements the first reusable vertical slice:
-model construction, dense Hermitian assembly, a Rust eigensolver, a Python
-extension, and partial PythTB 2.0 compatibility. It does not yet implement the
-complete PythTB surface, topology, response theory, open-system transport, or
-the Kwant compatibility package.
+The repository currently implements reusable model construction, dense
+Hermitian assembly, eigensolvers, momentum derivatives, discrete Wilson phases
+and Berry fluxes in Rust, a Python extension, and partial PythTB 2.0
+compatibility. It does not yet implement the complete PythTB surface, complete
+topology and response theory, open-system transport, or the Kwant compatibility
+package.
 
 A green CI run currently means:
 

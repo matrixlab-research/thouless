@@ -22,6 +22,8 @@ source_entries = ["solve_one", "solve_all"]
 compat_entry = "python/pythtb"
 rust_capability = "spectrum.periodic"
 public_test = "compat-tests/test_pythtb_api.py"
+source_test = "tests/test_examples/graphene/cone/test_cone_hardcode.py"
+actual_result = "1 passed"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/4"
 
@@ -56,6 +58,8 @@ source_entries = [
 compat_entry = "python/pythtb"
 rust_capability = "geometry.topology"
 public_test = "compat-tests/test_pythtb_api.py"
+source_test = "tests/test_wfarray/test_invariants_wfa.py"
+actual_result = "2 passed"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/4"
 

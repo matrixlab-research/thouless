@@ -12,9 +12,9 @@ issue = "https://github.com/matrixlab-research/thouless/issues/1"
 [[capability]]
 id = "spectrum.periodic"
 description = "Bloch Hamiltonian assembly and eigensolvers"
-native_api = "not designed"
-test = "not implemented"
-status = "missing"
+native_api = "thouless::model::TightBindingModel::{hamiltonian,eigensystem,momentum_derivatives}"
+test = "tests/native_model.rs"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/1"
 
 [[capability]]
@@ -28,9 +28,9 @@ issue = "https://github.com/matrixlab-research/thouless/issues/3"
 [[capability]]
 id = "geometry.topology"
 description = "Berry geometry, Wilson loops, and topological invariants"
-native_api = "not designed"
-test = "not implemented"
-status = "missing"
+native_api = "thouless::topology::{wilson_line_phase,plaquette_flux}"
+test = "tests/native_topology.rs and pinned PythTB Haldane/graphene tests"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/2"
 
 [[capability]]

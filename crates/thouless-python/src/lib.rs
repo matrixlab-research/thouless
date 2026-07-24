@@ -2,6 +2,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use thouless::differentiation::{finite_difference_uniform, DifferenceScheme};
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
+use thouless::topology::{plaquette_flux, wilson_line_phase};
 use thouless::{Complex64, ComplexMatrix};
 
 type HoppingInput = (usize, usize, Vec<i32>, Vec<Vec<Complex64>>);
@@ -186,11 +187,39 @@ fn finite_difference(
         .map_err(value_error)
 }
 
+#[pyfunction]
+fn wilson_phase(frames: Vec<Vec<Vec<Complex64>>>) -> PyResult<f64> {
+    let frames = frames
+        .into_iter()
+        .map(matrix_from_rows)
+        .collect::<PyResult<Vec<_>>>()?;
+    wilson_line_phase(&frames).map_err(value_error)
+}
+
+#[pyfunction]
+fn berry_flux(corners: Vec<Vec<Vec<Complex64>>>) -> PyResult<f64> {
+    if corners.len() != 4 {
+        return Err(PyValueError::new_err(
+            "a plaquette requires exactly four corners",
+        ));
+    }
+    let corners = corners
+        .into_iter()
+        .map(matrix_from_rows)
+        .collect::<PyResult<Vec<_>>>()?;
+    let corners: [ComplexMatrix; 4] = corners
+        .try_into()
+        .map_err(|_| PyValueError::new_err("a plaquette requires four corners"))?;
+    plaquette_flux(&corners).map_err(value_error)
+}
+
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(hamiltonian, module)?)?;
     module.add_function(wrap_pyfunction!(eigensystem, module)?)?;
     module.add_function(wrap_pyfunction!(momentum_derivatives, module)?)?;
     module.add_function(wrap_pyfunction!(finite_difference, module)?)?;
+    module.add_function(wrap_pyfunction!(wilson_phase, module)?)?;
+    module.add_function(wrap_pyfunction!(berry_flux, module)?)?;
     Ok(())
 }

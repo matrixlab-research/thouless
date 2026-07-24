@@ -123,8 +123,16 @@ class Mesh:
     def is_axis_looped(self, axis_idx):
         return self.axes[axis_idx].is_loop
 
-    def is_axis_closed(self, axis_idx):
+    def is_axis_closed(self, axis_idx, component_idx=None):
+        if component_idx is not None:
+            return component_idx in self.axes[axis_idx].endpoint_components
         return self.axes[axis_idx].has_endpoint
+
+    def is_axis_bz_winding(self, axis_idx, component_idx=None):
+        components = self.axes[axis_idx].winds_bz_components
+        if component_idx is not None:
+            return component_idx in components
+        return bool(components)
 
     def loop(self, axis_idx, component_idx):
         axis = self.axes[axis_idx]
@@ -209,18 +217,19 @@ class Mesh:
 
     def build_custom(self, points):
         points = np.asarray(points, dtype=float)
-        if self.naxes != 1:
-            raise ValueError("custom paths require exactly one mesh axis")
-        if points.ndim != 2 or points.shape[1] != self.dim_total:
-            raise ValueError("custom points must have shape (N, dim_k + dim_lambda)")
-        if points.shape[0] < 1:
-            raise ValueError("custom paths must contain at least one point")
-        self.axes[0].size = points.shape[0]
+        if points.ndim != self.naxes + 1 or points.shape[-1] != self.dim_total:
+            raise ValueError(
+                "custom points must have shape (*mesh_shape, dim_k + dim_lambda)"
+            )
+        if any(size < 1 for size in points.shape[:-1]):
+            raise ValueError("custom meshes must contain at least one point per axis")
+        for axis, size in zip(self.axes, points.shape[:-1], strict=True):
+            axis.size = size
         self._points = points.copy()
-        self._flat = points.copy()
-        self._k_vectors = [points[:, index] for index in range(self.dim_k)]
+        self._flat = points.reshape(-1, self.dim_total)
+        self._k_vectors = [points[..., index] for index in range(self.dim_k)]
         self._lambda_vectors = [
-            points[:, self.dim_k + index] for index in range(self.dim_lambda)
+            points[..., self.dim_k + index] for index in range(self.dim_lambda)
         ]
         return self
 
