@@ -19,8 +19,20 @@ class _Axis:
         return bool(self.loop_components)
 
     @property
+    def is_k_axis(self):
+        return self.type == "k"
+
+    @property
+    def is_lambda_axis(self):
+        return self.type == "l"
+
+    @property
     def has_endpoint(self):
         return bool(self.endpoint_components)
+
+    @property
+    def winds_bz(self):
+        return bool(self.winds_bz_components)
 
 
 class Mesh:
@@ -55,6 +67,22 @@ class Mesh:
         return self._axes
 
     @property
+    def k_axes(self):
+        return [axis for axis in self.axes if axis.is_k_axis]
+
+    @property
+    def lambda_axes(self):
+        return [axis for axis in self.axes if axis.is_lambda_axis]
+
+    @property
+    def k_axis_indices(self):
+        return [index for index, axis in enumerate(self.axes) if axis.is_k_axis]
+
+    @property
+    def lambda_axis_indices(self):
+        return [index for index, axis in enumerate(self.axes) if axis.is_lambda_axis]
+
+    @property
     def axis_names(self):
         return [axis.name for axis in self.axes]
 
@@ -87,12 +115,32 @@ class Mesh:
         return self.dim_k + self.dim_lambda
 
     @property
+    def k_component_indices(self):
+        return list(range(self.dim_k))
+
+    @property
+    def lambda_component_indices(self):
+        return list(range(self.dim_k, self.dim_total))
+
+    @property
     def shape_axes(self):
         return tuple(axis.size for axis in self.axes)
 
     @property
     def shape(self):
         return self.shape_axes + (self.dim_total,)
+
+    @property
+    def npoints(self):
+        return int(np.prod(self.shape_axes))
+
+    @property
+    def shape_k(self):
+        return tuple(axis.size for axis in self.k_axes)
+
+    @property
+    def shape_lambda(self):
+        return tuple(axis.size for axis in self.lambda_axes)
 
     @property
     def flat(self):
@@ -120,24 +168,79 @@ class Mesh:
             and all(axis.winds_bz_components for axis in k_axes)
         )
 
-    def is_axis_looped(self, axis_idx):
-        return self.axes[axis_idx].is_loop
+    @property
+    def loop_mask(self):
+        return self._component_mask("loop_components")
 
-    def is_axis_closed(self, axis_idx, component_idx=None):
-        if component_idx is not None:
-            return component_idx in self.axes[axis_idx].endpoint_components
-        return self.axes[axis_idx].has_endpoint
+    @property
+    def endpoint_mask(self):
+        return self._component_mask("endpoint_components")
 
-    def is_axis_bz_winding(self, axis_idx, component_idx=None):
-        components = self.axes[axis_idx].winds_bz_components
-        if component_idx is not None:
-            return component_idx in components
-        return bool(components)
+    @property
+    def bz_winding_mask(self):
+        return self._component_mask("winds_bz_components")
 
-    def loop(self, axis_idx, component_idx):
+    def _component_mask(self, attribute):
+        mask = np.zeros((self.naxes, self.dim_total), dtype=bool)
+        for axis_index, axis in enumerate(self.axes):
+            for component in getattr(axis, attribute):
+                mask[axis_index, component] = True
+        return mask
+
+    def _axis_component_query(self, axis_idx, component, attribute):
+        if not 0 <= axis_idx < self.naxes:
+            raise IndexError(f"axis_idx {axis_idx} out of bounds for {self.naxes} axes")
+        if component == "any":
+            return bool(getattr(self.axes[axis_idx], attribute))
+        if not isinstance(component, int):
+            raise TypeError("component must be an integer or 'any'")
+        if not -self.dim_total <= component < self.dim_total:
+            raise IndexError(
+                f"component_idx {component} out of bounds for {self.dim_total} components"
+            )
+        return component % self.dim_total in getattr(self.axes[axis_idx], attribute)
+
+    def is_axis_looped(self, axis_idx, comp="any"):
+        return self._axis_component_query(axis_idx, comp, "loop_components")
+
+    def is_axis_closed(self, axis_idx, comp="any"):
+        return self._axis_component_query(axis_idx, comp, "endpoint_components")
+
+    def is_axis_bz_winding(self, axis_idx, comp="any"):
+        return self._axis_component_query(axis_idx, comp, "winds_bz_components")
+
+    def loop(self, axis_idx, component_idx, winds_bz=False, closed=False):
+        if not 0 <= axis_idx < self.naxes:
+            raise IndexError(f"axis_idx {axis_idx} out of bounds for {self.naxes} axes")
+        if not 0 <= component_idx < self.dim_total:
+            raise IndexError(
+                f"component_idx {component_idx} out of bounds for {self.dim_total} components"
+            )
         axis = self.axes[axis_idx]
         if component_idx not in axis.loop_components:
             axis.loop_components.append(component_idx)
+        if winds_bz:
+            if not axis.is_k_axis or component_idx >= self.dim_k:
+                raise ValueError("Brillouin-zone winding requires a k-axis and k-component")
+            if component_idx not in axis.winds_bz_components:
+                axis.winds_bz_components.append(component_idx)
+        if closed and component_idx not in axis.endpoint_components:
+            axis.endpoint_components.append(component_idx)
+
+    def unloop(self, axis_idx, component_idx, unwind_bz=False, open=False):
+        if not 0 <= axis_idx < self.naxes:
+            raise IndexError(f"axis_idx {axis_idx} out of bounds for {self.naxes} axes")
+        if not 0 <= component_idx < self.dim_total:
+            raise IndexError(
+                f"component_idx {component_idx} out of bounds for {self.dim_total} components"
+            )
+        axis = self.axes[axis_idx]
+        if component_idx in axis.loop_components:
+            axis.loop_components.remove(component_idx)
+        if unwind_bz and component_idx in axis.winds_bz_components:
+            axis.winds_bz_components.remove(component_idx)
+        if open and component_idx in axis.endpoint_components:
+            axis.endpoint_components.remove(component_idx)
 
     @staticmethod
     def _broadcast(value, count, default):
@@ -232,6 +335,23 @@ class Mesh:
             points[..., self.dim_k + index] for index in range(self.dim_lambda)
         ]
         return self
+
+    def get_axis_range(self, axis_index, component_index):
+        if not self.filled:
+            raise ValueError("Mesh points are not initialized.")
+        if not 0 <= axis_index < self.naxes:
+            raise IndexError(
+                f"axis_index {axis_index} out of bounds for mesh with {self.naxes} axes"
+            )
+        if not 0 <= component_index < self.dim_total:
+            raise IndexError(
+                f"component_index {component_index} out of bounds for "
+                f"{self.dim_total} components"
+            )
+        selector = [0] * self.naxes
+        selector[axis_index] = slice(None)
+        values = self.points[tuple(selector) + (component_index,)]
+        return np.asarray(values).reshape(-1)
 
     def get_k_points(self):
         if not self._k_vectors:

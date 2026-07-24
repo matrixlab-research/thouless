@@ -98,6 +98,23 @@ class WFArray:
 
     def __setitem__(self, index, value):
         self._wfs[index] = np.asarray(value, dtype=complex)
+        self._enforce_closed_boundaries()
+
+    def _canonical_to_mesh_axes(self):
+        permutation = []
+        k_index = 0
+        lambda_index = 0
+        for axis in self.mesh.axes:
+            if axis.is_k_axis:
+                permutation.append(k_index)
+                k_index += 1
+            else:
+                permutation.append(self.mesh.nk_axes + lambda_index)
+                lambda_index += 1
+        return tuple(permutation)
+
+    def _mesh_axes_to_canonical(self):
+        return tuple(np.argsort(self._canonical_to_mesh_axes()).tolist())
 
     def _basis_phase(self, mesh_axis):
         phase = np.ones(self.norb, dtype=complex)
@@ -120,6 +137,136 @@ class WFArray:
             if axis.winds_bz_components:
                 value = value * self._basis_phase(mesh_axis)
             flat[tuple(last)] = value
+
+    def _unit_shift(self, axis, direction=1):
+        if not 0 <= axis < self.naxes:
+            raise IndexError(f"axis must be in [0, {self.naxes - 1}]")
+        if direction not in (-1, 1):
+            raise ValueError("direction must be +1 or -1")
+        shift = [0] * self.naxes
+        shift[axis] = direction
+        return shift
+
+    @staticmethod
+    def _bounded_shift(array, axis, shift):
+        result = np.zeros_like(array)
+        source = [slice(None)] * array.ndim
+        destination = [slice(None)] * array.ndim
+        if shift > 0:
+            source[axis] = slice(0, -shift)
+            destination[axis] = slice(shift, None)
+        else:
+            amount = -shift
+            source[axis] = slice(amount, None)
+            destination[axis] = slice(0, -amount)
+        result[tuple(destination)] = array[tuple(source)]
+        return result
+
+    def roll_states_with_pbc(
+        self, shift_vec, flatten_spin_axis=True, strip_boundary=False
+    ):
+        shifts = np.asarray(shift_vec, dtype=int)
+        if shifts.ndim != 1 or len(shifts) > self.naxes:
+            raise ValueError("shift_vec must contain at most one shift per mesh axis")
+        if np.any(np.abs(shifts) > 1):
+            raise ValueError("Only unit shifts (+1, 0, -1) are supported")
+        if len(shifts) < self.mesh.nk_axes:
+            raise ValueError("shift_vec must include every k-axis")
+
+        rolled = self._wfs.copy()
+        for axis_index, shift in enumerate(shifts):
+            if shift == 0:
+                continue
+            wraps = self.mesh.is_axis_looped(axis_index)
+            closed = self.mesh.is_axis_closed(axis_index)
+            if wraps and not closed:
+                rolled = np.roll(rolled, shift=-int(shift), axis=axis_index)
+                if self.mesh.is_axis_bz_winding(axis_index):
+                    phase = self._basis_phase(axis_index)
+                    if shift < 0:
+                        phase = phase.conj()
+                    flat = rolled.reshape(
+                        self.shape_mesh + (self.nstates, self.norb * self.nspin)
+                    )
+                    boundary = [slice(None)] * flat.ndim
+                    boundary[axis_index] = -1 if shift > 0 else 0
+                    flat[tuple(boundary)] *= phase
+            else:
+                rolled = self._bounded_shift(rolled, axis_index, -int(shift))
+
+        if strip_boundary:
+            selector = [slice(None)] * rolled.ndim
+            for axis_index, shift in enumerate(shifts):
+                if shift and (
+                    self.mesh.is_axis_closed(axis_index)
+                    or not self.mesh.is_axis_looped(axis_index)
+                ):
+                    selector[axis_index] = slice(None, -1)
+            rolled = rolled[tuple(selector)]
+        if flatten_spin_axis and self.spinful:
+            rolled = rolled.reshape(
+                rolled.shape[: self.naxes]
+                + (self.nstates, self.norb * self.nspin)
+            )
+        return rolled
+
+    def _invalidate_boundary_links(self, array, shift_vec):
+        for axis_index, shift in enumerate(shift_vec):
+            if shift == 0:
+                continue
+            wraps = self.mesh.is_axis_looped(axis_index)
+            closed = self.mesh.is_axis_closed(axis_index)
+            if wraps and not closed:
+                continue
+            boundary = [slice(None)] * array.ndim
+            boundary[axis_index] = -1 if shift > 0 else 0
+            array[tuple(boundary)] = np.nan + 0j
+        return array
+
+    def links(self, axis_idx=None, state_idx=None):
+        axes = (
+            np.arange(self.naxes, dtype=int)
+            if axis_idx is None
+            else np.atleast_1d(axis_idx)
+        )
+        if not np.issubdtype(axes.dtype, np.integer):
+            raise TypeError("axis_idx must be integer or an integer array")
+        if np.any(axes < 0) or np.any(axes >= self.naxes):
+            raise IndexError("axis index in axis_idx is out of range")
+        states = self.states(state_idx, flatten_spin_axis=True)
+        state_count = states.shape[-2]
+        links = np.empty(
+            (len(axes),) + self.shape_mesh + (state_count, state_count),
+            dtype=complex,
+        )
+        for direction, axis_index in enumerate(axes.astype(int)):
+            shift = self._unit_shift(axis_index)
+            shifted = self.roll_states_with_pbc(shift, flatten_spin_axis=True)
+            shifted = np.take(
+                shifted,
+                np.arange(self.nstates)
+                if state_idx is None
+                else np.atleast_1d(state_idx).astype(int),
+                axis=self.naxes,
+            )
+            wraps = self.mesh.is_axis_looped(axis_index)
+            closed = self.mesh.is_axis_closed(axis_index)
+            for mesh_index in np.ndindex(self.shape_mesh):
+                if mesh_index[axis_index] == self.shape_mesh[axis_index] - 1 and (
+                    closed or not wraps
+                ):
+                    links[(direction,) + mesh_index] = np.nan + 0j
+                else:
+                    links[(direction,) + mesh_index] = np.asarray(
+                        _core.transport_link(
+                            states[mesh_index].tolist(),
+                            shifted[mesh_index].tolist(),
+                        )
+                    )
+            links[direction] = self._invalidate_boundary_links(
+                links[direction], shift
+            )
+        return links
 
     def set_states(self, wfs, is_cell_periodic=True, is_spin_axis_flat=False):
         wfs = np.asarray(wfs, dtype=complex)

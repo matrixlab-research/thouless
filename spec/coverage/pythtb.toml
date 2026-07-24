@@ -67,8 +67,8 @@ source_entries = [
 compat_entry = "python/pythtb"
 rust_capability = "geometry.topology"
 public_test = "compat-tests/test_pythtb_api.py"
-source_test = "tests/test_wfarray/test_invariants_wfa.py"
-actual_result = "2 passed"
+source_test = "invariants, axis-order, link, and three-site pump tests"
+actual_result = "10 passed"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/4"
 

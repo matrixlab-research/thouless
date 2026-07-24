@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use thouless::differentiation::{finite_difference_uniform, DifferenceScheme};
 use thouless::geometry::ReciprocalPath;
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
-use thouless::topology::{plaquette_flux, wilson_line_phase};
+use thouless::topology::{parallel_transport_link, plaquette_flux, wilson_line_phase};
 use thouless::{Complex64, ComplexMatrix};
 
 type HoppingInput = (usize, usize, Vec<i32>, Vec<Vec<Complex64>>);
@@ -216,6 +216,18 @@ fn berry_flux(corners: Vec<Vec<Vec<Complex64>>>) -> PyResult<f64> {
 }
 
 #[pyfunction]
+fn transport_link(
+    left: Vec<Vec<Complex64>>,
+    right: Vec<Vec<Complex64>>,
+) -> PyResult<Vec<Vec<Complex64>>> {
+    let left = matrix_from_rows(left)?;
+    let right = matrix_from_rows(right)?;
+    parallel_transport_link(&left, &right)
+        .map(|matrix| matrix_to_rows(&matrix))
+        .map_err(value_error)
+}
+
+#[pyfunction]
 fn reciprocal_path(
     primitive_vectors: Vec<Vec<f64>>,
     periodic_axes: Vec<usize>,
@@ -240,6 +252,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(finite_difference, module)?)?;
     module.add_function(wrap_pyfunction!(wilson_phase, module)?)?;
     module.add_function(wrap_pyfunction!(berry_flux, module)?)?;
+    module.add_function(wrap_pyfunction!(transport_link, module)?)?;
     module.add_function(wrap_pyfunction!(reciprocal_path, module)?)?;
     Ok(())
 }

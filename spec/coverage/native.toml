@@ -36,8 +36,8 @@ issue = "https://github.com/matrixlab-research/thouless/issues/1"
 [[capability]]
 id = "geometry.topology"
 description = "Berry geometry, Wilson loops, and topological invariants"
-native_api = "thouless::topology::{wilson_line_phase,plaquette_flux}"
-test = "tests/native_topology.rs and pinned PythTB Haldane/graphene tests"
+native_api = "thouless::topology::{parallel_transport_link,wilson_line_phase,plaquette_flux}"
+test = "tests/native_topology.rs and pinned PythTB topology/link tests"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/2"
 

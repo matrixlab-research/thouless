@@ -41,6 +41,42 @@ pub fn plaquette_flux(corners: &[ComplexMatrix; 4]) -> Result<f64, TopologyError
     wilson_line_phase(&frames)
 }
 
+/// Returns the unitary parallel-transport factor between two state frames.
+///
+/// The overlap matrix is factorized as `M = U Σ V†`; the returned link is
+/// `U V†`. This removes changes of norm and retains only transport within the
+/// selected subspace.
+pub fn parallel_transport_link(
+    left: &ComplexMatrix,
+    right: &ComplexMatrix,
+) -> Result<ComplexMatrix, TopologyError> {
+    validate_frames(&[left.clone(), right.clone()])?;
+    let overlap = overlap_matrix(left, right);
+    let decomposition = overlap.svd(true, true);
+    if decomposition
+        .singular_values
+        .iter()
+        .any(|value| *value <= SINGULAR_OVERLAP_TOLERANCE)
+    {
+        return Err(TopologyError::SingularOverlap);
+    }
+    let left_unitary = decomposition
+        .u
+        .expect("left singular vectors were requested");
+    let right_adjoint = decomposition
+        .v_t
+        .expect("right singular vectors were requested");
+    let link = left_unitary * right_adjoint;
+    let mut entries = Vec::with_capacity(link.nrows() * link.ncols());
+    for row in 0..link.nrows() {
+        for column in 0..link.ncols() {
+            entries.push(link[(row, column)]);
+        }
+    }
+    ComplexMatrix::new(link.nrows(), link.ncols(), entries)
+        .map_err(|_| TopologyError::IncompatibleFrames)
+}
+
 fn validate_frames(frames: &[ComplexMatrix]) -> Result<(), TopologyError> {
     if frames.len() < 2 {
         return Err(TopologyError::InsufficientFrames);
@@ -57,6 +93,10 @@ fn validate_frames(frames: &[ComplexMatrix]) -> Result<(), TopologyError> {
 }
 
 fn overlap_determinant(left: &ComplexMatrix, right: &ComplexMatrix) -> Complex64 {
+    overlap_matrix(left, right).determinant()
+}
+
+fn overlap_matrix(left: &ComplexMatrix, right: &ComplexMatrix) -> DMatrix<Complex64> {
     let state_count = left.rows();
     let basis_count = left.columns();
     let mut overlap = DMatrix::zeros(state_count, state_count);
@@ -70,5 +110,5 @@ fn overlap_determinant(left: &ComplexMatrix, right: &ComplexMatrix) -> Complex64
                 .sum();
         }
     }
-    overlap.determinant()
+    overlap
 }

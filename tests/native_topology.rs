@@ -1,4 +1,4 @@
-use thouless::topology::{plaquette_flux, wilson_line_phase};
+use thouless::topology::{parallel_transport_link, plaquette_flux, wilson_line_phase};
 use thouless::{Complex64, ComplexMatrix};
 
 fn frame(values: &[Complex64]) -> ComplexMatrix {
@@ -45,4 +45,34 @@ fn constant_plaquette_has_zero_flux() {
     let state = frame(&[Complex64::new(1.0, 0.0)]);
     let flux = plaquette_flux(&[state.clone(), state.clone(), state.clone(), state]).unwrap();
     assert_eq!(flux, 0.0);
+}
+
+#[test]
+fn parallel_transport_link_is_unitary_for_rotated_frames() {
+    let inv_sqrt_two = 1.0 / 2.0_f64.sqrt();
+    let left = ComplexMatrix::identity(2);
+    let right = ComplexMatrix::new(
+        2,
+        2,
+        vec![
+            Complex64::new(inv_sqrt_two, 0.0),
+            Complex64::new(inv_sqrt_two, 0.0),
+            Complex64::new(-inv_sqrt_two, 0.0),
+            Complex64::new(inv_sqrt_two, 0.0),
+        ],
+    )
+    .unwrap();
+    let link = parallel_transport_link(&left, &right).unwrap();
+
+    for row in 0..2 {
+        for column in 0..2 {
+            let product: Complex64 = (0..2)
+                .map(|inner| {
+                    link.get(row, inner).unwrap() * link.get(column, inner).unwrap().conj()
+                })
+                .sum();
+            let expected = if row == column { 1.0 } else { 0.0 };
+            assert!((product - Complex64::new(expected, 0.0)).norm() < 1.0e-12);
+        }
+    }
 }
