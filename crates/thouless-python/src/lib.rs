@@ -19,6 +19,12 @@ type LeadInput = (
     Vec<Vec<Complex64>>,
     Vec<Vec<Complex64>>,
 );
+type OpenSystemOutput = (
+    Vec<Vec<Complex64>>,
+    Vec<Vec<Vec<Complex64>>>,
+    Vec<Vec<Vec<Complex64>>>,
+    Vec<Vec<f64>>,
+);
 type ModelOutput = (
     Vec<Vec<f64>>,
     Vec<usize>,
@@ -403,6 +409,50 @@ fn open_system_transmissions(
 }
 
 #[pyfunction]
+fn open_system_solution(
+    device_hamiltonian: Vec<Vec<Complex64>>,
+    leads: Vec<LeadInput>,
+    energy: f64,
+) -> PyResult<OpenSystemOutput> {
+    let device_hamiltonian = matrix_from_rows(device_hamiltonian)?;
+    let leads = leads
+        .into_iter()
+        .map(|(cell, hopping, coupling)| {
+            LeadContact::new(
+                matrix_from_rows(cell)?,
+                matrix_from_rows(hopping)?,
+                matrix_from_rows(coupling)?,
+            )
+            .map_err(value_error)
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let solution = solve_open_system(
+        &device_hamiltonian,
+        &leads,
+        energy,
+        SurfaceGreenOptions::default(),
+    )
+    .map_err(value_error)?;
+    let transmissions = (0..leads.len())
+        .map(|drain| {
+            (0..leads.len())
+                .map(|source| solution.transmission(drain, source).map_err(value_error))
+                .collect()
+        })
+        .collect::<PyResult<Vec<Vec<_>>>>()?;
+    Ok((
+        matrix_to_rows(solution.retarded_green()),
+        solution
+            .self_energies()
+            .iter()
+            .map(matrix_to_rows)
+            .collect(),
+        solution.broadenings().iter().map(matrix_to_rows).collect(),
+        transmissions,
+    ))
+}
+
+#[pyfunction]
 fn wilson_phase(frames: Vec<Vec<Vec<Complex64>>>) -> PyResult<f64> {
     let frames = frames
         .into_iter()
@@ -517,6 +567,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(momentum_derivatives, module)?)?;
     module.add_function(wrap_pyfunction!(finite_difference, module)?)?;
     module.add_function(wrap_pyfunction!(open_system_transmissions, module)?)?;
+    module.add_function(wrap_pyfunction!(open_system_solution, module)?)?;
     module.add_function(wrap_pyfunction!(wilson_phase, module)?)?;
     module.add_function(wrap_pyfunction!(berry_flux, module)?)?;
     module.add_function(wrap_pyfunction!(transport_link, module)?)?;

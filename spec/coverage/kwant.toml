@@ -20,8 +20,8 @@ source_entries = [
 compat_entry = "python/kwant"
 rust_capability = "model.structure"
 public_test = "compat-tests/test_kwant_api.py"
-source_test = "pinned builder construction, symmetry, finalization, Hamiltonian, dangling, and hopping-kind tests"
-actual_result = "20 passed"
+source_test = "pinned builder construction, symmetry, finalization, Hamiltonian, sparse-submatrix, pickling, fill, dangling, and hopping-kind tests"
+actual_result = "22 passed"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
@@ -42,7 +42,7 @@ source_entries = ["smatrix", "greens_function", "wave_function", "ldos"]
 compat_entry = "python/kwant/solvers"
 rust_capability = "transport.steady_state"
 public_test = "compat-tests/test_kwant_api.py"
-actual_result = "ballistic-chain smoke passed"
+actual_result = "single- and two-channel ballistic, Green-function, and LDOS smoke contracts passed"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 

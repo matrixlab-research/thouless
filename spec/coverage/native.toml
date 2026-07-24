@@ -61,7 +61,7 @@ issue = "https://github.com/matrixlab-research/thouless/issues/3"
 id = "transport.steady_state"
 description = "Leads, modes, self-energies, Green functions, scattering, and local observables"
 native_api = "thouless::transport::{LeadContact,surface_green_function,solve_open_system}"
-test = "tests/native_transport.rs and ballistic-chain Kwant compatibility contract"
+test = "tests/native_transport.rs and single-/multi-channel Kwant transport compatibility contracts"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/3"
 

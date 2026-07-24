@@ -303,6 +303,17 @@ def _block(value, rows, columns, onsite=False):
     return result
 
 
+def _onsite_dimension(value, default):
+    array = np.asarray(value)
+    if array.ndim == 0:
+        if default is None:
+            raise ValueError("Number of orbitals not defined for scalar onsite")
+        return default
+    if array.ndim == 2 and array.shape[0] == array.shape[1]:
+        return array.shape[0]
+    raise ValueError("Onsite values must be scalars or square matrices")
+
+
 class Builder:
     """Mutable site graph with optional translational symmetry."""
 
@@ -777,6 +788,7 @@ class InfiniteSystem:
         self.cell_size = len(with_interface) + len(without_interface)
         self.sites = tuple(with_interface + without_interface + previous)
         self.id_by_site = {site: index for index, site in enumerate(self.sites)}
+        self.site_ranges = _site_ranges(self.sites)
 
         undirected_edges = []
         edge_values = []
@@ -850,6 +862,90 @@ class InfiniteSystem:
                 f'Error occurred in user-supplied value function "{name}"'
             ) from error
 
+    def _site_dofs(self, args=(), params=None):
+        return [
+            _onsite_dimension(
+                self.hamiltonian(index, index, *args, params=params),
+                site.family.norbs,
+            )
+            for index, site in enumerate(self.sites)
+        ]
+
+    def _site_slices(self, args=(), params=None):
+        offsets = [0]
+        for dofs in self._site_dofs(args, params):
+            offsets.append(offsets[-1] + dofs)
+        return offsets
+
+    def hamiltonian_submatrix(
+        self,
+        args=(),
+        to_sites=None,
+        from_sites=None,
+        sparse=False,
+        return_norb=False,
+        *,
+        params=None,
+    ):
+        row_sites = (
+            list(range(len(self.sites))) if to_sites is None else list(to_sites)
+        )
+        column_sites = (
+            list(range(len(self.sites)))
+            if from_sites is None
+            else list(from_sites)
+        )
+        site_dofs = self._site_dofs(args, params)
+        row_norbs = [site_dofs[index] for index in row_sites]
+        column_norbs = [site_dofs[index] for index in column_sites]
+        result = np.zeros((sum(row_norbs), sum(column_norbs)), dtype=complex)
+        row_offsets = np.cumsum([0, *row_norbs])
+        column_offsets = np.cumsum([0, *column_norbs])
+        for row, first in enumerate(row_sites):
+            for column, second in enumerate(column_sites):
+                if first != second and not self.graph.has_edge(first, second):
+                    continue
+                value = self.hamiltonian(first, second, *args, params=params)
+                block = _block(
+                    value,
+                    row_norbs[row],
+                    column_norbs[column],
+                    onsite=first == second,
+                )
+                result[
+                    row_offsets[row] : row_offsets[row + 1],
+                    column_offsets[column] : column_offsets[column + 1],
+                ] = block
+        output = result
+        if sparse:
+            from scipy import sparse as scipy_sparse
+
+            output = scipy_sparse.coo_matrix(result)
+        if return_norb:
+            return output, np.asarray(row_norbs), np.asarray(column_norbs)
+        return output
+
+    def cell_hamiltonian(self, args=(), sparse=False, *, params=None):
+        cell_sites = range(self.cell_size)
+        return self.hamiltonian_submatrix(
+            args,
+            cell_sites,
+            cell_sites,
+            sparse=sparse,
+            params=params,
+        )
+
+    def inter_cell_hopping(self, args=(), sparse=False, *, params=None):
+        cell_sites = range(self.cell_size)
+        interface_sites = range(self.cell_size, self.graph.num_nodes)
+        return self.hamiltonian_submatrix(
+            args,
+            cell_sites,
+            interface_sites,
+            sparse=sparse,
+            params=params,
+        )
+
     def reversed(self):
         return self._builder.reversed().finalized()
 
@@ -893,12 +989,26 @@ class FiniteSystem:
         self.leads = tuple(finalized_leads)
         self.lead_interfaces = tuple(lead_interfaces)
 
-    def _site_slices(self):
+    def _evaluated_onsites(self, args=(), params=None):
+        return [
+            _evaluate(self._builder._sites[site], (site,), args, params)
+            for site in self.sites
+        ]
+
+    def _site_dofs(self, args=(), params=None):
+        return [
+            _onsite_dimension(value, site.family.norbs)
+            for site, value in zip(
+                self.sites,
+                self._evaluated_onsites(args, params),
+                strict=True,
+            )
+        ]
+
+    def _site_slices(self, args=(), params=None):
         offsets = [0]
-        for site in self.sites:
-            if site.family.norbs is None:
-                raise ValueError("Number of orbitals not defined for a site family")
-            offsets.append(offsets[-1] + site.family.norbs)
+        for dofs in self._site_dofs(args, params):
+            offsets.append(offsets[-1] + dofs)
         return offsets
 
     def hamiltonian(self, first, second, *args, params=None):
@@ -944,22 +1054,23 @@ class FiniteSystem:
         *,
         params=None,
     ):
-        if sparse:
-            raise NotImplementedError("sparse matrix output is not implemented yet")
-        offsets = self._site_slices()
+        onsite_values = self._evaluated_onsites(args, params)
+        dofs = [
+            _onsite_dimension(value, site.family.norbs)
+            for site, value in zip(self.sites, onsite_values, strict=True)
+        ]
+        offsets = [0]
+        for count in dofs:
+            offsets.append(offsets[-1] + count)
         dimension = max((len(site.pos) for site in self.sites), default=0)
         primitive = np.eye(dimension)
         positions = [
             np.pad(np.asarray(site.pos, dtype=float), (0, dimension - len(site.pos)))
             for site in self.sites
         ]
-        dofs = [site.family.norbs for site in self.sites]
         onsites = []
-        for site in self.sites:
-            value = _evaluate(self._builder._sites[site], (site,), args, params)
-            onsites.append(
-                _block(value, site.family.norbs, site.family.norbs, onsite=True).tolist()
-            )
+        for value, count in zip(onsite_values, dofs, strict=True):
+            onsites.append(_block(value, count, count, onsite=True).tolist())
         hoppings = []
         for (first, second), value in self._builder._hoppings.items():
             if first not in self.id_by_site or second not in self.id_by_site:
@@ -967,8 +1078,8 @@ class FiniteSystem:
             evaluated = _evaluate(value, (first, second), args, params)
             block = _block(
                 evaluated,
-                first.family.norbs,
-                second.family.norbs,
+                dofs[self.id_by_site[first]],
+                dofs[self.id_by_site[second]],
             )
             hoppings.append(
                 (
@@ -1001,51 +1112,56 @@ class FiniteSystem:
             [np.arange(offsets[index], offsets[index + 1]) for index in selected_columns]
         )
         result = matrix[np.ix_(row_basis, column_basis)]
+        output = result
+        if sparse:
+            from scipy import sparse as scipy_sparse
+
+            output = scipy_sparse.coo_matrix(result)
         if return_norb:
-            return result, np.asarray([dofs[index] for index in selected_rows]), np.asarray(
+            return output, np.asarray([dofs[index] for index in selected_rows]), np.asarray(
                 [dofs[index] for index in selected_columns]
             )
-        return result
+        return output
 
     def _transport_data(self, args=(), params=None):
         device = self.hamiltonian_submatrix(args=args, params=params)
-        offsets = self._site_slices()
+        offsets = self._site_slices(args, params)
         lead_data = []
         for lead, interface in zip(
             self._builder.leads, self.lead_interfaces, strict=True
         ):
             lead_builder = lead.builder if isinstance(lead, BuilderLead) else lead
             lead_system = lead_builder.finalized()
-            lead_sites = lead_system.sites[: lead_system.cell_size]
-            if len(lead_sites) != 1:
-                raise NotImplementedError(
-                    "multi-site principal lead cells are not implemented yet"
+            cell = lead_system.cell_hamiltonian(args=args, params=params)
+            inter_cell = lead_system.inter_cell_hopping(args=args, params=params)
+            cell_dimension = cell.shape[0]
+            interface_dimension = inter_cell.shape[1]
+            hopping = np.zeros(
+                (cell_dimension, cell_dimension),
+                dtype=complex,
+            )
+            hopping[:, :interface_dimension] = inter_cell
+            device_basis = np.concatenate(
+                [
+                    np.arange(offsets[index], offsets[index + 1])
+                    for index in interface
+                ]
+            )
+            if len(device_basis) != interface_dimension:
+                raise ValueError(
+                    "Lead interface orbital count does not match its principal cell"
                 )
-            lead_site = lead_sites[0]
-            onsite_value = _evaluate(
-                lead_builder._sites[lead_site], (lead_site,), args, params
-            )
-            cell = _block(
-                onsite_value,
-                lead_site.family.norbs,
-                lead_site.family.norbs,
-                onsite=True,
-            )
-            hopping_value = next(iter(lead_builder._hoppings.values()))
-            hopping_sites = next(iter(lead_builder._hoppings))
-            hopping = _block(
-                _evaluate(hopping_value, hopping_sites, args, params),
-                lead_site.family.norbs,
-                lead_site.family.norbs,
-            )
-            coupling = np.zeros(
-                (device.shape[0], lead_site.family.norbs), dtype=complex
-            )
-            interface_site = int(interface[0])
-            start, stop = offsets[interface_site : interface_site + 2]
-            coupling[start:stop] = hopping
+            coupling = np.zeros((device.shape[0], cell_dimension), dtype=complex)
+            coupling[device_basis, :] = inter_cell.conj().T
             lead_data.append((cell.tolist(), hopping.tolist(), coupling.tolist()))
         return device, lead_data
+
+    def precalculate(self, energy=0, args=(), leads=None, what="modes", *, params=None):
+        if what not in ("modes", "selfenergy", "all"):
+            raise ValueError("what must be 'modes', 'selfenergy', or 'all'")
+        result = copy.copy(self)
+        result._precalculated_energy = float(energy)
+        return result
 
 
 __all__ = [

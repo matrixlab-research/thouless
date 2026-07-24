@@ -60,6 +60,7 @@ jobs:
           maturin==1.14.1
           numpy==2.5.1
           pytest==8.3.5
+          scipy==1.17.1
           tinyarray==1.2.5
       - name: Build the repository compatibility extension
         run: .venv/bin/maturin develop
