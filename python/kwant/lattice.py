@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+from collections import deque
 
 import numpy as np
 import tinyarray as ta
@@ -47,11 +48,13 @@ class Monatomic(SiteFamily):
         return ta.array([int(value) for value in array], int)
 
     def pos(self, tag):
-        return tuple(np.asarray(tag, dtype=float) @ self.prim_vecs + self.offset)
+        return ta.array(
+            np.asarray(tag, dtype=float) @ self.prim_vecs + self.offset
+        )
 
     def vec(self, tag):
         tag = self.normalize_tag(tag)
-        return tuple(np.asarray(tag, dtype=float) @ self.prim_vecs)
+        return ta.array(np.asarray(tag, dtype=float) @ self.prim_vecs)
 
     def closest(self, position):
         position = np.asarray(position, dtype=float)
@@ -62,7 +65,34 @@ class Monatomic(SiteFamily):
             position - self.offset,
             rcond=None,
         )[0]
-        return tuple(np.rint(reduced).astype(int))
+        center = np.rint(reduced).astype(int)
+        candidates = (
+            center + np.asarray(delta)
+            for delta in itertools.product(range(-4, 5), repeat=self.lattice_dim)
+        )
+        closest = min(
+            candidates,
+            key=lambda tag: np.linalg.norm(
+                tag @ self.prim_vecs + self.offset - position
+            ),
+        )
+        return ta.array(closest, int)
+
+    def shape(self, function, start):
+        return Polyatomic(
+            self.prim_vecs,
+            [self.offset],
+            [self.name],
+            self.norbs,
+        ).shape(function, start)
+
+    def wire(self, center, radius):
+        return Polyatomic(
+            self.prim_vecs,
+            [self.offset],
+            [self.name],
+            self.norbs,
+        ).wire(center, radius)
 
     def neighbors(self, n=1, eps=1e-8):
         return Polyatomic(self.prim_vecs, [self.offset], [self.name], self.norbs).neighbors(
@@ -104,6 +134,62 @@ class Polyatomic:
 
     def vec(self, tag):
         return self.sublattices[0].vec(tag)
+
+    def shape(self, function, start):
+        start = np.asarray(start, dtype=float)
+        if start.shape != (self.space_dim,):
+            raise ValueError("Shape start has wrong dimensionality.")
+
+        def site_generator(symmetry=None):
+            symmetry = getattr(symmetry, "symmetry", symmetry)
+            seeds = []
+            for family in self.sublattices:
+                central = np.asarray(family.closest(start), dtype=int)
+                for delta in itertools.product(
+                    range(-2, 3), repeat=self.lattice_dim
+                ):
+                    site = family(*(central + np.asarray(delta)))
+                    if function(site.pos):
+                        seeds.append(site)
+            if not seeds:
+                raise ValueError("No sites close to the shape start are inside")
+            seeds.sort(key=lambda site: np.linalg.norm(np.asarray(site.pos) - start))
+
+            queue = deque([seeds[0]])
+            visited = set()
+            while queue:
+                site = queue.popleft()
+                canonical = (
+                    site if symmetry is None else symmetry.to_fd(site)
+                )
+                if canonical in visited:
+                    continue
+                visited.add(canonical)
+                if not function(canonical.pos):
+                    continue
+                yield canonical
+                tag = np.asarray(canonical.tag, dtype=int)
+                for family in self.sublattices:
+                    queue.append(family(*tag))
+                    for axis in range(self.lattice_dim):
+                        for step in (-1, 1):
+                            neighbor_tag = tag.copy()
+                            neighbor_tag[axis] += step
+                            queue.append(family(*neighbor_tag))
+
+        return site_generator
+
+    def wire(self, center, radius):
+        center = np.asarray(center, dtype=float)
+        direction = np.asarray(self.prim_vecs[0], dtype=float)
+        direction /= np.linalg.norm(direction)
+
+        def inside(position):
+            displacement = np.asarray(position, dtype=float) - center
+            transverse = displacement - np.dot(displacement, direction) * direction
+            return np.dot(transverse, transverse) <= float(radius) ** 2
+
+        return self.shape(inside, center)
 
     def neighbors(self, n=1, eps=1e-8):
         n = int(n)
@@ -187,7 +273,9 @@ class TranslationalSymmetry(Symmetry):
             return
         reduced = self.periods @ np.linalg.pinv(family.prim_vecs)
         rounded = np.rint(reduced)
-        if not np.allclose(reduced, rounded, atol=1e-8):
+        if not np.allclose(reduced, rounded, atol=1e-8) or not np.allclose(
+            rounded @ family.prim_vecs, self.periods, atol=1e-8
+        ):
             raise ValueError("Symmetry periods are not commensurate with the lattice.")
         self._family_periods[family] = rounded.astype(int)
 
@@ -205,9 +293,13 @@ class TranslationalSymmetry(Symmetry):
         return tuple(np.floor(coefficients + 1e-10).astype(int))
 
     def act(self, element, a, b=None):
-        element = np.asarray(element, dtype=int)
-        if element.shape != (self.num_directions,):
+        raw_element = np.asarray(element)
+        if (
+            raw_element.shape != (self.num_directions,)
+            or raw_element.dtype.kind not in "iu"
+        ):
             raise ValueError("Group element has wrong dimension.")
+        element = raw_element.astype(int)
 
         def shifted(site):
             self.add_site_family(site.family)
@@ -225,6 +317,34 @@ class TranslationalSymmetry(Symmetry):
 
     def reversed(self):
         return type(self)(*(-self.periods))
+
+    def has_subgroup(self, other):
+        if isinstance(other, type(None)):
+            return False
+        from .builder import NoSymmetry
+
+        if isinstance(other, NoSymmetry):
+            return True
+        if not isinstance(other, TranslationalSymmetry):
+            return False
+        coefficients = other.periods @ np.linalg.pinv(self.periods)
+        rounded = np.rint(coefficients)
+        return np.allclose(coefficients, rounded, atol=1e-8) and np.allclose(
+            rounded @ self.periods, other.periods, atol=1e-8
+        )
+
+    def subgroup(self, *generators):
+        array = np.asarray(generators)
+        if (
+            array.ndim != 2
+            or array.shape[1] != self.num_directions
+            or array.dtype.kind not in "iu"
+            or np.linalg.matrix_rank(array) != array.shape[0]
+        ):
+            raise ValueError(
+                "Subgroup generators must be independent integer sequences"
+            )
+        return type(self)(*(array.astype(int) @ self.periods))
 
 
 def general(prim_vecs, basis=None, name="", norbs=None):
@@ -262,7 +382,20 @@ def cubic(a=1, name="", norbs=None):
 def honeycomb(a=1, name="", norbs=None):
     primitive = [[a, 0], [0.5 * a, np.sqrt(3) * a / 2]]
     basis = [[0, 0], [0, a / np.sqrt(3)]]
-    return Polyatomic(primitive, basis, name=name, norbs=norbs)
+    result = Polyatomic(primitive, basis, name=name, norbs=norbs)
+    result.a, result.b = result.sublattices
+    return result
+
+
+def kagome(a=1, name="", norbs=None):
+    primitive = np.asarray(
+        [[a, 0], [0.5 * a, np.sqrt(3) * a / 2]],
+        dtype=float,
+    )
+    basis = np.vstack((np.zeros(2), 0.5 * primitive))
+    result = Polyatomic(primitive, basis, name=name, norbs=norbs)
+    result.a, result.b, result.c = result.sublattices
+    return result
 
 
 __all__ = [
@@ -273,6 +406,7 @@ __all__ = [
     "cubic",
     "general",
     "honeycomb",
+    "kagome",
     "square",
     "triangular",
 ]

@@ -11,13 +11,18 @@ test_modules = 24
 static_test_functions = 241
 collection_status = "blocked"
 collection_blocker = "The source test suite imports compiled Cython extensions before collection."
-strict_tests = 26
+strict_tests = 36
 strict_test_nodes = [
+  "kwant/tests/test_lattice.py::test_closest",
   "kwant/tests/test_lattice.py::test_general",
   "kwant/tests/test_lattice.py::test_neighbors",
+  "kwant/tests/test_lattice.py::test_shape",
+  "kwant/tests/test_lattice.py::test_wire",
   "kwant/tests/test_lattice.py::test_monatomic_lattice",
   "kwant/tests/test_lattice.py::test_norbs",
   "kwant/tests/test_lattice.py::test_lattice_constraints",
+  "kwant/tests/test_lattice.py::test_symmetry_act",
+  "kwant/tests/test_lattice.py::test_symmetry_has_subgroup",
   "kwant/tests/test_builder.py::test_site_families",
   "kwant/tests/test_builder.py::test_construction_and_indexing",
   "kwant/tests/test_builder.py::test_hermitian_conjugation",
@@ -30,5 +35,10 @@ strict_test_nodes = [
   "kwant/tests/test_builder.py::test_builder_with_symmetry",
   "kwant/tests/test_builder.py::test_HoppingKind",
   "kwant/tests/test_builder.py::test_invalid_HoppingKind",
+  "kwant/tests/test_builder.py::test_neighbors_not_in_single_domain",
+  "kwant/tests/test_builder.py::test_update",
+  "kwant/tests/test_builder.py::test_site_pickle",
+  "kwant/tests/test_builder.py::test_fill",
+  "kwant/tests/test_builder.py::test_closest",
 ]
 gap_issue = "https://github.com/matrixlab-research/thouless/issues/5"

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import copy
 import inspect
+import itertools
 import warnings
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from functools import total_ordering
 
 import numpy as np
@@ -30,6 +31,8 @@ class HermConjOfFunc:
 
 
 def _conjugate(value):
+    if value is None:
+        return None
     if isinstance(value, HermConjOfFunc):
         return value.function
     if callable(value):
@@ -101,6 +104,9 @@ class Site(tuple):
 
     def __repr__(self):
         return f"Site({self.family!r}, {self.tag!r})"
+
+    def __getnewargs__(self):
+        return self.family, self.tag
 
 
 class HoppingKind(tuple):
@@ -195,6 +201,14 @@ class NoSymmetry(Symmetry):
     def reversed(self):
         return self
 
+    def has_subgroup(self, other):
+        return isinstance(other, NoSymmetry)
+
+    def subgroup(self, *generators):
+        if generators:
+            raise ValueError("NoSymmetry has no nontrivial generators")
+        return self
+
 
 class _Other:
     pass
@@ -260,6 +274,8 @@ def _site_ranges(sites):
 def _evaluate(value, sites, args, params):
     if not callable(value):
         return value
+    if args and params is not None:
+        raise TypeError("'args' and 'params' are mutually exclusive")
     if params is None:
         return value(*sites, *args)
     signature = inspect.signature(value)
@@ -369,6 +385,9 @@ class Builder:
             for hopping in key(self):
                 self[hopping] = value
             return
+        if callable(key):
+            self[key(self)] = value
+            return
         if isinstance(key, tuple):
             raw_first, raw_second = self._validate_hopping(key)
             direct = self.symmetry.to_fd(raw_first, raw_second)
@@ -400,6 +419,9 @@ class Builder:
             first, second = self._validate_hopping(key)
             stored, _ = self._stored_hopping(first, second)
             del self._hoppings[stored]
+            return
+        if callable(key):
+            del self[key(self)]
             return
         for item in list(key):
             del self[item]
@@ -445,6 +467,26 @@ class Builder:
     def degree(self, site):
         return sum(1 for _ in self.neighbors(site))
 
+    def expand(self, key):
+        stack = [iter((key,))]
+        while stack:
+            try:
+                item = next(stack[-1])
+            except StopIteration:
+                stack.pop()
+                continue
+            while callable(item):
+                item = item(self)
+            if isinstance(item, tuple):
+                yield item
+                continue
+            try:
+                stack.append(iter(item))
+            except TypeError as error:
+                raise TypeError(
+                    f"{type(item).__name__} object is not a valid key"
+                ) from error
+
     def dangling(self):
         return (site for site in self.sites() if self.degree(site) < 2)
 
@@ -459,6 +501,190 @@ class Builder:
         result = copy.copy(self)
         result.symmetry = self.symmetry.reversed()
         return result
+
+    def update(self, other):
+        if not isinstance(other, Builder):
+            raise TypeError("Builder.update expects another Builder")
+        if type(self.symmetry) is not type(other.symmetry):
+            raise ValueError("Both builders must have compatible symmetries")
+        for site, value in other.site_value_pairs():
+            self[site] = value
+        for hopping, value in other.hopping_value_pairs():
+            self[hopping] = value
+        self.leads.extend(other.leads)
+
+    def closest(self, position):
+        position = np.asarray(position, dtype=float)
+        if not self._sites:
+            raise ValueError("Builder is empty")
+        best_site = None
+        best_distance = np.inf
+        for site in self._sites:
+            try:
+                site_position = np.asarray(site.pos, dtype=float)
+            except AttributeError as error:
+                raise AttributeError(
+                    "Builder.closest requires site families with positions"
+                ) from error
+            if site_position.shape != position.shape:
+                raise ValueError("Position has wrong dimensionality")
+            if not self.symmetry.num_directions:
+                candidates = [site]
+            else:
+                coefficients = np.linalg.lstsq(
+                    self.symmetry.periods.T,
+                    position - site_position,
+                    rcond=None,
+                )[0]
+                center = np.rint(coefficients).astype(int)
+                candidates = [
+                    self.symmetry.act(center + np.asarray(delta), site)
+                    for delta in itertools.product(
+                        range(-3, 4), repeat=self.symmetry.num_directions
+                    )
+                ]
+            for candidate in candidates:
+                distance = np.linalg.norm(
+                    np.asarray(candidate.pos, dtype=float) - position
+                )
+                if distance < best_distance:
+                    best_distance = distance
+                    best_site = candidate
+        return best_site
+
+    def fill(self, template, shape, start, *, max_sites=10**7):
+        if not isinstance(template, Builder):
+            raise TypeError("fill template must be a Builder")
+        if max_sites <= 0:
+            raise ValueError("max_sites must be positive")
+        if not template.symmetry.has_subgroup(self.symmetry):
+            raise ValueError(
+                "Builder symmetry is not a subgroup of the template symmetry"
+            )
+
+        if isinstance(start, Site):
+            starts = [start]
+        else:
+            starts = list(start)
+            if starts and not isinstance(starts[0], Site):
+                starts = [template.closest(start)]
+        if any(site not in template for site in starts):
+            warnings.warn(
+                "fill(): Some starting sites are not in the template builder.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        starts = [site for site in starts if site in template]
+        if not starts:
+            return []
+
+        canonical_starts = [self.symmetry.to_fd(site) for site in starts]
+        if all(site in self for site in canonical_starts):
+            warnings.warn(
+                "fill(): The target builder already contains all starting sites.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return []
+        inside_starts = [
+            site for site in canonical_starts if site not in self and shape(site)
+        ]
+        if not inside_starts:
+            warnings.warn(
+                "fill(): None of the starting sites is in the desired shape.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return []
+
+        original_sites = self._sites.copy()
+        original_hoppings = self._hoppings.copy()
+        queue = deque(inside_starts)
+        queued = set(inside_starts)
+        processed = set()
+        added = []
+        try:
+            while queue:
+                site = queue.popleft()
+                if site in processed:
+                    continue
+                processed.add(site)
+                if site not in self:
+                    self[site] = template[site]
+                    added.append(site)
+                    if len(added) > max_sites:
+                        raise RuntimeError(
+                            "Maximal number of sites specified by max_sites exceeded"
+                        )
+
+                template_site = template.symmetry.to_fd(site)
+                site_shift = tuple(
+                    int(value) for value in template.symmetry.which(site)
+                )
+                incident = []
+                for (
+                    stored_first,
+                    stored_second,
+                ), hopping_value in template.hopping_value_pairs():
+                    for endpoint in (stored_first, stored_second):
+                        if template.symmetry.to_fd(endpoint) != template_site:
+                            continue
+                        endpoint_shift = tuple(
+                            int(value)
+                            for value in template.symmetry.which(endpoint)
+                        )
+                        shift = tuple(
+                            target - source
+                            for target, source in zip(
+                                site_shift, endpoint_shift, strict=True
+                            )
+                        )
+                        actual_first, actual_second = template.symmetry.act(
+                            shift, stored_first, stored_second
+                        )
+                        neighbor = (
+                            actual_second
+                            if endpoint == stored_first
+                            else actual_first
+                        )
+                        incident.append(
+                            (
+                                neighbor,
+                                (actual_first, actual_second),
+                                hopping_value,
+                            )
+                        )
+                for neighbor, hopping, hopping_value in incident:
+                    neighbor_fd = self.symmetry.to_fd(neighbor)
+                    if neighbor_fd not in self and neighbor_fd not in queued:
+                        if not shape(neighbor_fd):
+                            continue
+                        queue.append(neighbor_fd)
+                        queued.add(neighbor_fd)
+                    elif (
+                        neighbor_fd in self
+                        and neighbor_fd not in processed
+                        and neighbor_fd not in queued
+                        and shape(neighbor_fd)
+                    ):
+                        queue.append(neighbor_fd)
+                        queued.add(neighbor_fd)
+                    if neighbor_fd in self or neighbor_fd in queued:
+                        if neighbor_fd not in self:
+                            self[neighbor_fd] = template[neighbor]
+                            added.append(neighbor_fd)
+                            if len(added) > max_sites:
+                                raise RuntimeError(
+                                    "Maximal number of sites specified by "
+                                    "max_sites exceeded"
+                                )
+                        if hopping not in self:
+                            self[hopping] = hopping_value
+            return added
+        except Exception:
+            self._sites = original_sites
+            self._hoppings = original_hoppings
+            raise
 
     def attach_lead(self, lead_builder, origin=None, add_cells=0):
         if not isinstance(lead_builder, Builder) or not lead_builder.symmetry.num_directions:
