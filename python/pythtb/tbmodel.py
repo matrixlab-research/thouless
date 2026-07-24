@@ -646,6 +646,162 @@ class TBModel:
             )
         return centers, orbital_hybrid
 
+    def axion_angle(
+        self,
+        nks=(20, 20, 20),
+        occ_idxs=None,
+        return_second_chern=False,
+        *,
+        param_periods=None,
+        diff_scheme="central",
+        diff_order=4,
+        use_tensorflow=False,
+        **params,
+    ):
+        """Evaluate an axion sweep from the non-Abelian Kubo curvature."""
+
+        if self.dim_k != 3:
+            raise ValueError(
+                "axion_angle requires a three-dimensional periodic model"
+            )
+        sizes = tuple(int(size) for size in nks)
+        if len(sizes) != 3 or min(sizes) < 3:
+            raise ValueError(
+                "nks must contain three grid sizes of at least three"
+            )
+        if diff_scheme not in ("central", "forward"):
+            raise ValueError("diff_scheme must be 'central' or 'forward'")
+        if diff_order < 1:
+            raise ValueError("diff_order must be positive")
+        if use_tensorflow:
+            warnings.warn(
+                "Thouless evaluates second Chern response in its Rust core; "
+                "use_tensorflow is ignored."
+            )
+
+        scalar_params = {}
+        sweep_params = []
+        for name, value in params.items():
+            array = np.asarray(value)
+            if array.ndim == 0:
+                scalar_params[name] = array.item()
+            elif array.ndim == 1:
+                sweep_params.append((name, array.astype(float)))
+            else:
+                raise ValueError(
+                    "axion_angle parameters must be scalar or one-dimensional"
+                )
+        if len(sweep_params) != 1:
+            raise ValueError(
+                "axion_angle requires exactly one swept parameter"
+            )
+        sweep_name, raw_values = sweep_params[0]
+        periods = {} if param_periods is None else dict(param_periods)
+        sweep_values, sweep_step, periodic, trimmed = (
+            self._normalize_parameter_axis(
+                raw_values,
+                name=sweep_name,
+                period=periods.get(sweep_name),
+            )
+        )
+        if len(sweep_values) < 3:
+            raise ValueError(
+                "axion_angle requires at least three parameter samples"
+            )
+
+        occupied = (
+            np.arange(self.nstate // 2, dtype=int)
+            if occ_idxs is None
+            else np.atleast_1d(occ_idxs).astype(int)
+        )
+        if (
+            len(occupied) == 0
+            or len(set(occupied.tolist())) != len(occupied)
+            or np.any(occupied < 0)
+            or np.any(occupied >= self.nstate)
+        ):
+            raise ValueError("occ_idxs must contain unique valid state indices")
+
+        axes = [
+            np.arange(size, dtype=float) / size for size in sizes
+        ]
+        momenta = np.stack(
+            np.meshgrid(*axes, indexing="ij"),
+            axis=-1,
+        ).reshape(-1, 3)
+        solve_params = dict(scalar_params)
+        solve_params[sweep_name] = sweep_values
+        hamiltonians = self.hamiltonian(
+            momenta,
+            flatten_spin_axis=True,
+            **solve_params,
+        )
+        derivatives = self.velocity(
+            momenta,
+            flatten_spin_axis=True,
+            param_periods=periods,
+            diff_scheme=diff_scheme,
+            diff_order=diff_order,
+            **solve_params,
+        )
+        derivative_groups = np.moveaxis(
+            np.asarray(derivatives, dtype=complex),
+            0,
+            -3,
+        )
+        slice_density, second_chern = _core.second_chern_kubo(
+            np.asarray(hamiltonians, dtype=complex).reshape(
+                -1,
+                self.nstate,
+                self.nstate,
+            ).tolist(),
+            derivative_groups.reshape(
+                -1,
+                4,
+                self.nstate,
+                self.nstate,
+            ).tolist(),
+            [*sizes, len(sweep_values)],
+            [
+                1.0 / sizes[0],
+                1.0 / sizes[1],
+                1.0 / sizes[2],
+                float(sweep_step),
+            ],
+            bool(periodic),
+            occupied.tolist(),
+        )
+        slice_density = np.asarray(slice_density, dtype=float)
+        theta = np.zeros(len(sweep_values), dtype=float)
+        if len(theta) > 1:
+            theta[1:] = (
+                2.0
+                * np.pi
+                * sweep_step
+                * np.cumsum(
+                    0.5 * (slice_density[:-1] + slice_density[1:])
+                )
+            )
+        output_values = np.asarray(sweep_values, dtype=float)
+        if periodic and trimmed:
+            closing_theta = theta[-1] + (
+                2.0
+                * np.pi
+                * sweep_step
+                * 0.5
+                * (slice_density[-1] + slice_density[0])
+            )
+            output_values = np.append(
+                output_values,
+                output_values[0] + sweep_step * len(sweep_values),
+            )
+            theta = np.append(theta, closing_theta)
+        theta = np.unwrap(theta, period=2.0 * np.pi)
+        result = (output_values, theta)
+        if return_second_chern:
+            result += (float(second_chern),)
+        return result
+
     def chern_number(
         self,
         plane,

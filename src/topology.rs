@@ -4,9 +4,317 @@ use nalgebra::linalg::Schur;
 use nalgebra::DMatrix;
 
 use crate::model::{ModelSolveError, TightBindingModel};
+use crate::spectrum::hermitian_eigensystem;
 use crate::{Complex64, ComplexMatrix, TopologyError};
 
 const SINGULAR_OVERLAP_TOLERANCE: f64 = 1.0e-14;
+
+/// Second-Chern density integrated over three coordinates of a four-torus.
+///
+/// `slice_densities[lambda]` contains the Brillouin-zone integral at one
+/// sample of the fourth coordinate, including the conventional
+/// `1 / (4 π²)` normalization but excluding the fourth-coordinate step.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SecondChernResult {
+    slice_densities: Vec<f64>,
+    value: f64,
+}
+
+impl SecondChernResult {
+    /// Returns the normalized three-dimensional density at every fourth-axis
+    /// sample.
+    #[must_use]
+    pub fn slice_densities(&self) -> &[f64] {
+        &self.slice_densities
+    }
+
+    /// Returns the integrated second Chern number.
+    #[must_use]
+    pub const fn value(&self) -> f64 {
+        self.value
+    }
+}
+
+/// Errors raised while evaluating a second Chern number.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SecondChernError {
+    /// Exactly four grid sizes are required.
+    InvalidGridDimension {
+        /// Number of supplied axes.
+        actual: usize,
+    },
+    /// A central difference requires at least three samples.
+    InsufficientSamples {
+        /// Grid axis with too few samples.
+        axis: usize,
+        /// Number of supplied samples.
+        actual: usize,
+    },
+    /// The number of Hamiltonians or derivative groups does not match the grid.
+    InvalidHamiltonianDataCount {
+        /// Number required by the grid shape.
+        expected: usize,
+        /// Number of Hamiltonians supplied.
+        hamiltonians: usize,
+        /// Number of derivative groups supplied.
+        derivatives: usize,
+    },
+    /// Hamiltonians must be nonempty Hermitian square matrices of one common size.
+    IncompatibleHamiltonian {
+        /// Index of the incompatible Hamiltonian.
+        index: usize,
+    },
+    /// Each grid point must provide four compatible Hermitian derivatives.
+    IncompatibleHamiltonianDerivative {
+        /// Grid point containing the incompatible derivative.
+        index: usize,
+        /// Coordinate direction of the incompatible derivative.
+        axis: usize,
+    },
+    /// Occupied states must be unique valid indices and leave at least one empty state.
+    InvalidOccupiedStates,
+    /// The occupied and empty subspaces must be separated by a finite gap.
+    ClosedOccupiedGap {
+        /// Grid point where the occupied gap closes.
+        index: usize,
+    },
+    /// Diagonalization failed for a validated Hamiltonian.
+    EigensystemFailure {
+        /// Grid point where diagonalization failed.
+        index: usize,
+    },
+    /// Exactly four finite, nonzero coordinate steps are required.
+    InvalidCoordinateSteps,
+    /// The grid size cannot be represented.
+    GridTooLarge,
+}
+
+impl std::fmt::Display for SecondChernError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidGridDimension { actual } => {
+                write!(
+                    formatter,
+                    "second Chern grid has {actual} axes; expected four"
+                )
+            }
+            Self::InsufficientSamples { axis, actual } => write!(
+                formatter,
+                "second Chern grid axis {axis} has {actual} samples; at least three are required"
+            ),
+            Self::InvalidHamiltonianDataCount {
+                expected,
+                hamiltonians,
+                derivatives,
+            } => write!(
+                formatter,
+                "second Chern grid requires {expected} Hamiltonians and derivative groups; \
+                 received {hamiltonians} Hamiltonians and {derivatives} derivative groups"
+            ),
+            Self::IncompatibleHamiltonian { index } => write!(
+                formatter,
+                "Hamiltonian {index} is not a finite Hermitian square matrix of the common size"
+            ),
+            Self::IncompatibleHamiltonianDerivative { index, axis } => write!(
+                formatter,
+                "Hamiltonian derivative {axis} at grid point {index} is not a compatible \
+                 Hermitian matrix"
+            ),
+            Self::InvalidOccupiedStates => write!(
+                formatter,
+                "occupied states must be unique valid indices and leave at least one empty state"
+            ),
+            Self::ClosedOccupiedGap { index } => write!(
+                formatter,
+                "occupied and empty states are degenerate at second Chern grid point {index}"
+            ),
+            Self::EigensystemFailure { index } => write!(
+                formatter,
+                "failed to diagonalize Hamiltonian at second Chern grid point {index}"
+            ),
+            Self::InvalidCoordinateSteps => write!(
+                formatter,
+                "second Chern calculation requires four finite nonzero coordinate steps"
+            ),
+            Self::GridTooLarge => {
+                write!(formatter, "second Chern grid is too large to represent")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SecondChernError {}
+
+/// Computes the second Chern number from Hamiltonians and their four
+/// coordinate derivatives using the non-Abelian Kubo curvature.
+///
+/// Hamiltonians and derivative groups are ordered row-major over a
+/// four-dimensional uniform grid. Each derivative group contains
+/// `∂₀H, ∂₁H, ∂₂H, ∂₃H` in the physical coordinates whose spacings are
+/// supplied in `coordinate_steps`. The first three spacings set the
+/// Brillouin-zone volume element; the fourth completes the integral.
+///
+/// This formulation uses the full occupied-to-empty spectral response rather
+/// than differentiating grid-sampled eigenvectors or projectors. It is
+/// therefore invariant under arbitrary basis choices inside degenerate
+/// occupied or empty subspaces.
+pub fn second_chern_from_hamiltonian_derivatives(
+    hamiltonians: &[ComplexMatrix],
+    derivatives: &[[ComplexMatrix; 4]],
+    grid_shape: &[usize],
+    coordinate_steps: &[f64],
+    fourth_axis_periodic: bool,
+    occupied_states: &[usize],
+) -> Result<SecondChernResult, SecondChernError> {
+    if grid_shape.len() != 4 {
+        return Err(SecondChernError::InvalidGridDimension {
+            actual: grid_shape.len(),
+        });
+    }
+    for (axis, &actual) in grid_shape.iter().enumerate() {
+        if actual < 3 {
+            return Err(SecondChernError::InsufficientSamples { axis, actual });
+        }
+    }
+    if coordinate_steps.len() != 4
+        || coordinate_steps
+            .iter()
+            .any(|step| !step.is_finite() || *step == 0.0)
+    {
+        return Err(SecondChernError::InvalidCoordinateSteps);
+    }
+    let grid_size = grid_shape
+        .iter()
+        .try_fold(1_usize, |product, size| product.checked_mul(*size))
+        .ok_or(SecondChernError::GridTooLarge)?;
+    if hamiltonians.len() != grid_size || derivatives.len() != grid_size {
+        return Err(SecondChernError::InvalidHamiltonianDataCount {
+            expected: grid_size,
+            hamiltonians: hamiltonians.len(),
+            derivatives: derivatives.len(),
+        });
+    }
+
+    let dimension = hamiltonians.first().map_or(0, ComplexMatrix::rows);
+    for (index, hamiltonian) in hamiltonians.iter().enumerate() {
+        if dimension == 0
+            || hamiltonian.shape() != (dimension, dimension)
+            || !hamiltonian.is_hermitian(1.0e-8).unwrap_or(false)
+        {
+            return Err(SecondChernError::IncompatibleHamiltonian { index });
+        }
+        for (axis, derivative) in derivatives[index].iter().enumerate() {
+            if derivative.shape() != (dimension, dimension)
+                || !derivative.is_hermitian(1.0e-8).unwrap_or(false)
+            {
+                return Err(SecondChernError::IncompatibleHamiltonianDerivative { index, axis });
+            }
+        }
+    }
+
+    let mut occupied_mask = vec![false; dimension];
+    for &state in occupied_states {
+        if state >= dimension || occupied_mask[state] {
+            return Err(SecondChernError::InvalidOccupiedStates);
+        }
+        occupied_mask[state] = true;
+    }
+    let empty_states = (0..dimension)
+        .filter(|state| !occupied_mask[*state])
+        .collect::<Vec<_>>();
+    if occupied_states.is_empty() || empty_states.is_empty() {
+        return Err(SecondChernError::InvalidOccupiedStates);
+    }
+
+    let normalization =
+        coordinate_steps[..3].iter().product::<f64>() / (4.0 * std::f64::consts::PI.powi(2));
+    let mut slice_densities = vec![0.0; grid_shape[3]];
+    for (flat_index, hamiltonian) in hamiltonians.iter().enumerate() {
+        let eigensystem = hermitian_eigensystem(hamiltonian, 1.0e-8)
+            .map_err(|_| SecondChernError::EigensystemFailure { index: flat_index })?;
+        let eigenvalues = eigensystem.eigenvalues();
+        for &occupied in occupied_states {
+            if empty_states
+                .iter()
+                .any(|&empty| (eigenvalues[occupied] - eigenvalues[empty]).abs() < 1.0e-12)
+            {
+                return Err(SecondChernError::ClosedOccupiedGap { index: flat_index });
+            }
+        }
+        let eigenvectors = dmatrix(eigensystem.eigenvectors());
+        let eigenvectors_adjoint = eigenvectors.adjoint();
+        let rotated_derivatives = derivatives[flat_index]
+            .iter()
+            .map(|derivative| &eigenvectors_adjoint * dmatrix(derivative) * &eigenvectors)
+            .collect::<Vec<_>>();
+        let curvature = |first: usize, second: usize| {
+            let occupied_count = occupied_states.len();
+            let mut quantum_geometric =
+                DMatrix::from_element(occupied_count, occupied_count, Complex64::new(0.0, 0.0));
+            for (row, &left_occupied) in occupied_states.iter().enumerate() {
+                for (column, &right_occupied) in occupied_states.iter().enumerate() {
+                    quantum_geometric[(row, column)] = empty_states
+                        .iter()
+                        .map(|&empty| {
+                            let left_gap = eigenvalues[left_occupied] - eigenvalues[empty];
+                            let right_gap = eigenvalues[right_occupied] - eigenvalues[empty];
+                            rotated_derivatives[first][(left_occupied, empty)]
+                                * rotated_derivatives[second][(empty, right_occupied)]
+                                / (left_gap * right_gap)
+                        })
+                        .sum();
+                }
+            }
+            let mut result =
+                DMatrix::from_element(occupied_count, occupied_count, Complex64::new(0.0, 0.0));
+            for row in 0..occupied_count {
+                for column in 0..occupied_count {
+                    result[(row, column)] = Complex64::new(0.0, 1.0)
+                        * (quantum_geometric[(row, column)]
+                            - quantum_geometric[(column, row)].conj());
+                }
+            }
+            result
+        };
+        let curvature_01 = curvature(0, 1);
+        let curvature_02 = curvature(0, 2);
+        let curvature_03 = curvature(0, 3);
+        let curvature_12 = curvature(1, 2);
+        let curvature_13 = curvature(1, 3);
+        let curvature_23 = curvature(2, 3);
+        let density = ((curvature_01 * curvature_23).trace()
+            - (curvature_02 * curvature_13).trace()
+            + (curvature_03 * curvature_12).trace())
+        .re;
+        let fourth_coordinate = unravel_index(flat_index, grid_shape)[3];
+        slice_densities[fourth_coordinate] += normalization * density;
+    }
+
+    let fourth_integral = if fourth_axis_periodic {
+        slice_densities.iter().sum::<f64>()
+    } else {
+        slice_densities
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                if index == 0 || index + 1 == slice_densities.len() {
+                    0.5 * value
+                } else {
+                    *value
+                }
+            })
+            .sum::<f64>()
+    };
+    Ok(SecondChernResult {
+        value: coordinate_steps[3] * fourth_integral,
+        slice_densities,
+    })
+}
+
+fn dmatrix(matrix: &ComplexMatrix) -> DMatrix<Complex64> {
+    DMatrix::from_row_slice(matrix.rows(), matrix.columns(), matrix.as_slice())
+}
 
 /// Chern numbers evaluated on the spectator coordinates of a uniform grid.
 ///

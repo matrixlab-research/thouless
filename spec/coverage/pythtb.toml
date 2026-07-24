@@ -88,3 +88,13 @@ source_test = "six pinned finite-position and hybrid-Wannier workflows"
 actual_result = "6 passed"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/4"
+
+[[interface]]
+name = "axion angle and second Chern response"
+source_entries = ["axion_angle"]
+compat_entry = "python/pythtb"
+rust_capability = "geometry.topology"
+public_test = "tests/native_topology.rs"
+source_test = "tests/test_tbmodel/test_invariants_tbmodel.py::test_berry_curvature_second_chern"
+actual_result = "1 passed"
+status = "implemented"

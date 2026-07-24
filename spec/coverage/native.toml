@@ -36,7 +36,7 @@ issue = "https://github.com/matrixlab-research/thouless/issues/1"
 [[capability]]
 id = "geometry.topology"
 description = "Berry geometry, Wilson loops, and topological invariants"
-native_api = "thouless::topology link, Wilson-loop, connection, flux, and uniform-grid Chern functions"
+native_api = "thouless::topology link, Wilson-loop, connection, flux, first-Chern, and Kubo second-Chern functions"
 test = "tests/native_topology.rs and pinned PythTB topology/link tests"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/2"

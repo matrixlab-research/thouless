@@ -7,7 +7,7 @@ use thouless::observables::{pauli_coefficients, project_diagonal_observable};
 use thouless::spectrum::hermitian_eigensystem;
 use thouless::topology::{
     chern_numbers_on_uniform_grid, connection_from_link, parallel_transport_link, plaquette_flux,
-    wilson_line_phase, wilson_loop_eigenphases,
+    second_chern_from_hamiltonian_derivatives, wilson_line_phase, wilson_loop_eigenphases,
 };
 use thouless::transform::{change_nonperiodic_vector, make_supercell, remove_orbitals};
 use thouless::transport::{solve_open_system, LeadContact, SurfaceGreenOptions};
@@ -321,6 +321,46 @@ fn uniform_grid_chern(
 }
 
 #[pyfunction]
+fn second_chern_kubo(
+    hamiltonians: Vec<Vec<Vec<Complex64>>>,
+    derivatives: Vec<Vec<Vec<Vec<Complex64>>>>,
+    grid_shape: Vec<usize>,
+    coordinate_steps: Vec<f64>,
+    fourth_axis_periodic: bool,
+    occupied_states: Vec<usize>,
+) -> PyResult<(Vec<f64>, f64)> {
+    let hamiltonians = hamiltonians
+        .into_iter()
+        .map(matrix_from_rows)
+        .collect::<PyResult<Vec<_>>>()?;
+    let derivatives = derivatives
+        .into_iter()
+        .map(|group| {
+            let matrices = group
+                .into_iter()
+                .map(matrix_from_rows)
+                .collect::<PyResult<Vec<_>>>()?;
+            matrices.try_into().map_err(|matrices: Vec<_>| {
+                PyValueError::new_err(format!(
+                    "each grid point requires four Hamiltonian derivatives; received {}",
+                    matrices.len()
+                ))
+            })
+        })
+        .collect::<PyResult<Vec<[ComplexMatrix; 4]>>>()?;
+    let result = second_chern_from_hamiltonian_derivatives(
+        &hamiltonians,
+        &derivatives,
+        &grid_shape,
+        &coordinate_steps,
+        fourth_axis_periodic,
+        &occupied_states,
+    )
+    .map_err(value_error)?;
+    Ok((result.slice_densities().to_vec(), result.value()))
+}
+
+#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn momentum_derivatives(
     primitive_vectors: Vec<Vec<f64>>,
@@ -564,6 +604,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(change_model_nonperiodic_vector, module)?)?;
     module.add_function(wrap_pyfunction!(make_model_supercell, module)?)?;
     module.add_function(wrap_pyfunction!(uniform_grid_chern, module)?)?;
+    module.add_function(wrap_pyfunction!(second_chern_kubo, module)?)?;
     module.add_function(wrap_pyfunction!(momentum_derivatives, module)?)?;
     module.add_function(wrap_pyfunction!(finite_difference, module)?)?;
     module.add_function(wrap_pyfunction!(open_system_transmissions, module)?)?;

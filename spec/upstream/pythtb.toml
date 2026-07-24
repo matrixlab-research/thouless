@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 test_root = "tests"
 collection_status = "complete"
 collected_tests = 98
-strict_tests = 95
+strict_tests = 96
 python = "3.12"
 collection_command = "python -m pytest --collect-only -q"
 gap_issue = "https://github.com/matrixlab-research/thouless/issues/4"
@@ -45,6 +45,7 @@ strict_test_files = [
   "tests/test_wfarray/test_mesh_perm_wfa.py",
   "tests/test_wfarray/test_links.py",
   "tests/test_wfarray/test_wfa_mutation.py",
+  "tests/test_tbmodel/test_invariants_tbmodel.py::test_berry_curvature_second_chern",
   "tests/test_tbmodel/test_invariants_tbmodel.py::test_chern_haldane",
   "tests/test_examples/cubic_slab_hwf/test_cubic_slab_hwf.py",
   "tests/test_examples/bn_ribbon_berry/test_bn_ribbon_berry.py",
