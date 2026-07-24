@@ -11,9 +11,9 @@ issue = "https://github.com/matrixlab-research/thouless/issues/1"
 
 [[capability]]
 id = "spectrum.periodic"
-description = "Bloch Hamiltonian assembly and eigensolvers"
+description = "Bloch Hamiltonian assembly and divide-and-conquer Hermitian eigensolvers"
 native_api = "thouless::model::TightBindingModel::{hamiltonian,eigensystem,momentum_derivatives}"
-test = "tests/native_model.rs"
+test = "tests/native_model.rs, crates/thouless-lapack tests, and pinned PythTB spectral workflows"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/1"
 

@@ -1,8 +1,5 @@
 //! Hermitian spectral algorithms.
 
-use nalgebra::linalg::SymmetricEigen;
-use nalgebra::DMatrix;
-
 use crate::{Complex64, ComplexMatrix, SpectrumError};
 
 /// Eigenvalues and column eigenvectors of a Hermitian matrix.
@@ -42,23 +39,14 @@ pub fn hermitian_eigensystem(
     }
 
     let dimension = matrix.rows();
-    let backend = DMatrix::from_row_slice(dimension, dimension, matrix.as_slice());
-    let decomposition = SymmetricEigen::new(backend);
-
-    let mut order: Vec<usize> = (0..dimension).collect();
-    order.sort_by(|left, right| {
-        decomposition.eigenvalues[*left].total_cmp(&decomposition.eigenvalues[*right])
-    });
-
-    let eigenvalues = order
-        .iter()
-        .map(|index| decomposition.eigenvalues[*index])
-        .collect();
+    let decomposition = thouless_lapack::hermitian_eigensystem(dimension, matrix.as_slice())
+        .map_err(|_| SpectrumError::DecompositionFailure)?;
+    let eigenvalues = decomposition.eigenvalues().to_vec();
     let mut eigenvectors = vec![Complex64::new(0.0, 0.0); dimension * dimension];
-    for (new_column, old_column) in order.iter().enumerate() {
+    for column in 0..dimension {
         for row in 0..dimension {
-            eigenvectors[row * dimension + new_column] =
-                decomposition.eigenvectors[(row, *old_column)];
+            eigenvectors[row * dimension + column] =
+                decomposition.eigenvectors_column_major()[row + column * dimension];
         }
     }
 

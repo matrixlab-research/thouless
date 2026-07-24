@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 test_root = "tests"
 collection_status = "complete"
 collected_tests = 98
-strict_tests = 96
+strict_tests = 98
 python = "3.12"
 collection_command = "python -m pytest --collect-only -q"
 gap_issue = "https://github.com/matrixlab-research/thouless/issues/4"
@@ -38,6 +38,8 @@ strict_test_files = [
   "tests/test_examples/haldane/haldane_bp/test_haldane_bp.py",
   "tests/test_examples/haldane/haldane_fin/test_haldane_fin.py",
   "tests/test_examples/haldane/haldane_hwf/test_haldane_hwf.py",
+  "tests/test_examples/haldane/edge/test_edge.py",
+  "tests/test_examples/ssh/test_ssh.py",
   "tests/test_examples/three_site/three_site_cycle_fin/test_three_site_cycle_fin.py",
   "tests/test_tbmodel/test_different_modes.py",
   "tests/test_tbmodel/test_dimr_dimk_different.py",

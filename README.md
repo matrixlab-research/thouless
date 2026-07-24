@@ -17,7 +17,7 @@ Hermitian assembly, eigensolvers, momentum derivatives, discrete Wilson phases,
 Berry fluxes and uniform-grid Chern numbers, reciprocal paths, parallel
 transport, local-observable projection, and structure-preserving model
 transformations in Rust. The Python extension and partial PythTB 2.0 layer pass
-96 of the 98 pinned upstream tests without changing their tolerances. It does
+all 98 pinned upstream tests without changing their tolerances. It does
 not yet implement the complete PythTB surface, complete topology and response
 theory, complete open-system transport, or the complete Kwant compatibility
 surface.
@@ -106,9 +106,9 @@ PYTHONPATH=python python -m pytest -q -ra compat-tests
 The Kwant ballistic smoke contract executes through the Rust transport core,
 and a strict 89-test upstream slice validates the compatibility layer;
 remaining Kwant gaps are tracked in issue #5. The strict PythTB runner executes
-96 pinned source tests through the repository-built extension; the remaining
-two tests are tracked in issue #4. A skip without a linked issue is a CI
-error.
+all 98 collected source tests through the repository-built extension. Broader
+PythTB public-interface inventory work remains tracked in issue #4. A skip
+without a linked issue is a CI error.
 
 ## Source baselines
 

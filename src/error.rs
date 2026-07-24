@@ -260,6 +260,8 @@ pub enum SpectrumError {
     },
     /// The input matrix is not Hermitian within the requested tolerance.
     NonHermitian,
+    /// The numerical eigensolver failed.
+    DecompositionFailure,
     /// Matrix construction or access failed.
     Matrix(MatrixError),
 }
@@ -271,6 +273,7 @@ impl fmt::Display for SpectrumError {
                 write!(formatter, "matrix shape ({rows}, {columns}) is not square")
             }
             Self::NonHermitian => write!(formatter, "matrix is not Hermitian"),
+            Self::DecompositionFailure => write!(formatter, "Hermitian eigensolver failed"),
             Self::Matrix(error) => error.fmt(formatter),
         }
     }

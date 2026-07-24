@@ -12,9 +12,10 @@ categories = ["science"]
 publish = false
 
 [workspace]
-members = [".", "crates/thouless-python"]
+members = [".", "crates/thouless-lapack", "crates/thouless-python"]
 resolver = "2"
 
 [dependencies]
 nalgebra = "0.33.2"
 num-complex = "0.4.6"
+thouless-lapack = { path = "crates/thouless-lapack" }
