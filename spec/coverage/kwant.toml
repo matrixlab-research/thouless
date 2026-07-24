@@ -1,0 +1,66 @@
+schema_version = 1
+source_package = "Kwant"
+source_version = "1.5.0"
+source_repository = "https://gitlab.kwant-project.org/kwant/kwant.git"
+inventory_status = "incomplete"
+inventory_issue = "https://github.com/matrixlab-research/thouless/issues/5"
+
+[[interface]]
+name = "system construction"
+source_entries = [
+  "Builder",
+  "TranslationalSymmetry",
+  "HoppingKind",
+  "FiniteSystem",
+  "InfiniteSystem",
+]
+compat_entry = "python/kwant"
+rust_capability = "model.structure"
+public_test = "compat-tests/test_kwant_api.py"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/5"
+
+[[interface]]
+name = "lattice families"
+source_entries = ["general", "chain", "square", "triangular", "honeycomb", "cubic"]
+compat_entry = "python/kwant/lattice"
+rust_capability = "model.structure"
+public_test = "compat-tests/test_kwant_api.py"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/5"
+
+[[interface]]
+name = "steady-state solvers"
+source_entries = ["smatrix", "greens_function", "wave_function", "ldos"]
+compat_entry = "python/kwant/solvers"
+rust_capability = "transport.steady_state"
+public_test = "compat-tests/test_kwant_api.py"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/5"
+
+[[interface]]
+name = "lead modes and self-energies"
+source_entries = ["Bands", "modes", "selfenergy", "PropagatingModes", "StabilizedModes"]
+compat_entry = "python/kwant/physics"
+rust_capability = "transport.steady_state"
+public_test = "not implemented"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/5"
+
+[[interface]]
+name = "local observables"
+source_entries = ["Density", "Current", "Source"]
+compat_entry = "python/kwant/operator"
+rust_capability = "transport.steady_state"
+public_test = "compat-tests/test_kwant_api.py"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/5"
+
+[[interface]]
+name = "optional scientific modules"
+source_entries = ["kpm", "continuum", "wraparound", "digest", "rmt", "plotter"]
+compat_entry = "python/kwant"
+rust_capability = "not inventoried"
+public_test = "not implemented"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/5"

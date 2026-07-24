@@ -1,0 +1,58 @@
+name: Scientific capability or test gap
+description: Track one missing general capability or a group of tests with one root cause.
+title: "[gap] "
+labels: ["test-gap"]
+body:
+  - type: input
+    id: capability
+    attributes:
+      label: Missing general capability
+      description: Name the reusable scientific or compatibility capability, not only one fixture.
+    validations:
+      required: true
+  - type: input
+    id: tests
+    attributes:
+      label: Affected test identifiers
+      description: List exact native or source-test node IDs.
+    validations:
+      required: true
+  - type: input
+    id: baseline
+    attributes:
+      label: Source baseline and target commit
+      description: Give the pinned source version or commit and the Thouless commit.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Include the exact local or CI command.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Include the existing numerical tolerance or comparison rule when applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs and CI artifacts
+      description: Link the failing workflow, job, and relevant artifacts.
+  - type: textarea
+    id: root_cause
+    attributes:
+      label: Suspected root cause
+      description: Explain the missing general mechanism.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: State the general fix and tests required before closing.
+    validations:
+      required: true

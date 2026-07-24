@@ -1,0 +1,69 @@
+schema_version = 1
+source_package = "PythTB"
+source_version = "2.0.0"
+source_repository = "https://github.com/pythtb/pythtb"
+inventory_status = "incomplete"
+inventory_issue = "https://github.com/matrixlab-research/thouless/issues/4"
+
+[[interface]]
+name = "tb_model construction and mutation"
+source_entries = ["tb_model", "set_onsite", "set_hop"]
+compat_entry = "python/pythtb"
+rust_capability = "model.structure"
+public_test = "compat-tests/test_pythtb_api.py"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/4"
+
+[[interface]]
+name = "spectral solution"
+source_entries = ["solve_one", "solve_all"]
+compat_entry = "python/pythtb"
+rust_capability = "spectrum.periodic"
+public_test = "compat-tests/test_pythtb_api.py"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/4"
+
+[[interface]]
+name = "finite and transformed models"
+source_entries = [
+  "cut_piece",
+  "make_supercell",
+  "reduce_dim",
+  "remove_orb",
+  "k_uniform_mesh",
+  "k_path",
+]
+compat_entry = "python/pythtb"
+rust_capability = "geometry.finite"
+public_test = "compat-tests/test_pythtb_api.py"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/4"
+
+[[interface]]
+name = "wavefunction arrays and Berry quantities"
+source_entries = [
+  "wf_array",
+  "solve_on_grid",
+  "solve_on_one_point",
+  "impose_pbc",
+  "berry_phase",
+  "berry_flux",
+]
+compat_entry = "python/pythtb"
+rust_capability = "geometry.topology"
+public_test = "compat-tests/test_pythtb_api.py"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/4"
+
+[[interface]]
+name = "position operators and hybrid Wannier functions"
+source_entries = [
+  "position_matrix",
+  "position_expectation",
+  "position_hwf",
+]
+compat_entry = "python/pythtb"
+rust_capability = "geometry.topology"
+public_test = "not implemented"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/4"

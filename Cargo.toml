@@ -1,0 +1,15 @@
+[package]
+name = "thouless"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.81"
+license = "MIT"
+description = "Rust-native tight-binding, topology, and steady-state quantum transport"
+repository = "https://github.com/matrixlab-research/thouless"
+readme = "README.md"
+keywords = ["tight-binding", "topology", "quantum-transport"]
+categories = ["science"]
+publish = false
+
+[dependencies]
+num-complex = "0.4.6"
