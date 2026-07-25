@@ -228,12 +228,13 @@ def modes(
     del tol, stabilization
     if discrete_symmetry is not None:
         projectors, time_reversal, particle_hole, chiral = discrete_symmetry
-    if any(
+    has_symmetries = any(
         symmetry is not None
         for symmetry in (time_reversal, particle_hole, chiral)
-    ):
+    )
+    if projectors is not None and has_symmetries:
         raise NotImplementedError(
-            "Symmetry-related lead modes are tracked in "
+            "Symmetry-related conservation blocks are tracked in "
             "https://github.com/matrixlab-research/thouless/issues/5"
         )
     h_cell = np.asarray(h_cell, dtype=complex)
@@ -246,7 +247,7 @@ def modes(
     square_hopping = np.zeros_like(h_cell)
     square_hopping[:, : h_hop.shape[1]] = h_hop
 
-    if projectors is None:
+    if projectors is None and not has_symmetries:
         (
             wave_functions,
             velocities,
@@ -258,6 +259,33 @@ def modes(
         ) = _core.lead_propagating_modes(
             h_cell.tolist(),
             square_hopping.tolist(),
+        )
+        block_nmodes = [incoming_count]
+        projected = False
+    elif projectors is None:
+        def symmetry_rows(symmetry):
+            if symmetry is None:
+                return None
+            return (
+                symmetry.toarray()
+                if scipy_sparse.issparse(symmetry)
+                else np.asarray(symmetry, dtype=complex)
+            ).tolist()
+
+        (
+            wave_functions,
+            velocities,
+            momenta,
+            incoming_count,
+            stabilized_vectors,
+            stabilized_vectors_lambda_inverse,
+            square_root_hopping,
+        ) = _core.lead_symmetric_modes(
+            h_cell.tolist(),
+            square_hopping.tolist(),
+            symmetry_rows(time_reversal),
+            symmetry_rows(particle_hole),
+            symmetry_rows(chiral),
         )
         block_nmodes = [incoming_count]
         projected = False

@@ -8,7 +8,7 @@ use crate::decomposition::{
     eigenvectors_from_generalized_schur, generalized_schur, DecompositionError,
 };
 use crate::spectrum::hermitian_eigensystem;
-use crate::symmetry::{DiscreteSymmetry, SymmetryViolation};
+use crate::symmetry::{particle_hole_symmetric_basis, DiscreteSymmetry, SymmetryViolation};
 use crate::{Complex64, ComplexMatrix, MatrixError};
 
 const UNIT_CIRCLE_TOLERANCE: f64 = 1.0e-7;
@@ -103,6 +103,8 @@ pub enum LeadModeError {
     DecompositionFailure,
     /// Conservation-law projectors are invalid or do not reduce both lead matrices.
     InvalidProjectors,
+    /// Declared discrete symmetries are invalid or do not preserve the lead.
+    InvalidSymmetries,
     /// Matrix construction failed.
     Matrix(MatrixError),
 }
@@ -121,6 +123,10 @@ impl fmt::Display for LeadModeError {
             Self::InvalidProjectors => write!(
                 formatter,
                 "projectors must be complete orthonormal subspaces that reduce the lead matrices"
+            ),
+            Self::InvalidSymmetries => write!(
+                formatter,
+                "discrete symmetries must be unitary and preserve the lead matrices"
             ),
             Self::Matrix(error) => error.fmt(formatter),
         }
@@ -331,7 +337,12 @@ pub fn propagating_modes(
             for value in &mut wave {
                 *value /= scale;
             }
-            candidates.push((velocity, bloch_factor.arg(), bloch_factor, wave));
+            candidates.push((
+                velocity,
+                canonical_momentum(bloch_factor.arg()),
+                bloch_factor,
+                wave,
+            ));
         }
     }
 
@@ -405,6 +416,85 @@ pub fn propagating_modes(
         stabilized_vectors_lambda_inverse,
         square_root_hopping,
     })
+}
+
+/// Solve propagating modes and choose a basis that obeys declared discrete
+/// symmetries in both physical and stabilized representations.
+pub fn propagating_modes_with_symmetries(
+    cell_hamiltonian: &ComplexMatrix,
+    inter_cell_hopping: &ComplexMatrix,
+    time_reversal: Option<&ComplexMatrix>,
+    particle_hole: Option<&ComplexMatrix>,
+    chiral: Option<&ComplexMatrix>,
+) -> Result<PropagatingLeadModes, LeadModeError> {
+    let time_reversal = validate_lead_symmetry(
+        cell_hamiltonian,
+        inter_cell_hopping,
+        time_reversal,
+        SymmetryViolation::TimeReversal,
+    )?;
+    let particle_hole = validate_lead_symmetry(
+        cell_hamiltonian,
+        inter_cell_hopping,
+        particle_hole,
+        SymmetryViolation::ParticleHole,
+    )?;
+    let chiral = validate_lead_symmetry(
+        cell_hamiltonian,
+        inter_cell_hopping,
+        chiral,
+        SymmetryViolation::Chiral,
+    )?;
+
+    let mut modes = propagating_modes(cell_hamiltonian, inter_cell_hopping)?;
+    if let Some(particle_hole) = particle_hole.as_ref() {
+        adapt_particle_hole(&mut modes, particle_hole)?;
+    }
+    if time_reversal.is_none() {
+        if let Some(chiral) = chiral.as_ref() {
+            adapt_opposite_direction(&mut modes, chiral, false, true)?;
+        }
+    }
+    if let Some(time_reversal) = time_reversal.as_ref() {
+        adapt_opposite_direction(&mut modes, time_reversal, true, false)?;
+    }
+    Ok(modes)
+}
+
+fn validate_lead_symmetry(
+    cell_hamiltonian: &ComplexMatrix,
+    inter_cell_hopping: &ComplexMatrix,
+    operator: Option<&ComplexMatrix>,
+    kind: SymmetryViolation,
+) -> Result<Option<ComplexMatrix>, LeadModeError> {
+    let Some(operator) = operator else {
+        return Ok(None);
+    };
+    let symmetry = match kind {
+        SymmetryViolation::TimeReversal => {
+            DiscreteSymmetry::new(None, Some(operator.clone()), None, None)
+        }
+        SymmetryViolation::ParticleHole => {
+            DiscreteSymmetry::new(None, None, Some(operator.clone()), None)
+        }
+        SymmetryViolation::Chiral => {
+            DiscreteSymmetry::new(None, None, None, Some(operator.clone()))
+        }
+        SymmetryViolation::ConservationLaw => {
+            return Err(LeadModeError::InvalidSymmetries);
+        }
+    }
+    .map_err(|_| LeadModeError::InvalidSymmetries)?;
+    for matrix in [cell_hamiltonian, inter_cell_hopping] {
+        if symmetry
+            .validate(matrix)
+            .map_err(|_| LeadModeError::InvalidSymmetries)?
+            .contains(&kind)
+        {
+            return Err(LeadModeError::InvalidSymmetries);
+        }
+    }
+    Ok(Some(operator.clone()))
 }
 
 /// Solve propagating modes independently in complete orthogonal subspaces.
@@ -516,6 +606,211 @@ pub fn propagating_modes_in_subspaces(
         },
         block_incoming_counts,
     })
+}
+
+fn adapt_opposite_direction(
+    modes: &mut PropagatingLeadModes,
+    operator: &ComplexMatrix,
+    conjugate_source: bool,
+    reverse_source: bool,
+) -> Result<(), LeadModeError> {
+    let incoming = modes.incoming_count;
+    if modes.wave_functions.columns() != 2 * incoming {
+        return Err(LeadModeError::DecompositionFailure);
+    }
+    let source_columns = if reverse_source {
+        (0..incoming).rev().collect::<Vec<_>>()
+    } else {
+        (0..incoming).collect::<Vec<_>>()
+    };
+    let source = select_columns(&backend(&modes.wave_functions), &source_columns);
+    let source = if conjugate_source {
+        source.map(|value| value.conj())
+    } else {
+        source
+    };
+    let desired = backend(operator) * source;
+    let target_columns = (incoming..2 * incoming).collect::<Vec<_>>();
+    replace_mode_columns(modes, &target_columns, &desired)
+}
+
+fn adapt_particle_hole(
+    modes: &mut PropagatingLeadModes,
+    particle_hole: &ComplexMatrix,
+) -> Result<(), LeadModeError> {
+    let incoming = modes.incoming_count;
+    if modes.wave_functions.columns() != 2 * incoming {
+        return Err(LeadModeError::DecompositionFailure);
+    }
+    let momentum_tolerance = 1.0e-7;
+    let velocity_tolerance = 1.0e-7;
+    let particle_hole_dense = backend(particle_hole);
+
+    for direction in [0..incoming, incoming..2 * incoming] {
+        let positive = direction
+            .clone()
+            .filter(|&column| {
+                modes.momenta[column] > momentum_tolerance
+                    && modes.momenta[column] < std::f64::consts::PI - momentum_tolerance
+            })
+            .collect::<Vec<_>>();
+        let negative = direction
+            .clone()
+            .filter(|&column| {
+                modes.momenta[column] < -momentum_tolerance
+                    && modes.momenta[column] > -std::f64::consts::PI + momentum_tolerance
+            })
+            .collect::<Vec<_>>();
+        if positive.len() != negative.len() {
+            return Err(LeadModeError::InvalidSymmetries);
+        }
+        if !negative.is_empty() {
+            let wave_functions = backend(&modes.wave_functions);
+            let mut used = vec![false; positive.len()];
+            let mut desired = DMatrix::<Complex64>::zeros(wave_functions.nrows(), negative.len());
+            for (target_position, &target_column) in negative.iter().enumerate() {
+                let (source_position, &source_column) = positive
+                    .iter()
+                    .enumerate()
+                    .filter(|(position, _)| !used[*position])
+                    .min_by(|(_, left), (_, right)| {
+                        (modes.momenta[**left] + modes.momenta[target_column])
+                            .abs()
+                            .total_cmp(
+                                &(modes.momenta[**right] + modes.momenta[target_column]).abs(),
+                            )
+                    })
+                    .ok_or(LeadModeError::InvalidSymmetries)?;
+                used[source_position] = true;
+                let source = wave_functions
+                    .column(source_column)
+                    .map(|value| value.conj());
+                let transformed = &particle_hole_dense * source;
+                desired.set_column(target_position, &transformed);
+            }
+            replace_mode_columns(modes, &negative, &desired)?;
+        }
+
+        let mut assigned = vec![false; modes.wave_functions.columns()];
+        for seed in direction.clone() {
+            let momentum = modes.momenta[seed];
+            let at_trim = momentum.abs() <= momentum_tolerance
+                || (momentum.abs() - std::f64::consts::PI).abs() <= momentum_tolerance;
+            if !at_trim || assigned[seed] {
+                continue;
+            }
+            let group = direction
+                .clone()
+                .filter(|&column| {
+                    !assigned[column]
+                        && trim_distance(modes.momenta[column], momentum) <= momentum_tolerance
+                        && (modes.velocities[column] - modes.velocities[seed]).abs()
+                            <= velocity_tolerance * modes.velocities[seed].abs().max(1.0)
+                })
+                .collect::<Vec<_>>();
+            for &column in &group {
+                assigned[column] = true;
+            }
+            let wave_functions = backend(&modes.wave_functions);
+            let mut normalized = select_columns(&wave_functions, &group);
+            for (local, &column) in group.iter().enumerate() {
+                normalized
+                    .column_mut(local)
+                    .scale_mut(modes.velocities[column].abs().sqrt());
+            }
+            let normalized = owned(&normalized)?;
+            let adapted = particle_hole_symmetric_basis(&normalized, particle_hole)
+                .map_err(|_| LeadModeError::InvalidSymmetries)?;
+            let mut desired = backend(adapted.wave_functions());
+            for (local, &column) in group.iter().enumerate() {
+                desired
+                    .column_mut(local)
+                    .scale_mut(modes.velocities[column].abs().sqrt().recip());
+            }
+            replace_mode_columns(modes, &group, &desired)?;
+        }
+    }
+    Ok(())
+}
+
+fn trim_distance(left: f64, right: f64) -> f64 {
+    if left.abs() <= 1.0e-7 && right.abs() <= 1.0e-7 {
+        0.0
+    } else {
+        (left.abs() - right.abs()).abs()
+    }
+}
+
+fn canonical_momentum(momentum: f64) -> f64 {
+    if (momentum - std::f64::consts::PI).abs() <= 1.0e-12 {
+        -std::f64::consts::PI
+    } else {
+        momentum
+    }
+}
+
+fn replace_mode_columns(
+    modes: &mut PropagatingLeadModes,
+    columns: &[usize],
+    desired: &DMatrix<Complex64>,
+) -> Result<(), LeadModeError> {
+    if columns.is_empty() {
+        return Ok(());
+    }
+    let wave_functions = backend(&modes.wave_functions);
+    let current = select_columns(&wave_functions, columns);
+    if current.shape() != desired.shape() {
+        return Err(LeadModeError::InvalidSymmetries);
+    }
+    let rotation = current
+        .clone()
+        .svd(true, true)
+        .solve(desired, 1.0e-10)
+        .map_err(|_| LeadModeError::DecompositionFailure)?;
+    let residual = &current * &rotation - desired;
+    if residual
+        .iter()
+        .map(|value| value.norm())
+        .fold(0.0, f64::max)
+        > 1.0e-6
+    {
+        return Err(LeadModeError::InvalidSymmetries);
+    }
+
+    modes.wave_functions = replace_columns(&wave_functions, columns, desired)?;
+    let vectors = backend(&modes.stabilized_vectors);
+    let transformed_vectors = select_columns(&vectors, columns) * &rotation;
+    modes.stabilized_vectors = replace_columns(&vectors, columns, &transformed_vectors)?;
+    let vectors_lambda_inverse = backend(&modes.stabilized_vectors_lambda_inverse);
+    let transformed_vectors_lambda_inverse =
+        select_columns(&vectors_lambda_inverse, columns) * rotation;
+    modes.stabilized_vectors_lambda_inverse = replace_columns(
+        &vectors_lambda_inverse,
+        columns,
+        &transformed_vectors_lambda_inverse,
+    )?;
+    Ok(())
+}
+
+fn select_columns(matrix: &DMatrix<Complex64>, columns: &[usize]) -> DMatrix<Complex64> {
+    DMatrix::from_fn(matrix.nrows(), columns.len(), |row, column| {
+        matrix[(row, columns[column])]
+    })
+}
+
+fn replace_columns(
+    matrix: &DMatrix<Complex64>,
+    columns: &[usize],
+    replacement: &DMatrix<Complex64>,
+) -> Result<ComplexMatrix, LeadModeError> {
+    if replacement.shape() != (matrix.nrows(), columns.len()) {
+        return Err(LeadModeError::InvalidShape);
+    }
+    let mut result = matrix.clone();
+    for (replacement_column, &target_column) in columns.iter().enumerate() {
+        result.set_column(target_column, &replacement.column(replacement_column));
+    }
+    owned(&result)
 }
 
 fn regular_raw_modes(
@@ -936,6 +1231,41 @@ mod tests {
                 let expected = projector.get(row, 0).unwrap() * 0.7_f64.sqrt();
                 assert!((square_root.get(row, column).unwrap() - expected).norm() < 1.0e-12);
             }
+        }
+    }
+
+    #[test]
+    fn time_reversal_fixes_the_relative_mode_gauge() {
+        let modes = propagating_modes_with_symmetries(
+            &ComplexMatrix::scalar(Complex64::new(0.3, 0.0)),
+            &ComplexMatrix::scalar(Complex64::new(0.7, 0.0)),
+            Some(&ComplexMatrix::identity(1)),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(modes.incoming_count(), 1);
+        assert!(
+            (modes.wave_functions().get(0, 1).unwrap()
+                - modes.wave_functions().get(0, 0).unwrap().conj())
+            .norm()
+                < 1.0e-10
+        );
+    }
+
+    #[test]
+    fn square_plus_one_particle_hole_modes_are_real_at_trim() {
+        let modes = propagating_modes_with_symmetries(
+            &ComplexMatrix::scalar(Complex64::new(0.0, 0.0)),
+            &ComplexMatrix::scalar(Complex64::new(0.0, 0.7)),
+            None,
+            Some(&ComplexMatrix::identity(1)),
+            None,
+        )
+        .unwrap();
+        assert_eq!(modes.incoming_count(), 1);
+        for &value in modes.wave_functions().as_slice() {
+            assert!(value.im.abs() < 1.0e-10);
         }
     }
 }

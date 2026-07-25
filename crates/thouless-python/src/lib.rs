@@ -24,7 +24,9 @@ use thouless::lattice_reduction::{
     closest_lattice_vectors, gram_schmidt, gram_schmidt_coefficient, is_c_reduced, lll_reduce,
     voronoi_neighbors,
 };
-use thouless::lead_modes::{propagating_modes, propagating_modes_in_subspaces};
+use thouless::lead_modes::{
+    propagating_modes, propagating_modes_in_subspaces, propagating_modes_with_symmetries,
+};
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
 use thouless::observables::{pauli_coefficients, project_diagonal_observable};
 use thouless::periodic::{fold_terms, PeriodicTerm};
@@ -753,6 +755,44 @@ fn lead_projected_modes(
             matrix_to_rows(modes.stabilized_vectors_lambda_inverse()),
             matrix_to_rows(modes.square_root_hopping()),
             projected.block_incoming_counts().to_vec(),
+        )
+    })
+    .map_err(value_error)
+}
+
+#[pyfunction(signature = (
+    cell_hamiltonian,
+    inter_cell_hopping,
+    time_reversal=None,
+    particle_hole=None,
+    chiral=None
+))]
+fn lead_symmetric_modes(
+    cell_hamiltonian: MatrixRows,
+    inter_cell_hopping: MatrixRows,
+    time_reversal: Option<MatrixRows>,
+    particle_hole: Option<MatrixRows>,
+    chiral: Option<MatrixRows>,
+) -> PyResult<LeadModeOutput> {
+    let time_reversal = optional_matrix(time_reversal)?;
+    let particle_hole = optional_matrix(particle_hole)?;
+    let chiral = optional_matrix(chiral)?;
+    propagating_modes_with_symmetries(
+        &matrix_from_rows(cell_hamiltonian)?,
+        &matrix_from_rows(inter_cell_hopping)?,
+        time_reversal.as_ref(),
+        particle_hole.as_ref(),
+        chiral.as_ref(),
+    )
+    .map(|modes| {
+        (
+            matrix_to_rows(modes.wave_functions()),
+            modes.velocities().to_vec(),
+            modes.momenta().to_vec(),
+            modes.incoming_count(),
+            matrix_to_rows(modes.stabilized_vectors()),
+            matrix_to_rows(modes.stabilized_vectors_lambda_inverse()),
+            matrix_to_rows(modes.square_root_hopping()),
         )
     })
     .map_err(value_error)
@@ -1700,6 +1740,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(periodic_fold_terms, module)?)?;
     module.add_function(wrap_pyfunction!(lead_propagating_modes, module)?)?;
     module.add_function(wrap_pyfunction!(lead_projected_modes, module)?)?;
+    module.add_function(wrap_pyfunction!(lead_symmetric_modes, module)?)?;
     module.add_function(wrap_pyfunction!(lead_retarded_self_energy, module)?)?;
     module.add_function(wrap_pyfunction!(square_strip_self_energy, module)?)?;
     module.add_function(wrap_pyfunction!(dense_schur, module)?)?;

@@ -467,6 +467,17 @@ def test_propagating_modes_execute_without_scipy_eigensolvers(monkeypatch) -> No
     np.testing.assert_allclose(propagating.momenta, [momentum, -momentum])
     assert stabilized.nmodes == 1
 
+    symmetric, symmetric_stabilized = kwant.physics.modes(
+        onsite,
+        hopping,
+        time_reversal=np.eye(1),
+    )
+    np.testing.assert_allclose(
+        symmetric.wave_functions[:, 1],
+        symmetric.wave_functions[:, 0].conj(),
+    )
+    assert symmetric_stabilized.nmodes == 1
+
 
 def test_projected_modes_execute_in_rust_subspaces(monkeypatch) -> None:
     kwant = require_compat_module("kwant", ISSUE_URL)
