@@ -397,7 +397,7 @@ impl Error for TopologyError {}
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum GeometryError {
-    /// Reciprocal-space paths require at least one periodic direction.
+    /// Reciprocal-space sampling requires at least one periodic direction.
     NoPeriodicDirections,
     /// A path requires at least two nodes.
     InsufficientPathNodes,
@@ -423,13 +423,32 @@ pub enum GeometryError {
     SingularPeriodicGeometry,
     /// Every segment in the path has zero Cartesian length.
     ZeroLengthPath,
+    /// A reciprocal mesh requires one nonzero extent per periodic direction.
+    InvalidMeshShape {
+        /// Number of periodic directions.
+        expected: usize,
+        /// Number of supplied mesh extents.
+        actual: usize,
+    },
+    /// One reciprocal-mesh extent is zero.
+    EmptyMeshAxis {
+        /// Zero-sized reduced-coordinate axis.
+        axis: usize,
+    },
+    /// One fractional mesh offset is outside `[0, 1)`.
+    InvalidMeshOffset {
+        /// Invalid reduced-coordinate axis.
+        axis: usize,
+    },
+    /// The product of reciprocal-mesh extents exceeds `usize`.
+    MeshSizeOverflow,
 }
 
 impl fmt::Display for GeometryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoPeriodicDirections => {
-                write!(formatter, "reciprocal paths require a periodic lattice")
+                write!(formatter, "reciprocal sampling requires a periodic lattice")
             }
             Self::InsufficientPathNodes => write!(formatter, "a path requires at least two nodes"),
             Self::InvalidPathNode {
@@ -456,6 +475,20 @@ impl fmt::Display for GeometryError {
                     formatter,
                     "path must contain a nonzero Cartesian displacement"
                 )
+            }
+            Self::InvalidMeshShape { expected, actual } => write!(
+                formatter,
+                "reciprocal mesh has {actual} extents; expected {expected}"
+            ),
+            Self::EmptyMeshAxis { axis } => {
+                write!(formatter, "reciprocal mesh axis {axis} has zero samples")
+            }
+            Self::InvalidMeshOffset { axis } => write!(
+                formatter,
+                "reciprocal mesh offset on axis {axis} must be finite and in [0, 1)"
+            ),
+            Self::MeshSizeOverflow => {
+                write!(formatter, "reciprocal mesh contains too many points")
             }
         }
     }

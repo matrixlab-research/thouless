@@ -63,11 +63,10 @@ status = "implemented"
 
 [[capability]]
 id = "geometry.reciprocal_sampling"
-description = "Metric-aware reciprocal paths and meshes"
-native_api = "thouless::geometry::ReciprocalPath"
-test = "tests/native_geometry.rs and pinned band-structure examples"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/1"
+description = "Metric-aware reciprocal paths and uniform tensor-product meshes with normalized and Cartesian quadrature measures"
+native_api = "thouless::geometry::{ReciprocalPath,UniformReciprocalMesh}"
+test = "tests/native_geometry.rs anisotropic path metric, short-segment node preservation, oblique two-dimensional mesh coordinates and volume, embedded lower-dimensional measure, and invalid-grid boundaries"
+status = "implemented"
 
 [[capability]]
 id = "geometry.topology"
