@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 
 
@@ -20,4 +22,28 @@ def ensure_rng(rng=None):
     raise ValueError("Expecting a seed or an object that offers the numpy.random API")
 
 
-__all__ = ["KwantDeprecationWarning", "ensure_rng"]
+def get_parameters(function):
+    """Return required positional parameters of a value function."""
+
+    parameters = inspect.signature(function).parameters
+    result = []
+    for name, parameter in parameters.items():
+        if parameter.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            if parameter.default is not inspect.Parameter.empty:
+                raise ValueError(
+                    "Arguments of value functions must not have default values"
+                )
+            result.append(name)
+        elif parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+            raise ValueError(
+                "Keyword-only arguments are not allowed in value functions"
+            )
+        else:
+            raise ValueError("Value functions must not take *args or **kwargs")
+    return tuple(result)
+
+
+__all__ = ["KwantDeprecationWarning", "ensure_rng", "get_parameters"]

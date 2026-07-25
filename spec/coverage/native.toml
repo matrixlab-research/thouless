@@ -41,6 +41,13 @@ status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/3"
 
 [[capability]]
+id = "geometry.periodic_folding"
+description = "Bloch-phase folding of periodic hopping terms into finite or lower-dimensional matrix blocks"
+native_api = "thouless::periodic::{PeriodicTerm,bloch_phase,fold_terms}"
+test = "src/periodic.rs, tests/native_periodic.rs, repository cosine-chain boundary, and pinned Kwant wraparound model tests"
+status = "implemented"
+
+[[capability]]
 id = "geometry.reciprocal_sampling"
 description = "Metric-aware reciprocal paths and meshes"
 native_api = "thouless::geometry::ReciprocalPath"

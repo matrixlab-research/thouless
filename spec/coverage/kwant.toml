@@ -211,12 +211,22 @@ status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
 [[interface]]
+name = "periodic boundary folding"
+source_entries = ["wraparound.wraparound", "wraparound.WrappedBuilder"]
+compat_entry = "python/kwant/wraparound"
+rust_capability = "geometry.periodic_folding"
+public_test = "repository scalar-chain reciprocal-periodicity contract"
+source_test = "periodic folding with all directions or one retained direction, oblique and mismatched fundamental domains, opposite hoppings, scalar and matrix values, callable parameter signatures, symmetries, and args/params equivalence"
+actual_result = "7 source tests passed through Rust-native Bloch phases and adjoint folding"
+status = "implemented"
+
+[[interface]]
 name = "remaining optional scientific modules"
-source_entries = ["continuum", "wraparound", "plotter", "gauge"]
+source_entries = ["continuum", "plotter", "gauge", "wraparound.plot_2d_bands"]
 compat_entry = "python/kwant"
 rust_capability = "compatibility utility layer; native migration pending"
 public_test = "not implemented"
-actual_result = "missing"
+actual_result = "plot_2d_bands remains a visible issue-linked skip; the other modules are not selected"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 

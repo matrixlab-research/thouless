@@ -17,6 +17,18 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "spec" / "upstream" / "kwant.toml"
 
 
+class ResultCounter:
+    def __init__(self) -> None:
+        self.passed = 0
+        self.skipped = 0
+
+    def pytest_runtest_logreport(self, report) -> None:
+        if report.skipped and report.when in {"setup", "call"}:
+            self.skipped += 1
+        elif report.passed and report.when == "call":
+            self.passed += 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("checkout", type=Path)
@@ -70,7 +82,21 @@ def main() -> int:
     sys.modules["kwant.graph.tests"] = graph_tests_package
 
     test_nodes = [str(checkout / node) for node in manifest["strict_test_nodes"]]
-    return pytest.main(["-q", "-ra", *test_nodes])
+    counter = ResultCounter()
+    result = pytest.main(["-q", "-ra", *test_nodes], plugins=[counter])
+    if result != pytest.ExitCode.OK:
+        return int(result)
+    expected_passes = manifest.get("strict_passes", manifest["strict_tests"])
+    expected_skips = manifest.get("strict_skips", 0)
+    if (counter.passed, counter.skipped) != (expected_passes, expected_skips):
+        print(
+            "strict Kwant outcome mismatch: "
+            f"observed {counter.passed} passed and {counter.skipped} skipped; "
+            f"expected {expected_passes} passed and {expected_skips} skipped",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

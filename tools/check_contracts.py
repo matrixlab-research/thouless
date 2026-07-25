@@ -76,6 +76,21 @@ def check_upstream_manifest(path: Path) -> None:
         fail(f"{path.name} does not pin an exact source commit")
     if not ISSUE_PATTERN.match(document.get("gap_issue", "")):
         fail(f"{path.name} does not link its compatibility gap issue")
+    expected_skips = document.get("expected_skip", [])
+    declared_skips = document.get("strict_skips", 0)
+    if declared_skips != len(expected_skips):
+        fail(
+            f"{path.name} declares {declared_skips} skips but "
+            f"documents {len(expected_skips)}"
+        )
+    if "strict_passes" in document:
+        if document["strict_passes"] + declared_skips != document["strict_tests"]:
+            fail(f"{path.name} pass and skip counts do not equal strict_tests")
+    for skip in expected_skips:
+        if not skip.get("node") or not skip.get("reason"):
+            fail(f"{path.name} has an under-specified expected skip")
+        if not ISSUE_PATTERN.match(skip.get("issue", "")):
+            fail(f"{path.name} has an expected skip without a valid issue")
     status = document.get("collection_status")
     if status == "complete":
         if document.get("collected_tests", 0) < 1:

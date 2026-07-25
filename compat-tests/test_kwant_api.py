@@ -130,6 +130,25 @@ def test_kpm_trace_sum_uses_the_rust_recurrence(monkeypatch) -> None:
     np.testing.assert_allclose(integrated, [1.0, 1.0], atol=1e-10)
 
 
+def test_wraparound_recovers_the_cosine_chain() -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    lattice = kwant.lattice.chain(norbs=1)
+    periodic = kwant.Builder(kwant.TranslationalSymmetry((1,)))
+    periodic[lattice(0)] = 0.0
+    periodic[lattice(0), lattice(1)] = -1.3
+    wrapped = kwant.wraparound.wraparound(periodic).finalized()
+
+    for momentum in (-2.7, -0.4, 0.0, 1.2, 3.0):
+        hamiltonian = wrapped.hamiltonian_submatrix(
+            params={"k_x": momentum}
+        )
+        np.testing.assert_allclose(
+            hamiltonian,
+            [[-2.6 * np.cos(momentum)]],
+            atol=1e-13,
+        )
+
+
 def test_random_matrix_symmetries_generalize_to_larger_dimensions() -> None:
     kwant = require_compat_module("kwant", ISSUE_URL)
     dimension = 12

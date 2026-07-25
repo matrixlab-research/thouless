@@ -21,6 +21,7 @@ pub mod lead_modes;
 pub mod matrix;
 pub mod model;
 pub mod observables;
+pub mod periodic;
 pub mod random_matrix;
 pub mod spectrum;
 pub mod symmetry;

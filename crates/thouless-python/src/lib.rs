@@ -27,6 +27,7 @@ use thouless::lattice_reduction::{
 use thouless::lead_modes::propagating_modes;
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
 use thouless::observables::{pauli_coefficients, project_diagonal_observable};
+use thouless::periodic::{fold_terms, PeriodicTerm};
 use thouless::random_matrix::{circular_from_components, gaussian_from_components, SymmetryClass};
 use thouless::spectrum::hermitian_eigensystem;
 use thouless::symmetry::DiscreteSymmetry as NativeDiscreteSymmetry;
@@ -70,6 +71,7 @@ type SupercellOutput = (ModelOutput, Vec<Vec<i32>>);
 type MatrixRows = Vec<Vec<Complex64>>;
 type ComplexTensor3 = Vec<Vec<Vec<Complex64>>>;
 type KpmReconstructionOutput = (Vec<f64>, ComplexTensor3, ComplexTensor3, ComplexTensor3);
+type PeriodicTermInput = (MatrixRows, Vec<i64>, bool);
 type LatticeReductionOutput = (Vec<Vec<f64>>, Vec<Vec<i64>>);
 type SchurOutput = (MatrixRows, MatrixRows, Vec<Complex64>);
 type GeneralizedSchurOutput = (
@@ -672,6 +674,20 @@ fn kpm_velocity_operator(
     direction: usize,
 ) -> PyResult<MatrixRows> {
     velocity_operator(&matrix_from_rows(hamiltonian)?, &positions, direction)
+        .map(|matrix| matrix_to_rows(&matrix))
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn periodic_fold_terms(terms: Vec<PeriodicTermInput>, momentum: Vec<f64>) -> PyResult<MatrixRows> {
+    let terms = terms
+        .into_iter()
+        .map(|(value, translation, include_adjoint)| {
+            matrix_from_rows(value)
+                .map(|value| PeriodicTerm::new(value, translation, include_adjoint))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    fold_terms(&terms, &momentum)
         .map(|matrix| matrix_to_rows(&matrix))
         .map_err(value_error)
 }
@@ -1622,6 +1638,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(kpm_chebyshev_nodes, module)?)?;
     module.add_function(wrap_pyfunction!(kpm_fermi_distribution, module)?)?;
     module.add_function(wrap_pyfunction!(kpm_velocity_operator, module)?)?;
+    module.add_function(wrap_pyfunction!(periodic_fold_terms, module)?)?;
     module.add_function(wrap_pyfunction!(lead_propagating_modes, module)?)?;
     module.add_function(wrap_pyfunction!(lead_retarded_self_energy, module)?)?;
     module.add_function(wrap_pyfunction!(square_strip_self_energy, module)?)?;

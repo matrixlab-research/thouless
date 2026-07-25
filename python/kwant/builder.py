@@ -543,9 +543,7 @@ def _block(value, rows, columns, onsite=False):
 def _onsite_dimension(value, default):
     array = np.asarray(value)
     if array.ndim == 0:
-        if default is None:
-            raise ValueError("Number of orbitals not defined for scalar onsite")
-        return default
+        return 1 if default is None else default
     if array.ndim == 2 and array.shape[0] == array.shape[1]:
         return array.shape[0]
     if (
