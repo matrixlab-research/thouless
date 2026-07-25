@@ -109,6 +109,27 @@ def test_local_operator_entry_points_exist() -> None:
     assert callable(kwant.operator.Source)
 
 
+def test_kpm_trace_sum_uses_the_rust_recurrence(monkeypatch) -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+
+    def disabled_python_eigensolver(*args, **kwargs):
+        raise AssertionError("the compatibility path used a Python eigensolver")
+
+    monkeypatch.setattr(np.linalg, "eigh", disabled_python_eigensolver)
+    monkeypatch.setattr(np.linalg, "eigvalsh", disabled_python_eigensolver)
+
+    hamiltonian = np.asarray([[0.2, -1.0], [-1.0, -0.1]])
+    density = kwant.kpm.SpectralDensity(
+        hamiltonian,
+        vector_factory=kwant.kpm.LocalVectors(hamiltonian),
+        num_vectors=None,
+        num_moments=96,
+        mean=False,
+    )
+    integrated = density.integrate()
+    np.testing.assert_allclose(integrated, [1.0, 1.0], atol=1e-10)
+
+
 def test_random_matrix_symmetries_generalize_to_larger_dimensions() -> None:
     kwant = require_compat_module("kwant", ISSUE_URL)
     dimension = 12

@@ -15,6 +15,7 @@ pub mod digest;
 mod error;
 pub mod geometry;
 pub mod graph;
+pub mod kpm;
 pub mod lattice_reduction;
 pub mod lead_modes;
 pub mod matrix;

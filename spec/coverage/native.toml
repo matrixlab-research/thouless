@@ -18,6 +18,14 @@ status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/1"
 
 [[capability]]
+id = "spectrum.kernel_polynomial"
+description = "Kernel-polynomial spectral densities, operator-resolved moments, quadrature, and Kubo-Bastin two-operator response"
+native_api = "thouless::kpm::{rescale_hamiltonian,chebyshev_vectors,scalar_moments,reconstruct,correlation_moments,correlation_integral_factor,correlation_response}"
+test = "src/kpm.rs, tests/native_kpm.rs, compatibility boundary with Python eigensolvers disabled, and complete pinned Kwant KPM module"
+status = "partial"
+issue = "https://github.com/matrixlab-research/thouless/issues/5"
+
+[[capability]]
 id = "spectrum.lead_bands"
 description = "Periodic principal-cell band energies, eigenvectors, velocities, and curvatures"
 native_api = "thouless::bands::{PeriodicBands,BandEvaluation}"

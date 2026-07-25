@@ -191,11 +191,31 @@ status = "missing"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
 [[interface]]
-name = "optional scientific modules"
-source_entries = ["kpm", "continuum", "wraparound", "plotter"]
+name = "kernel polynomial spectral and response methods"
+source_entries = [
+  "kpm.SpectralDensity",
+  "kpm.Correlator",
+  "kpm.conductivity",
+  "kpm.RandomVectors",
+  "kpm.LocalVectors",
+  "kpm.jackson_kernel",
+  "kpm.lorentz_kernel",
+  "kpm.fermi_distribution",
+]
+compat_entry = "python/kwant/kpm"
+rust_capability = "spectrum.kernel_polynomial"
+public_test = "repository trace-sum, explicit-bound, zero-response, local-basis, and Python-eigensolver-disabled contracts"
+source_test = "complete pinned KPM module: spectral density, scalar and vector-valued operators, random and local vectors, custom vector factories, bounds, energy resolution, incremental moments and vectors, convergence, integration, correlation, and conductivity"
+actual_result = "26 source tests passed through Rust-native rescaling, Chebyshev recurrence, moment reconstruction, kernels, quadrature, Kubo-Bastin response, and velocity operators; dense materialization remains a scientific-scale limitation"
+status = "partial"
+issue = "https://github.com/matrixlab-research/thouless/issues/5"
+
+[[interface]]
+name = "remaining optional scientific modules"
+source_entries = ["continuum", "wraparound", "plotter", "gauge"]
 compat_entry = "python/kwant"
 rust_capability = "compatibility utility layer; native migration pending"
-public_test = "pinned gauge-covariant operator workflow"
+public_test = "not implemented"
 actual_result = "missing"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"

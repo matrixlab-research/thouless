@@ -2,7 +2,7 @@
 
 import sys
 
-from . import builder, digest, graph, lattice, linalg, operator, physics, rmt, solvers
+from . import builder, digest, graph, kpm, lattice, linalg, operator, physics, rmt, solvers
 from .builder import Builder, HoppingKind, Site, SiteFamily, UserCodeError
 from .lattice import TranslationalSymmetry
 from .solvers import (
@@ -34,6 +34,7 @@ __all__ = [
     "builder",
     "digest",
     "graph",
+    "kpm",
     "lattice",
     "linalg",
     "operator",

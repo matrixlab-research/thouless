@@ -12,6 +12,14 @@ use thouless::geometry::ReciprocalPath;
 use thouless::graph::{
     CompressedGraph, CompressionOptions, DirectedEdge, DirectedGraphBuilder, GraphError, NodeId,
 };
+use thouless::kpm::{
+    apply_kernel, apply_operator_to_chebyshev, chebyshev_nodes, chebyshev_vectors,
+    correlation_integral_factor, correlation_moments, correlation_response,
+    evaluate as kpm_evaluate_native, fermi_distribution as kpm_fermi_distribution_native,
+    integrate as kpm_integrate_native, kernel_weights, reconstruct as kpm_reconstruct_native,
+    reconstruct_stabilized, rescale_hamiltonian, scalar_moments, velocity_operator, Kernel,
+    SpectralScale,
+};
 use thouless::lattice_reduction::{
     closest_lattice_vectors, gram_schmidt, gram_schmidt_coefficient, is_c_reduced, lll_reduce,
     voronoi_neighbors,
@@ -60,6 +68,8 @@ type ModelOutput = (
 type ReciprocalPathOutput = (Vec<Vec<f64>>, Vec<f64>, Vec<f64>);
 type SupercellOutput = (ModelOutput, Vec<Vec<i32>>);
 type MatrixRows = Vec<Vec<Complex64>>;
+type ComplexTensor3 = Vec<Vec<Vec<Complex64>>>;
+type KpmReconstructionOutput = (Vec<f64>, ComplexTensor3, ComplexTensor3, ComplexTensor3);
 type LatticeReductionOutput = (Vec<Vec<f64>>, Vec<Vec<i64>>);
 type SchurOutput = (MatrixRows, MatrixRows, Vec<Complex64>);
 type GeneralizedSchurOutput = (
@@ -444,6 +454,226 @@ fn digest_uniform_pair(input: Vec<u8>, salt: Vec<u8>) -> (f64, f64) {
 #[pyfunction]
 fn digest_gaussian(input: Vec<u8>, salt: Vec<u8>) -> f64 {
     digest_gaussian_value(&input, &salt)
+}
+
+fn kpm_kernel(name: &str, strength: Option<f64>) -> PyResult<Kernel> {
+    match name {
+        "jackson" => Ok(Kernel::Jackson),
+        "lorentz" => Ok(Kernel::Lorentz(strength.unwrap_or(4.0))),
+        "none" => Ok(Kernel::None),
+        _ => Err(PyValueError::new_err(
+            "KPM kernel must be 'jackson', 'lorentz', or 'none'",
+        )),
+    }
+}
+
+#[pyfunction(signature = (hamiltonian, strict_margin=0.05, bounds=None))]
+fn kpm_rescale_hamiltonian(
+    hamiltonian: MatrixRows,
+    strict_margin: f64,
+    bounds: Option<(f64, f64)>,
+) -> PyResult<(MatrixRows, f64, f64)> {
+    let rescaled = rescale_hamiltonian(&matrix_from_rows(hamiltonian)?, strict_margin, bounds)
+        .map_err(value_error)?;
+    Ok((
+        matrix_to_rows(rescaled.matrix()),
+        rescaled.scale().half_width(),
+        rescaled.scale().center(),
+    ))
+}
+
+#[pyfunction]
+fn kpm_chebyshev_vectors(
+    rescaled_hamiltonian: MatrixRows,
+    initial_vectors: Vec<Vec<Complex64>>,
+    moment_count: usize,
+) -> PyResult<ComplexTensor3> {
+    chebyshev_vectors(
+        &matrix_from_rows(rescaled_hamiltonian)?,
+        &initial_vectors,
+        moment_count,
+    )
+    .map_err(value_error)
+}
+
+#[pyfunction(signature = (initial_vectors, chebyshev, operator=None))]
+fn kpm_scalar_moments(
+    initial_vectors: Vec<Vec<Complex64>>,
+    chebyshev: ComplexTensor3,
+    operator: Option<MatrixRows>,
+) -> PyResult<ComplexTensor3> {
+    let operator = operator.map(matrix_from_rows).transpose()?;
+    scalar_moments(&initial_vectors, &chebyshev, operator.as_ref()).map_err(value_error)
+}
+
+#[pyfunction]
+fn kpm_apply_operator(operator: MatrixRows, chebyshev: ComplexTensor3) -> PyResult<ComplexTensor3> {
+    apply_operator_to_chebyshev(&matrix_from_rows(operator)?, &chebyshev).map_err(value_error)
+}
+
+#[pyfunction(signature = (
+    raw_moments,
+    half_width,
+    center,
+    kernel="jackson",
+    kernel_strength=None,
+    mean=true
+))]
+fn kpm_reconstruct(
+    raw_moments: ComplexTensor3,
+    half_width: f64,
+    center: f64,
+    kernel: &str,
+    kernel_strength: Option<f64>,
+    mean: bool,
+) -> PyResult<KpmReconstructionOutput> {
+    let reconstruction = kpm_reconstruct_native(
+        &raw_moments,
+        SpectralScale::new(half_width, center).map_err(value_error)?,
+        kpm_kernel(kernel, kernel_strength)?,
+        mean,
+    )
+    .map_err(value_error)?;
+    Ok((
+        reconstruction.energies().to_vec(),
+        reconstruction.densities().to_vec(),
+        reconstruction.gammas().to_vec(),
+        reconstruction.moments().to_vec(),
+    ))
+}
+
+#[pyfunction]
+fn kpm_reconstruct_stabilized(
+    moments: ComplexTensor3,
+    half_width: f64,
+    center: f64,
+) -> PyResult<KpmReconstructionOutput> {
+    let reconstruction = reconstruct_stabilized(
+        &moments,
+        SpectralScale::new(half_width, center).map_err(value_error)?,
+    )
+    .map_err(value_error)?;
+    Ok((
+        reconstruction.energies().to_vec(),
+        reconstruction.densities().to_vec(),
+        reconstruction.gammas().to_vec(),
+        reconstruction.moments().to_vec(),
+    ))
+}
+
+#[pyfunction]
+fn kpm_evaluate(
+    stabilized_moments: ComplexTensor3,
+    half_width: f64,
+    center: f64,
+    energies: Vec<f64>,
+) -> PyResult<ComplexTensor3> {
+    kpm_evaluate_native(
+        &stabilized_moments,
+        SpectralScale::new(half_width, center).map_err(value_error)?,
+        &energies,
+    )
+    .map_err(value_error)
+}
+
+#[pyfunction]
+fn kpm_integrate(
+    gammas: ComplexTensor3,
+    distribution: Vec<f64>,
+    half_width: f64,
+    center: f64,
+) -> PyResult<Vec<Vec<Complex64>>> {
+    kpm_integrate_native(
+        &gammas,
+        &distribution,
+        SpectralScale::new(half_width, center).map_err(value_error)?,
+    )
+    .map_err(value_error)
+}
+
+#[pyfunction]
+fn kpm_correlation_moments(
+    left: ComplexTensor3,
+    right: ComplexTensor3,
+    mean: bool,
+) -> PyResult<ComplexTensor3> {
+    correlation_moments(&left, &right, mean).map_err(value_error)
+}
+
+#[pyfunction(signature = (
+    moments,
+    moment_count,
+    kernel="jackson",
+    kernel_strength=None
+))]
+fn kpm_correlation_integral_factor(
+    moments: ComplexTensor3,
+    moment_count: usize,
+    kernel: &str,
+    kernel_strength: Option<f64>,
+) -> PyResult<Vec<Vec<Complex64>>> {
+    correlation_integral_factor(&moments, moment_count, kpm_kernel(kernel, kernel_strength)?)
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn kpm_correlation_response(
+    integral_factor: Vec<Vec<Complex64>>,
+    half_width: f64,
+    center: f64,
+    chemical_potential: f64,
+    temperature: f64,
+) -> PyResult<Vec<Complex64>> {
+    correlation_response(
+        &integral_factor,
+        SpectralScale::new(half_width, center).map_err(value_error)?,
+        chemical_potential,
+        temperature,
+    )
+    .map_err(value_error)
+}
+
+#[pyfunction(signature = (moment_count, kernel="jackson", kernel_strength=None))]
+fn kpm_kernel_weights(
+    moment_count: usize,
+    kernel: &str,
+    kernel_strength: Option<f64>,
+) -> PyResult<Vec<f64>> {
+    kernel_weights(moment_count, kpm_kernel(kernel, kernel_strength)?).map_err(value_error)
+}
+
+#[pyfunction(signature = (moments, kernel="jackson", kernel_strength=None))]
+fn kpm_apply_kernel(
+    moments: Vec<Vec<Complex64>>,
+    kernel: &str,
+    kernel_strength: Option<f64>,
+) -> PyResult<Vec<Vec<Complex64>>> {
+    apply_kernel(&moments, kpm_kernel(kernel, kernel_strength)?).map_err(value_error)
+}
+
+#[pyfunction]
+fn kpm_chebyshev_nodes(sample_count: usize) -> PyResult<Vec<f64>> {
+    chebyshev_nodes(sample_count).map_err(value_error)
+}
+
+#[pyfunction]
+fn kpm_fermi_distribution(
+    energies: Vec<f64>,
+    chemical_potential: f64,
+    temperature: f64,
+) -> PyResult<Vec<f64>> {
+    kpm_fermi_distribution_native(&energies, chemical_potential, temperature).map_err(value_error)
+}
+
+#[pyfunction]
+fn kpm_velocity_operator(
+    hamiltonian: MatrixRows,
+    positions: Vec<Vec<f64>>,
+    direction: usize,
+) -> PyResult<MatrixRows> {
+    velocity_operator(&matrix_from_rows(hamiltonian)?, &positions, direction)
+        .map(|matrix| matrix_to_rows(&matrix))
+        .map_err(value_error)
 }
 
 #[pyfunction]
@@ -1376,6 +1606,22 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(reflection_shot_noise, module)?)?;
     module.add_function(wrap_pyfunction!(digest_uniform_pair, module)?)?;
     module.add_function(wrap_pyfunction!(digest_gaussian, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_rescale_hamiltonian, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_chebyshev_vectors, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_scalar_moments, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_apply_operator, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_reconstruct, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_reconstruct_stabilized, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_evaluate, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_integrate, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_correlation_moments, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_correlation_integral_factor, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_correlation_response, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_kernel_weights, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_apply_kernel, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_chebyshev_nodes, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_fermi_distribution, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_velocity_operator, module)?)?;
     module.add_function(wrap_pyfunction!(lead_propagating_modes, module)?)?;
     module.add_function(wrap_pyfunction!(lead_retarded_self_energy, module)?)?;
     module.add_function(wrap_pyfunction!(square_strip_self_energy, module)?)?;
