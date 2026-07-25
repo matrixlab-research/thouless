@@ -172,6 +172,8 @@ def _site_operator(specification, sites, args, params, *, default=0):
 
 
 def _discrete_symmetry(builder, sites, args, params):
+    from scipy import sparse as scipy_sparse
+
     from .physics import DiscreteSymmetry
 
     projectors = None
@@ -187,7 +189,9 @@ def _discrete_symmetry(builder, sites, args, params):
         if not np.allclose(eigenvalues, rounded):
             raise ValueError("Conservation law must have integer eigenvalues")
         projectors = [
-            eigenvectors[:, rounded == eigenvalue]
+            scipy_sparse.csr_matrix(
+                eigenvectors[:, rounded == eigenvalue]
+            )
             for eigenvalue in sorted(set(rounded))
         ]
 

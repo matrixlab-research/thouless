@@ -4,7 +4,9 @@ use thouless::differentiation::{finite_difference_uniform, DifferenceScheme};
 use thouless::geometry::ReciprocalPath;
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
 use thouless::observables::{pauli_coefficients, project_diagonal_observable};
+use thouless::random_matrix::{circular_from_components, gaussian_from_components, SymmetryClass};
 use thouless::spectrum::hermitian_eigensystem;
+use thouless::symmetry::DiscreteSymmetry as NativeDiscreteSymmetry;
 use thouless::topology::{
     chern_numbers_on_uniform_grid, connection_from_link, parallel_transport_link, plaquette_flux,
     second_chern_from_hamiltonian_derivatives, wilson_line_phase, wilson_loop_eigenphases,
@@ -35,9 +37,32 @@ type ModelOutput = (
 );
 type ReciprocalPathOutput = (Vec<Vec<f64>>, Vec<f64>, Vec<f64>);
 type SupercellOutput = (ModelOutput, Vec<Vec<i32>>);
+type MatrixRows = Vec<Vec<Complex64>>;
+type DiscreteSymmetryOutput = (
+    Option<Vec<MatrixRows>>,
+    Option<MatrixRows>,
+    Option<MatrixRows>,
+    Option<MatrixRows>,
+);
 
 fn value_error(error: impl std::fmt::Display) -> PyErr {
     PyValueError::new_err(error.to_string())
+}
+
+fn symmetry_class(name: &str) -> PyResult<SymmetryClass> {
+    match name {
+        "A" => Ok(SymmetryClass::A),
+        "AI" => Ok(SymmetryClass::Ai),
+        "AII" => Ok(SymmetryClass::Aii),
+        "AIII" => Ok(SymmetryClass::Aiii),
+        "BDI" => Ok(SymmetryClass::Bdi),
+        "CII" => Ok(SymmetryClass::Cii),
+        "D" => Ok(SymmetryClass::D),
+        "DIII" => Ok(SymmetryClass::Diii),
+        "C" => Ok(SymmetryClass::C),
+        "CI" => Ok(SymmetryClass::Ci),
+        _ => Err(PyValueError::new_err("unknown Altland-Zirnbauer class")),
+    }
 }
 
 fn matrix_from_rows(rows: Vec<Vec<Complex64>>) -> PyResult<ComplexMatrix> {
@@ -58,6 +83,10 @@ fn matrix_to_rows(matrix: &ComplexMatrix) -> Vec<Vec<Complex64>> {
         .chunks(matrix.columns())
         .map(<[Complex64]>::to_vec)
         .collect()
+}
+
+fn optional_matrix(rows: Option<MatrixRows>) -> PyResult<Option<ComplexMatrix>> {
+    rows.map(matrix_from_rows).transpose()
 }
 
 fn build_model(
@@ -596,6 +625,130 @@ fn reciprocal_path(
     ))
 }
 
+#[pyfunction]
+fn rmt_gaussian(
+    dimension: usize,
+    symmetry: &str,
+    variance: f64,
+    real: Vec<f64>,
+    imaginary: Vec<f64>,
+) -> PyResult<Vec<Vec<Complex64>>> {
+    gaussian_from_components(
+        dimension,
+        symmetry_class(symmetry)?,
+        variance,
+        &real,
+        &imaginary,
+    )
+    .map(|matrix| matrix_to_rows(&matrix))
+    .map_err(value_error)
+}
+
+#[pyfunction(signature = (
+    dimension,
+    symmetry,
+    real,
+    imaginary,
+    random_bits,
+    topological_sector=None
+))]
+fn rmt_circular(
+    dimension: usize,
+    symmetry: &str,
+    real: Vec<f64>,
+    imaginary: Vec<f64>,
+    random_bits: Vec<bool>,
+    topological_sector: Option<i32>,
+) -> PyResult<Vec<Vec<Complex64>>> {
+    circular_from_components(
+        dimension,
+        symmetry_class(symmetry)?,
+        topological_sector,
+        &real,
+        &imaginary,
+        &random_bits,
+    )
+    .map(|matrix| matrix_to_rows(&matrix))
+    .map_err(value_error)
+}
+
+#[pyfunction(signature = (
+    projectors,
+    time_reversal,
+    particle_hole,
+    chiral
+))]
+fn discrete_symmetry_normalize(
+    projectors: Option<Vec<MatrixRows>>,
+    time_reversal: Option<MatrixRows>,
+    particle_hole: Option<MatrixRows>,
+    chiral: Option<MatrixRows>,
+) -> PyResult<DiscreteSymmetryOutput> {
+    let projectors = projectors
+        .map(|values| {
+            values
+                .into_iter()
+                .map(matrix_from_rows)
+                .collect::<PyResult<Vec<_>>>()
+        })
+        .transpose()?;
+    let symmetry = NativeDiscreteSymmetry::new(
+        projectors,
+        optional_matrix(time_reversal)?,
+        optional_matrix(particle_hole)?,
+        optional_matrix(chiral)?,
+    )
+    .map_err(value_error)?;
+    Ok((
+        symmetry
+            .projectors()
+            .map(|values| values.iter().map(matrix_to_rows).collect()),
+        symmetry.time_reversal().map(matrix_to_rows),
+        symmetry.particle_hole().map(matrix_to_rows),
+        symmetry.chiral().map(matrix_to_rows),
+    ))
+}
+
+#[pyfunction(signature = (
+    projectors,
+    time_reversal,
+    particle_hole,
+    chiral,
+    matrix
+))]
+fn discrete_symmetry_validate(
+    projectors: Option<Vec<MatrixRows>>,
+    time_reversal: Option<MatrixRows>,
+    particle_hole: Option<MatrixRows>,
+    chiral: Option<MatrixRows>,
+    matrix: MatrixRows,
+) -> PyResult<Vec<String>> {
+    let projectors = projectors
+        .map(|values| {
+            values
+                .into_iter()
+                .map(matrix_from_rows)
+                .collect::<PyResult<Vec<_>>>()
+        })
+        .transpose()?;
+    let symmetry = NativeDiscreteSymmetry::new(
+        projectors,
+        optional_matrix(time_reversal)?,
+        optional_matrix(particle_hole)?,
+        optional_matrix(chiral)?,
+    )
+    .map_err(value_error)?;
+    symmetry
+        .validate(&matrix_from_rows(matrix)?)
+        .map(|violations| {
+            violations
+                .into_iter()
+                .map(|violation| violation.label().to_owned())
+                .collect()
+        })
+        .map_err(value_error)
+}
+
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(hamiltonian, module)?)?;
@@ -618,5 +771,9 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(matrix_eigensystem, module)?)?;
     module.add_function(wrap_pyfunction!(pauli_decompose, module)?)?;
     module.add_function(wrap_pyfunction!(reciprocal_path, module)?)?;
+    module.add_function(wrap_pyfunction!(rmt_gaussian, module)?)?;
+    module.add_function(wrap_pyfunction!(rmt_circular, module)?)?;
+    module.add_function(wrap_pyfunction!(discrete_symmetry_normalize, module)?)?;
+    module.add_function(wrap_pyfunction!(discrete_symmetry_validate, module)?)?;
     Ok(())
 }

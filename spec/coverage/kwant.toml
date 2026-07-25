@@ -83,11 +83,40 @@ status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
 [[interface]]
+name = "discrete symmetries"
+source_entries = ["DiscreteSymmetry"]
+compat_entry = "python/kwant/physics"
+rust_capability = "symmetry.discrete"
+public_test = "complete pinned discrete-symmetry module"
+source_test = "projector normalization, antiunitary and chiral operator validation, automatic derivation of a third symmetry, canonical conservation-law blocks, and Hamiltonian validation"
+actual_result = "5 source tests passed"
+status = "implemented"
+
+[[interface]]
+name = "random matrix ensembles"
+source_entries = [
+  "rmt.gaussian",
+  "rmt.circular",
+  "rmt.t",
+  "rmt.p",
+  "rmt.c",
+  "rmt.sym_list",
+  "rmt.h_t_matrix",
+  "rmt.h_p_matrix",
+]
+compat_entry = "python/kwant/rmt"
+rust_capability = "ensembles.random_matrix"
+public_test = "complete pinned random-matrix module"
+source_test = "all ten Altland-Zirnbauer Gaussian and circular ensembles, structural symmetry identities, topological-sector arguments, and distribution checks"
+actual_result = "3 source tests passed"
+status = "implemented"
+
+[[interface]]
 name = "optional scientific modules"
-source_entries = ["kpm", "continuum", "wraparound", "digest", "rmt", "plotter"]
+source_entries = ["kpm", "continuum", "wraparound", "digest", "plotter"]
 compat_entry = "python/kwant"
 rust_capability = "compatibility utility layer; native migration pending"
 public_test = "pinned gauge-covariant operator workflow"
-actual_result = "digest and class-A random-unitary utilities implemented; remaining optional modules missing"
+actual_result = "digest utilities implemented; remaining optional modules missing"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"

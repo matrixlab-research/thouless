@@ -13,6 +13,34 @@ pub struct HermitianEigensystem {
     eigenvectors: Vec<Complex64>,
 }
 
+/// A square complex QR decomposition.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComplexQr {
+    unitary: Vec<Complex64>,
+    diagonal: Vec<Complex64>,
+    first_superdiagonal: Vec<Complex64>,
+}
+
+impl ComplexQr {
+    /// Returns the unitary factor in row-major order.
+    #[must_use]
+    pub fn unitary_row_major(&self) -> &[Complex64] {
+        &self.unitary
+    }
+
+    /// Returns the diagonal of the upper-triangular factor.
+    #[must_use]
+    pub fn diagonal(&self) -> &[Complex64] {
+        &self.diagonal
+    }
+
+    /// Returns the first superdiagonal of the upper-triangular factor.
+    #[must_use]
+    pub fn first_superdiagonal(&self) -> &[Complex64] {
+        &self.first_superdiagonal
+    }
+}
+
 impl HermitianEigensystem {
     /// Returns eigenvalues in ascending order.
     #[must_use]
@@ -172,6 +200,120 @@ pub fn hermitian_eigensystem(
     })
 }
 
+/// Computes a square complex QR decomposition with the configured LAPACK backend.
+pub fn complex_qr(dimension: usize, row_major_entries: &[Complex64]) -> Result<ComplexQr, Error> {
+    let entry_count = dimension
+        .checked_mul(dimension)
+        .ok_or(Error::DimensionTooLarge)?;
+    if row_major_entries.len() != entry_count {
+        return Err(Error::InvalidInputLength {
+            expected: entry_count,
+            actual: row_major_entries.len(),
+        });
+    }
+    if dimension == 0 {
+        return Ok(ComplexQr {
+            unitary: Vec::new(),
+            diagonal: Vec::new(),
+            first_superdiagonal: Vec::new(),
+        });
+    }
+    let lapack_dimension = i32::try_from(dimension).map_err(|_| Error::DimensionTooLarge)?;
+    let mut factors = (0..dimension)
+        .flat_map(|column| {
+            (0..dimension).map(move |row| row_major_entries[row * dimension + column])
+        })
+        .collect::<Vec<_>>();
+    let mut tau = vec![Complex64::new(0.0, 0.0); dimension];
+    let mut work_query = [Complex64::new(0.0, 0.0)];
+    let mut info = 0;
+
+    // SAFETY: dimensions and buffers satisfy the zgeqrf workspace-query ABI.
+    unsafe {
+        lapack::zgeqrf(
+            lapack_dimension,
+            lapack_dimension,
+            &mut factors,
+            lapack_dimension,
+            &mut tau,
+            &mut work_query,
+            -1,
+            &mut info,
+        );
+    }
+    check_info(info)?;
+    let work_length = workspace_length(work_query[0].re)?;
+    let mut work = vec![Complex64::new(0.0, 0.0); work_length];
+
+    // SAFETY: the matrix, reflector, and queried workspace buffers have the
+    // lengths required by zgeqrf for a square `dimension` matrix.
+    unsafe {
+        lapack::zgeqrf(
+            lapack_dimension,
+            lapack_dimension,
+            &mut factors,
+            lapack_dimension,
+            &mut tau,
+            &mut work,
+            i32::try_from(work_length).map_err(|_| Error::InvalidWorkspace)?,
+            &mut info,
+        );
+    }
+    check_info(info)?;
+    let diagonal = (0..dimension)
+        .map(|index| factors[index + index * dimension])
+        .collect();
+    let first_superdiagonal = (0..dimension.saturating_sub(1))
+        .map(|index| factors[index + (index + 1) * dimension])
+        .collect();
+
+    work_query[0] = Complex64::new(0.0, 0.0);
+    // SAFETY: the packed reflectors and tau buffer are the successful output
+    // of zgeqrf, and the one-element workspace is valid in query mode.
+    unsafe {
+        lapack::zungqr(
+            lapack_dimension,
+            lapack_dimension,
+            lapack_dimension,
+            &mut factors,
+            lapack_dimension,
+            &tau,
+            &mut work_query,
+            -1,
+            &mut info,
+        );
+    }
+    check_info(info)?;
+    let work_length = workspace_length(work_query[0].re)?;
+    work.resize(work_length, Complex64::new(0.0, 0.0));
+
+    // SAFETY: zungqr receives the validated packed reflectors, tau buffer,
+    // and its own queried workspace allocation.
+    unsafe {
+        lapack::zungqr(
+            lapack_dimension,
+            lapack_dimension,
+            lapack_dimension,
+            &mut factors,
+            lapack_dimension,
+            &tau,
+            &mut work,
+            i32::try_from(work_length).map_err(|_| Error::InvalidWorkspace)?,
+            &mut info,
+        );
+    }
+    check_info(info)?;
+    let factors = &factors;
+    let unitary = (0..dimension)
+        .flat_map(|row| (0..dimension).map(move |column| factors[row + column * dimension]))
+        .collect();
+    Ok(ComplexQr {
+        unitary,
+        diagonal,
+        first_superdiagonal,
+    })
+}
+
 fn workspace_length(value: f64) -> Result<usize, Error> {
     if !value.is_finite() || value < 1.0 || value > i32::MAX.into() {
         return Err(Error::InvalidWorkspace);
@@ -221,6 +363,30 @@ mod tests {
                     .sum::<Complex64>()
                     - vectors[row + column * 2] * solution.eigenvalues()[column];
                 assert!(residual.norm() < 1.0e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn qr_driver_returns_a_unitary_factor() {
+        let decomposition = complex_qr(
+            2,
+            &[
+                Complex64::new(1.0, 2.0),
+                Complex64::new(3.0, -1.0),
+                Complex64::new(-2.0, 0.5),
+                Complex64::new(0.0, 4.0),
+            ],
+        )
+        .unwrap();
+        let unitary = decomposition.unitary_row_major();
+        for row in 0..2 {
+            for column in 0..2 {
+                let overlap = (0..2)
+                    .map(|inner| unitary[row * 2 + inner] * unitary[column * 2 + inner].conj())
+                    .sum::<Complex64>();
+                let expected = if row == column { 1.0 } else { 0.0 };
+                assert!((overlap - Complex64::new(expected, 0.0)).norm() < 1.0e-12);
             }
         }
     }

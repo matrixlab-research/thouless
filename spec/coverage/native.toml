@@ -66,6 +66,20 @@ status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/3"
 
 [[capability]]
+id = "symmetry.discrete"
+description = "Validated unitary, antiunitary, and chiral symmetries with conservation-law projectors"
+native_api = "thouless::symmetry::{DiscreteSymmetry,SymmetryViolation}"
+test = "src/symmetry.rs unit tests and complete pinned Kwant discrete-symmetry module"
+status = "implemented"
+
+[[capability]]
+id = "ensembles.random_matrix"
+description = "Gaussian Hamiltonian and circular scattering ensembles in all ten Altland-Zirnbauer classes"
+native_api = "thouless::random_matrix::{gaussian_from_components,circular_from_components,SymmetryClass}"
+test = "src/random_matrix.rs property tests, LAPACK QR tests, repository generality contracts, and complete pinned Kwant random-matrix module"
+status = "implemented"
+
+[[capability]]
 id = "validation.held_out"
 description = "Evaluator-owned tests on unseen models and workflows"
 native_api = "not applicable"

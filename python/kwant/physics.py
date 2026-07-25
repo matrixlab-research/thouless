@@ -7,6 +7,7 @@ import math
 import numpy as np
 import scipy.linalg
 from scipy import sparse as scipy_sparse
+from thouless import _core
 
 
 class DiscreteSymmetry:
@@ -19,26 +20,71 @@ class DiscreteSymmetry:
         particle_hole=None,
         chiral=None,
     ):
+        if projectors is not None:
+            try:
+                projectors = [projector.tocsr() for projector in projectors]
+            except AttributeError as error:
+                raise TypeError(
+                    "projectors must be a sequence of sparse matrices."
+                ) from error
+
+        symmetries = [time_reversal, particle_hole, chiral]
+        try:
+            symmetries = [
+                None if symmetry is None else symmetry.tocsr()
+                for symmetry in symmetries
+            ]
+        except AttributeError as error:
+            raise TypeError("Symmetries must be sparse matrices.") from error
+        normalized = _core.discrete_symmetry_normalize(
+            self._projector_rows(projectors),
+            *(self._matrix_rows(symmetry) for symmetry in symmetries),
+        )
+        normalized_projectors, *normalized_symmetries = normalized
         self.projectors = (
             None
-            if projectors is None
-            else tuple(
+            if normalized_projectors is None
+            else [
                 scipy_sparse.csr_matrix(projector)
-                for projector in projectors
-            )
+                for projector in normalized_projectors
+            ]
         )
-        self.time_reversal = (
+        (
+            self.time_reversal,
+            self.particle_hole,
+            self.chiral,
+        ) = (
             None
-            if time_reversal is None
-            else scipy_sparse.csr_matrix(time_reversal)
+            if symmetry is None
+            else scipy_sparse.csr_matrix(symmetry)
+            for symmetry in normalized_symmetries
         )
-        self.particle_hole = (
+
+    @staticmethod
+    def _matrix_rows(matrix):
+        return None if matrix is None else matrix.toarray().tolist()
+
+    @classmethod
+    def _projector_rows(cls, projectors):
+        return (
             None
-            if particle_hole is None
-            else scipy_sparse.csr_matrix(particle_hole)
+            if projectors is None
+            else [cls._matrix_rows(projector) for projector in projectors]
         )
-        self.chiral = (
-            None if chiral is None else scipy_sparse.csr_matrix(chiral)
+
+    def validate(self, matrix):
+        """Return the declared conservation laws and symmetries broken by a matrix."""
+        dense = (
+            matrix.toarray()
+            if scipy_sparse.issparse(matrix)
+            else np.asarray(matrix)
+        )
+        return _core.discrete_symmetry_validate(
+            self._projector_rows(self.projectors),
+            self._matrix_rows(self.time_reversal),
+            self._matrix_rows(self.particle_hole),
+            self._matrix_rows(self.chiral),
+            dense.tolist(),
         )
 
     def __getitem__(self, item):

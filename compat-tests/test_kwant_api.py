@@ -107,3 +107,83 @@ def test_local_operator_entry_points_exist() -> None:
     assert callable(kwant.operator.Density)
     assert callable(kwant.operator.Current)
     assert callable(kwant.operator.Source)
+
+
+def test_random_matrix_symmetries_generalize_to_larger_dimensions() -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    dimension = 12
+    for index, symmetry in enumerate(kwant.rmt.sym_list):
+        hamiltonian = kwant.rmt.gaussian(
+            dimension,
+            symmetry,
+            v=1.7,
+            rng=700 + index,
+        )
+        np.testing.assert_allclose(
+            hamiltonian,
+            hamiltonian.conj().T,
+            atol=1e-12,
+        )
+        if kwant.rmt.t(symmetry):
+            operator = np.asarray(kwant.rmt.h_t_matrix[symmetry])
+            operator = np.kron(
+                np.eye(dimension // len(operator)),
+                operator,
+            )
+            np.testing.assert_allclose(
+                hamiltonian,
+                operator @ hamiltonian.conj() @ operator,
+                atol=1e-12,
+            )
+        if kwant.rmt.p(symmetry):
+            operator = np.asarray(kwant.rmt.h_p_matrix[symmetry])
+            operator = np.kron(
+                np.eye(dimension // len(operator)),
+                operator,
+            )
+            np.testing.assert_allclose(
+                hamiltonian,
+                -(operator @ hamiltonian.conj() @ operator),
+                atol=1e-12,
+            )
+
+
+def test_circular_ensembles_honor_topological_sectors() -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    for sector in (-1, 1):
+        matrix = kwant.rmt.circular(10, "D", charge=sector, rng=41)
+        assert np.sign(np.linalg.det(matrix).real) == sector
+
+    aiii = kwant.rmt.circular(10, "AIII", charge=4, rng=42)
+    aiii_eigenvalues = np.linalg.eigvalsh(aiii)
+    assert np.count_nonzero(aiii_eigenvalues < 0) == 4
+
+    cii = kwant.rmt.circular(12, "CII", charge=2, rng=43)
+    cii_eigenvalues = np.linalg.eigvalsh(cii)
+    assert np.count_nonzero(cii_eigenvalues < 0) == 4
+
+    with pytest.raises(ValueError):
+        kwant.rmt.circular(7, "AII", rng=44)
+    with pytest.raises(ValueError):
+        kwant.rmt.circular(10, "AIII", charge=11, rng=45)
+
+
+def test_discrete_symmetry_generalizes_to_three_conservation_blocks() -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    from scipy import sparse
+
+    projectors = [
+        sparse.csr_matrix(np.eye(3)[:, [column]])
+        for column in range(3)
+    ]
+    symmetry = kwant.physics.DiscreteSymmetry(projectors=projectors)
+    assert symmetry.validate(np.diag([1.0, 2.0, 3.0])) == []
+    assert symmetry.validate(
+        np.array(
+            [
+                [0.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+            ]
+        )
+    ) == ["Conservation law"]
