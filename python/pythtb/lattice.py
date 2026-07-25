@@ -245,6 +245,82 @@ class Lattice:
         self._lat_vectors = lattice
         self.orb_vecs = reduced_orbitals
 
+    def make_supercell(
+        self,
+        sc_red_lat,
+        return_sc_vectors=False,
+        to_home=True,
+        to_home_warning=True,
+    ):
+        """Transform this lattice in place by an integer supercell basis."""
+        transform = np.asarray(sc_red_lat)
+        if transform.shape != (self.dim_r, self.dim_r):
+            raise ValueError("Dimension of sc_red_lat array must be dim_r*dim_r")
+        if not np.issubdtype(transform.dtype, np.integer):
+            raise TypeError("sc_red_lat array elements must be integers")
+        transform = transform.astype(int, copy=False)
+        nonperiodic = [
+            axis for axis in range(self.dim_r) if axis not in self.periodic_dirs
+        ]
+        for axis in nonperiodic:
+            if transform[axis, axis] != 1:
+                raise ValueError(
+                    "Non-periodic diagonal supercell entries must equal one."
+                )
+            if np.any(np.delete(transform[axis], axis)) or np.any(
+                np.delete(transform[:, axis], axis)
+            ):
+                raise ValueError(
+                    "Non-periodic directions cannot mix with supercell directions."
+                )
+        determinant = float(np.linalg.det(transform))
+        if determinant < 1e-10:
+            raise ValueError(
+                "Super-cell vectors must be nonsingular and right handed."
+            )
+        expected = int(round(determinant))
+        inverse = np.linalg.inv(transform.astype(float))
+        bound = max(1, int(np.max(np.abs(transform))) * self.dim_r)
+        translations = None
+        while bound <= 1024:
+            ranges = [range(-bound, bound + 1)] * self.dim_r
+            candidates = np.asarray(
+                list(itertools.product(*ranges)),
+                dtype=int,
+            )
+            reduced = candidates @ inverse
+            epsilon = np.sqrt(2.0) * 1e-8
+            inside = np.all(
+                (-epsilon < reduced) & (reduced <= 1.0 - epsilon),
+                axis=1,
+            )
+            translations = candidates[inside]
+            if len(translations) == expected:
+                break
+            bound *= 2
+        else:
+            raise RuntimeError("Could not enumerate supercell translations.")
+
+        original_orbitals = self.orb_vecs
+        self._lat_vectors = transform @ self.lat_vecs
+        orbitals = (
+            translations[:, np.newaxis, :]
+            + original_orbitals[np.newaxis, :, :]
+        ).reshape(-1, self.dim_r) @ inverse
+        if to_home:
+            for axis in self.periodic_dirs:
+                orbitals[:, axis] %= 1.0
+        elif to_home_warning:
+            pass
+        self.orb_vecs = orbitals
+        self._nsuper = [
+            self._nsuper[axis] * int(transform[axis, axis])
+            for axis in range(self.dim_r)
+        ]
+        if return_sc_vectors:
+            return translations.copy()
+        return None
+
     def nn_bonds(self, n_shell, report=False):
         """Enumerate unique bonds in the shortest radial neighbor shells."""
         if not isinstance(n_shell, (int, np.integer)) or int(n_shell) < 1:
@@ -370,29 +446,178 @@ class Lattice:
                 )
         return summaries, bonds_by_shell
 
-    def k_uniform_mesh(self, mesh_size):
-        """Return a flattened uniform mesh over all periodic directions."""
+    def nn_k_shell(self, nks, n_shell, report=False):
+        """Return shortest reciprocal-mesh displacement shells."""
+        sizes = np.asarray(nks, dtype=int)
+        if sizes.ndim != 1 or len(sizes) != self.dim_k:
+            raise ValueError(f"nks must have length dim_k={self.dim_k}.")
+        if np.any(sizes <= 0):
+            raise ValueError("All mesh sizes in nks must be positive.")
+        if not isinstance(n_shell, (int, np.integer)) or int(n_shell) < 1:
+            raise ValueError("n_shell must be a positive integer.")
+        if self.dim_k == 0:
+            raise ValueError("k-shells are not defined when dim_k == 0.")
+        n_shell = int(n_shell)
+        step_vectors = self.recip_lat_vecs / sizes[:, np.newaxis]
+        singular_floor = float(
+            np.linalg.svd(step_vectors, compute_uv=False)[-1]
+        )
+        bound = max(1, n_shell)
+        while bound <= 256:
+            shifts = np.asarray(
+                [
+                    shift
+                    for shift in itertools.product(
+                        range(-bound, bound + 1),
+                        repeat=self.dim_k,
+                    )
+                    if any(shift)
+                ],
+                dtype=int,
+            )
+            vectors = shifts @ step_vectors
+            radii = np.linalg.norm(vectors, axis=1)
+            rounded = np.round(radii, 12)
+            unique = sorted(set(rounded))
+            if len(unique) >= n_shell and (
+                singular_floor * (bound + 1)
+                > unique[n_shell - 1] + 1e-10
+            ):
+                break
+            bound *= 2
+        else:
+            raise RuntimeError("Could not certify reciprocal neighbor shells.")
+        vector_shells = []
+        shift_shells = []
+        for radius in unique[:n_shell]:
+            mask = rounded == radius
+            vector_shells.append(vectors[mask].copy())
+            shift_shells.append(shifts[mask].copy())
+        if report:
+            for index, vectors_in_shell in enumerate(
+                vector_shells,
+                start=1,
+            ):
+                print(
+                    f"shell {index}: vectors={len(vectors_in_shell)}, "
+                    f"radius={np.linalg.norm(vectors_in_shell[0]):.8g}"
+                )
+        return vector_shells, shift_shells
+
+    def k_shell_weights(
+        self,
+        nks,
+        n_shell=1,
+        return_shell=True,
+        report=False,
+    ):
+        """Solve the reciprocal finite-difference moment equations."""
+        vector_shells, shift_shells = self.nn_k_shell(
+            nks,
+            n_shell,
+            report=report,
+        )
+        component_pairs = list(
+            itertools.combinations_with_replacement(
+                range(self.dim_k),
+                2,
+            )
+        )
+        moments = np.zeros((len(component_pairs), n_shell), dtype=float)
+        target = np.zeros(len(component_pairs), dtype=float)
+        for row, (first, second) in enumerate(component_pairs):
+            target[row] = float(first == second)
+            for shell, vectors in enumerate(vector_shells):
+                moments[row, shell] = np.sum(
+                    vectors[:, first] * vectors[:, second]
+                )
+        weights, residuals, rank, _ = np.linalg.lstsq(
+            moments,
+            target,
+            rcond=None,
+        )
+        if rank < min(moments.shape) or (
+            residuals.size and residuals[0] > 1e-10
+        ):
+            raise ValueError(
+                "Selected reciprocal shells cannot reproduce the identity moment."
+            )
+        if return_shell:
+            return weights, vector_shells, shift_shells
+        return weights
+
+    @staticmethod
+    def k_uniform_mesh(
+        mesh_size,
+        gamma_centered=False,
+        include_endpoints=True,
+    ):
+        """Return a flattened uniform reduced-coordinate mesh."""
         sizes = tuple(int(size) for size in mesh_size)
-        if len(sizes) != self.dim_k or any(size < 1 for size in sizes):
-            raise ValueError("mesh_size must contain one positive size per periodic direction")
-        axes = [np.arange(size, dtype=float) / size for size in sizes]
+        if not sizes or any(size < 1 for size in sizes):
+            raise ValueError("Mesh must have positive non-zero number of elements.")
+        start, stop = (-0.5, 0.5) if gamma_centered else (0.0, 1.0)
+        axes = [
+            np.linspace(
+                start,
+                stop,
+                size,
+                endpoint=bool(include_endpoints),
+            )
+            for size in sizes
+        ]
         return np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(
             -1,
-            self.dim_k,
+            len(sizes),
         )
 
-    def get_kpath_distance(self, k_points):
-        """Return cumulative Cartesian reciprocal-space path distance."""
-        points = np.asarray(k_points, dtype=float)
+    def get_kpath_distance(
+        self,
+        kpts,
+        k_nodes=None,
+        labels=None,
+        cartesian=False,
+        tol=1e-8,
+    ):
+        """Return path distance and optional locations of named nodes."""
+        points = np.asarray(kpts, dtype=float)
         if points.ndim != 2 or points.shape[1] != self.dim_k:
-            raise ValueError("k_points must have shape (Nk, dim_k)")
-        cartesian = points @ self.recip_lat_vecs
+            raise ValueError("kpts must have shape (Nk, dim_k)")
+        if cartesian:
+            reduced_points = points @ np.linalg.inv(self.recip_lat_vecs).T
+        else:
+            reduced_points = points
+        cartesian_points = reduced_points @ self.recip_lat_vecs
         distance = np.zeros(len(points), dtype=float)
         if len(points) > 1:
             distance[1:] = np.cumsum(
-                np.linalg.norm(np.diff(cartesian, axis=0), axis=1)
+                np.linalg.norm(np.diff(cartesian_points, axis=0), axis=1)
             )
-        return distance
+        if k_nodes is None:
+            return distance
+
+        nodes = np.asarray(k_nodes, dtype=float)
+        if nodes.ndim != 2 or nodes.shape[1] != self.dim_k:
+            raise ValueError("k_nodes must have shape (N_nodes, dim_k)")
+        node_indices = {}
+        located = []
+        for node in nodes:
+            matches = np.flatnonzero(
+                np.all(np.isclose(reduced_points, node, atol=tol), axis=1)
+            )
+            value = matches.tolist() if len(matches) else None
+            node_indices[str(node)] = value
+            located.extend(matches.tolist())
+        node_distance = distance[np.asarray(sorted(located), dtype=int)]
+        if labels is None:
+            return distance, node_distance, node_indices
+        if len(labels) != len(nodes):
+            raise ValueError("labels must match the number of k_nodes")
+        label_indices = {
+            str(label): node.copy()
+            for label, node in zip(labels, nodes, strict=True)
+        }
+        return distance, node_distance, node_indices, label_indices
 
     def k_path(self, k_nodes, nk, report=False):
         if isinstance(k_nodes, str):
@@ -451,6 +676,34 @@ class Lattice:
         result._nsuper = self._nsuper.copy()
         result._nsuper[periodic_dir] = num_cells
         return result
+
+    def visualize(self, proj_plane=None, n_cells=1):
+        """Draw the lattice in a two-dimensional Cartesian projection."""
+        from .visualization import plot_lattice
+
+        return plot_lattice(
+            self,
+            n_cells=n_cells,
+            proj_plane=proj_plane,
+        )
+
+    def visualize_3d(
+        self,
+        n_cells=1,
+        site_colors=None,
+        site_names=None,
+        show_lattice_info=True,
+    ):
+        """Build an interactive three-dimensional lattice figure."""
+        from .visualization import plot_lattice_3d
+
+        return plot_lattice_3d(
+            self,
+            n_cells=n_cells,
+            site_colors=site_colors,
+            site_names=site_names,
+            show_lattice_info=show_lattice_info,
+        )
 
 
 __all__ = ["Lattice"]

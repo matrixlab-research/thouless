@@ -20,10 +20,12 @@ transformations in Rust. It also provides discrete-symmetry validation and all
 ten Altland--Zirnbauer Gaussian and circular random-matrix ensembles through
 the native core, together with LLL lattice reduction, closest-vector search,
 and Voronoi neighbors. The Python extension and partial PythTB 2.0 layer pass
-all 98 pinned upstream tests without changing their tolerances. It does
-not yet implement the complete PythTB surface, complete topology and response
-theory, complete open-system transport, or the complete Kwant compatibility
-surface.
+all 98 pinned upstream tests without changing their tolerances. Every public
+PythTB 2.0 module, class, function, and method is now represented, including
+Wannier and visualization entry points, but complete semantic parity,
+Rust-native Wannier optimization, realistic material-scale validation,
+complete topology and response theory, complete open-system transport, and the
+complete Kwant compatibility surface remain open.
 
 A green CI run currently means:
 
@@ -111,9 +113,10 @@ and the strict upstream slice currently includes 398 passing tests. This
 includes the complete selected plotting, Qsymm, and continuum modules without
 an expected skip; remaining Kwant inventory and backend gaps are tracked in
 issue #5. The strict PythTB runner executes all 98 collected source tests
-through the repository-built extension. Broader PythTB public-interface
-inventory work remains tracked in issue #4. A skip without a linked issue is a
-CI error.
+through the repository-built extension. Deeper PythTB semantic parity,
+Rust-native Wannier optimization, file-format differential fixtures, and
+scientific-scale validation remain tracked in issue #4. A skip without a linked
+issue is a CI error.
 
 ## Source baselines
 

@@ -413,8 +413,8 @@ class TBModel:
                     allow_conjugate_pair=True,
                 )
 
-    def set_parameters(self, parameters=None, **kwargs):
-        values = {} if parameters is None else dict(parameters)
+    def set_parameters(self, params=None, /, **kwargs):
+        values = {} if params is None else dict(params)
         values.update(kwargs)
         for index, provider in list(self._onsite_providers.items()):
             names = _provider_names(provider)
@@ -427,7 +427,6 @@ class TBModel:
                 block = self._value_to_block(self._evaluate(provider, values), onsite=False)
                 self._store_hopping(block, target, source, offset)
                 del self._hopping_providers[key]
-        return self
 
     def with_parameters(self, params=None, /, **kwargs):
         """Return an independent model with supplied parameters resolved."""
@@ -1325,12 +1324,21 @@ class TBModel:
         wavefunctions.solve_model(model)
         return wavefunctions.chern_number(plane=plane, state_idx=occupied)
 
-    def k_uniform_mesh(self, mesh_size):
+    def k_uniform_mesh(
+        self,
+        mesh_size,
+        *,
+        gamma_centered=False,
+        include_endpoints=True,
+    ):
         sizes = tuple(int(size) for size in mesh_size)
         if len(sizes) != self.dim_k:
             raise ValueError("mesh_size must have one entry per periodic direction")
-        axes = [np.arange(size) / size for size in sizes]
-        return np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, self.dim_k)
+        return self._lattice.k_uniform_mesh(
+            sizes,
+            gamma_centered=gamma_centered,
+            include_endpoints=include_endpoints,
+        )
 
     def k_path(self, k_nodes, nk, report=False):
         return self._lattice.k_path(k_nodes, nk, report)
@@ -1579,6 +1587,84 @@ class TBModel:
             stacklevel=2,
         )
         return None
+
+    def visualize(
+        self,
+        proj_plane=None,
+        eig_dr=None,
+        draw_hoppings=True,
+        annotate_onsite=False,
+        ph_color="black",
+    ):
+        """Draw orbitals, lattice vectors, hoppings, and an optional state."""
+        from .visualization import plot_tbmodel
+
+        return plot_tbmodel(
+            self,
+            proj_plane=proj_plane,
+            eig_dr=eig_dr,
+            draw_hoppings=draw_hoppings,
+            annotate_onsite=annotate_onsite,
+            ph_color=ph_color,
+        )
+
+    def visualize_3d(
+        self,
+        draw_hoppings=True,
+        show_model_info=True,
+        site_colors=None,
+        site_names=None,
+        show=True,
+    ):
+        """Build an interactive three-dimensional model figure."""
+        from .visualization import plot_tbmodel_3d
+
+        return plot_tbmodel_3d(
+            self,
+            draw_hoppings=draw_hoppings,
+            show_model_info=show_model_info,
+            site_colors=site_colors,
+            site_names=site_names,
+            show=show,
+        )
+
+    def plot_bands(
+        self,
+        k_nodes,
+        k_node_labels=None,
+        nk=101,
+        fig=None,
+        ax=None,
+        proj_orb_idx=None,
+        proj_spin=False,
+        bands_label=None,
+        scat_size=3,
+        lw=2,
+        lc="b",
+        ls="solid",
+        cmap="plasma",
+        cbar=True,
+    ):
+        """Plot bands along a reciprocal-space path."""
+        from .visualization import plot_bands
+
+        return plot_bands(
+            self,
+            k_nodes,
+            nk=nk,
+            ktick_labels=k_node_labels,
+            bands_label=bands_label,
+            proj_orb_idx=proj_orb_idx,
+            proj_spin=proj_spin,
+            fig=fig,
+            ax=ax,
+            scat_size=scat_size,
+            lw=lw,
+            lc=lc,
+            ls=ls,
+            cmap=cmap,
+            cbar=cbar,
+        )
 
 
 class tb_model(TBModel):

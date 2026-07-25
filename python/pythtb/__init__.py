@@ -14,6 +14,7 @@ from .utils import (
     pauli_decompose,
 )
 from .w90 import W90
+from .wannier import Wannier
 from .wfarray import WFArray, wf_array
 
 __version__ = "2.0.0+thouless"
@@ -65,6 +66,7 @@ __all__ = [
     "TBModel",
     "WFArray",
     "W90",
+    "Wannier",
     "finite_diff_coeffs",
     "finite_difference",
     "get_trial_wfs",

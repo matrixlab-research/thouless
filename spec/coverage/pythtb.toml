@@ -5,7 +5,7 @@ source_repository = "https://github.com/pythtb/pythtb"
 source_commit = "0f3bb0b8588101cafbdf428c70fb43c9302fe7cf"
 collected_tests = 98
 root_public_exports = 13
-inventory_status = "incomplete"
+inventory_status = "partial"
 inventory_issue = "https://github.com/matrixlab-research/thouless/issues/4"
 
 [[interface]]
@@ -14,8 +14,8 @@ source_entries = ["Lattice", "TBModel", "tb_model", "set_onsite", "set_hop"]
 compat_entry = "python/pythtb"
 rust_capability = "model.structure"
 public_test = "compat-tests/test_pythtb_api.py"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/4"
+actual_result = "construction, mutation, reporting, parameterized terms, radial-shell bonds, and lattice geometry are implemented"
+status = "implemented"
 
 [[interface]]
 name = "spectral solution"
@@ -40,8 +40,7 @@ rust_capability = "geometry.finite"
 public_test = "compat-tests/test_pythtb_api.py"
 source_test = "cubic slab, boron-nitride ribbon, general supercell, and nonperiodic-center workflows"
 actual_result = "4 passed"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/4"
+status = "implemented"
 
 [[interface]]
 name = "reciprocal-space sampling"
@@ -51,8 +50,7 @@ rust_capability = "geometry.reciprocal_sampling"
 public_test = "compat-tests/test_pythtb_api.py"
 source_test = "six pinned band-structure example tests"
 actual_result = "6 passed"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/4"
+status = "implemented"
 
 [[interface]]
 name = "meshes, wavefunction arrays, and Berry quantities"
@@ -65,14 +63,19 @@ source_entries = [
   "impose_pbc",
   "berry_phase",
   "berry_flux",
+  "berry_curvature",
+  "wilson_loop",
+  "overlap_matrix",
+  "projectors",
+  "choose_states",
+  "remove_states",
 ]
 compat_entry = "python/pythtb"
 rust_capability = "geometry.topology"
 public_test = "compat-tests/test_pythtb_api.py"
 source_test = "invariants, axis-order, link, Kane-Mele, three-site pump, and Chern tests"
-actual_result = "25 passed"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/4"
+actual_result = "25 source tests plus repository projector, overlap, Wilson, Abelian/non-Abelian flux, curvature, path, axis, and state-selection contracts"
+status = "implemented"
 
 [[interface]]
 name = "position operators and hybrid Wannier functions"
@@ -86,8 +89,7 @@ rust_capability = "geometry.topology"
 public_test = "compat-tests/test_pythtb_api.py"
 source_test = "six pinned finite-position and hybrid-Wannier workflows"
 actual_result = "6 passed"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/4"
+status = "implemented"
 
 [[interface]]
 name = "axion angle and second Chern response"
@@ -164,13 +166,20 @@ issue = "https://github.com/matrixlab-research/thouless/issues/4"
 
 [[interface]]
 name = "Wannier projection and localization"
-source_entries = ["Wannier"]
-compat_entry = "not implemented"
-rust_capability = "Wannier localization not yet designed"
-public_test = "not implemented"
+source_entries = [
+  "Wannier",
+  "Wannier.project",
+  "Wannier.disentangle",
+  "Wannier.maxloc",
+  "Wannier.min_spread",
+  "Wannier.interp_bands",
+]
+compat_entry = "python/pythtb/wannier.py"
+rust_capability = "geometry.topology overlaps plus shared eigensystem and Hamiltonian evaluation"
+public_test = "compat-tests/test_pythtb_api.py SSH projection, normalization, center, spread decomposition, Fourier interpolation, and nonincreasing-localization contract"
 source_test = "no collected source tests"
-actual_result = "missing"
-status = "missing"
+actual_result = "projection, real-space FFT, first-shell spread decomposition, fixed-rank energy-window selection, parallel-transport gauge smoothing, and arbitrary-path interpolation are implemented; a 31-point SSH workflow matches the PythTB 2.0 center and spread decomposition, while full multidimensional iterative SMV optimization and realistic material-scale validation remain open"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/4"
 
 [[interface]]
@@ -185,13 +194,30 @@ source_entries = [
   "visualization.plot_decay",
   "visualization.plot_density",
 ]
-compat_entry = "not implemented"
-rust_capability = "visualization.regular_field only covers Kwant interpolation"
-public_test = "not implemented"
+compat_entry = "python/pythtb/visualization and model/lattice/Wannier wrapper methods"
+rust_capability = "model geometry, hopping representation, spectral solution, and Wannier real-space diagnostics"
+public_test = "compat-tests/test_pythtb_api.py headless lattice, hopping, band, Wannier density, decay, and center plot contracts"
 source_test = "uncollected visualization scripts"
-actual_result = "missing"
-status = "missing"
-issue = "https://github.com/matrixlab-research/thouless/issues/4"
+actual_result = "all eight PythTB 2.0 visualization entry points are implemented with lazy Matplotlib or Plotly loading and headless two-dimensional smoke coverage; interactive three-dimensional browser rendering remains outside CI"
+status = "implemented"
+
+[[interface]]
+name = "public module import and hopping-table compatibility"
+source_entries = [
+  "hoptable.HoppingTable",
+  "models.checkerboard",
+  "models.fu_kane_mele",
+  "models.graphene",
+  "models.haldane",
+  "models.kane_mele",
+  "models.ssh",
+]
+compat_entry = "python/pythtb/hoptable.py and python/pythtb/models"
+rust_capability = "model.structure"
+public_test = "compat-tests/test_pythtb_api.py submodule import and general hopping mutation, lookup, orbital-removal, and flattened-index contracts"
+source_test = "no dedicated source tests"
+actual_result = "all public model submodules import their constructors without shadowing package-level callables; HoppingTable supports scalar and spinful columnar storage, mutation, canonical lookup, orbital shifts, and cached flattened indices"
+status = "implemented"
 
 [[interface]]
 name = "remaining model mutation and real-space diagnostics"

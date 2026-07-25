@@ -62,6 +62,31 @@ def test_reciprocal_path_uses_cartesian_arc_length() -> None:
     assert nodes == pytest.approx([0.0, 0.5 * np.pi, 1.5 * np.pi])
     assert distances[-1] == pytest.approx(nodes[-1])
 
+    endpoint_mesh = lattice.k_uniform_mesh(
+        [3, 2],
+        gamma_centered=True,
+        include_endpoints=True,
+    )
+    np.testing.assert_allclose(endpoint_mesh[0], [-0.5, -0.5])
+    np.testing.assert_allclose(endpoint_mesh[-1], [0.5, 0.5])
+    open_mesh = lattice.k_uniform_mesh(
+        [3, 2],
+        include_endpoints=False,
+    )
+    assert np.all(open_mesh < 1.0)
+
+    path_distance, node_distance, node_indices, label_indices = (
+        lattice.get_kpath_distance(
+            points,
+            k_nodes=points[[0, -1]],
+            labels=["start", "finish"],
+        )
+    )
+    np.testing.assert_allclose(path_distance, distances)
+    np.testing.assert_allclose(node_distance, distances[[0, -1]])
+    assert node_indices[str(points[0])] == [0]
+    assert label_indices["finish"] == pytest.approx(points[-1])
+
 
 def test_finite_position_projection_uses_rust_observable_core() -> None:
     pythtb = require_compat_module("pythtb", ISSUE_URL)
@@ -150,6 +175,142 @@ def test_predefined_models_cover_the_pythtb_constructor_set() -> None:
         atol=1e-12,
     )
     assert pythtb.TBModel is type(ssh)
+
+    from pythtb.models.graphene import graphene
+    from pythtb.models.ssh import ssh as ssh_constructor
+
+    assert graphene(0.2, -1.0).nstate == 2
+    assert ssh_constructor(1.0, 2.0).nstate == 2
+    assert callable(models.graphene)
+    assert callable(models.ssh)
+
+
+def test_hopping_table_supports_general_mutation_and_flattening() -> None:
+    require_compat_module("pythtb", ISSUE_URL)
+    from pythtb.hoptable import HoppingTable
+
+    table = HoppingTable(dim_r=2, spinful=False)
+    row = table.append(1 + 2j, 0, 1, [1, 0])
+    table.extend([-0.5], [1], [0], [[0, 1]])
+    assert row == 0
+    assert table.find(0, 1, [1, 0]) == 0
+    assert len(table) == 2
+
+    table.add(0, -1j)
+    table.update(1, R=[0, -1])
+    np.testing.assert_allclose(table.amplitudes, [1 + 1j, -0.5])
+    assert table.find(1, 0, [0, -1]) == 1
+    cache = table.flatten_cache(norb=2)
+    np.testing.assert_array_equal(cache["uniq"], [1, 2])
+    np.testing.assert_array_equal(cache["cols_transposed"], [2, 1])
+
+
+def test_wannier_projection_spread_and_interpolation_are_general() -> None:
+    pythtb = require_compat_module("pythtb", ISSUE_URL)
+    from pythtb.models.ssh import ssh
+
+    model = ssh(1.0, 2.0)
+    mesh = pythtb.Mesh(["k"], dim_k=1)
+    mesh.build_grid((31,), k_endpoints=False)
+    states = pythtb.WFArray(
+        model.lattice,
+        mesh,
+        nstates=model.nstate,
+        spinful=False,
+    )
+    states.solve_model(model)
+
+    wannier = pythtb.Wannier(states)
+    assert wannier.project([[(0, 1.0)]], band_idxs=[0]) is None
+    np.testing.assert_allclose(
+        np.sum(np.abs(wannier.wannier) ** 2),
+        1.0,
+        atol=1e-12,
+    )
+    np.testing.assert_array_equal(wannier.WFs, wannier.wannier)
+    np.testing.assert_allclose(wannier.centers, [[-0.25]], atol=1e-12)
+    np.testing.assert_allclose(wannier.spread, [0.14472717], atol=1e-8)
+    assert wannier.Omega_I == pytest.approx(0.10337476098363751)
+    assert wannier.Omega_D == pytest.approx(0.041352405470848536)
+    assert wannier.Omega_OD == pytest.approx(0.0, abs=1e-12)
+
+    path = [[0.0], [0.5]]
+    interpolated = wannier.interp_bands(path, n_interp=11)
+    k_points, _, _ = model.k_path(path, 11)
+    direct = model.solve_ham(k_points)[:, :1]
+    # A finite 31-point Fourier representation truncates the exact square-root
+    # dispersion; the observed uniform error is below one part per million.
+    np.testing.assert_allclose(interpolated, direct, atol=1e-6)
+
+    initial_spread = float(np.sum(wannier.spread))
+    assert wannier.maxloc() is None
+    assert float(np.sum(wannier.spread)) <= initial_spread + 1e-12
+
+    optimized = pythtb.Wannier(states)
+    optimized.set_trial_wfs([[(0, 1.0)]])
+    assert (
+        optimized.min_spread(
+            n_wfs=1,
+            outer_window="all",
+            inner_window={"bands": [0]},
+            max_iter=3,
+            max_iter_dis=3,
+        )
+        is None
+    )
+    assert optimized.tilde_states.nstates == 1
+    assert np.isfinite(optimized.Omega_I)
+
+
+def test_mesh_model_and_wannier_visualization_entry_points() -> None:
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    pythtb = require_compat_module("pythtb", ISSUE_URL)
+    from matplotlib import pyplot as plt
+    from pythtb import models
+    from pythtb.models.haldane import haldane
+    from pythtb.visualization import plot_bands, plot_lattice, plot_tbmodel
+
+    model = haldane(0.2, -1.0, 0.1)
+    for result in (
+        plot_lattice(model.lattice),
+        model.lattice.visualize(),
+        plot_tbmodel(model, annotate_onsite=True),
+        model.visualize(draw_hoppings=True),
+        plot_bands(model, [[0.0, 0.0], [0.5, 0.0]], nk=7),
+        model.plot_bands([[0.0, 0.0], [0.5, 0.0]], nk=7),
+    ):
+        fig, ax = result
+        assert fig is not None
+        assert ax is not None
+        plt.close(fig)
+
+    model_3d = models.fu_kane_mele(1.0, 0.1)
+    lattice_figure = model_3d.lattice.visualize_3d()
+    model_figure = model_3d.visualize_3d(show=False)
+    assert len(lattice_figure.data) >= 2
+    assert len(model_figure.data) > len(lattice_figure.data)
+
+    mesh = pythtb.Mesh(["k", "k"], dim_k=2)
+    mesh.build_grid((5, 5), k_endpoints=False)
+    states = pythtb.WFArray(
+        model.lattice,
+        mesh,
+        nstates=model.nstate,
+        spinful=False,
+    )
+    states.solve_model(model)
+    wannier = pythtb.Wannier(states)
+    wannier.project([[(0, 1.0)]], band_idxs=[0])
+    for result in (
+        wannier.plot_density(0, cbar=False),
+        wannier.plot_decay(0),
+        wannier.plot_centers(legend=False),
+    ):
+        fig, ax = result
+        assert fig is not None
+        assert ax is not None
+        plt.close(fig)
 
 
 def test_root_numerical_utilities_cover_source_exports() -> None:
@@ -314,3 +475,68 @@ def test_finite_haldane_local_chern_marker_uses_rust_projector_core() -> None:
     assert marker.shape == (50,)
     assert bulk == pytest.approx(-0.9426725430769424, abs=1e-10)
     assert np.sum(marker) == pytest.approx(0.0, abs=1e-10)
+
+
+def test_mesh_axis_and_wavefunction_diagnostics_cover_pythtb_2_api() -> None:
+    pythtb = require_compat_module("pythtb", ISSUE_URL)
+    from pythtb.mesh import Axis
+    from pythtb import models
+
+    axis = Axis("k", "momentum")
+    axis.add_loop_component(0)
+    axis.add_endpoint_component(0)
+    axis.add_wind_bz_component(0)
+    assert axis.is_loop and axis.has_endpoint and axis.winds_bz
+    axis.remove_endpoint_component(0)
+    assert not axis.has_endpoint
+
+    mixed = pythtb.Mesh(["k", "l"], axis_names=["k", "mass"], dim_k=1)
+    mixed.build_grid((3, 4), lambda_start=-1.0, lambda_stop=1.0)
+    assert mixed.component_types == ("k", "l")
+    assert mixed.get_k_points().shape == (3, 1)
+    assert mixed.get_param_points().shape == (4, 1)
+    assert "Mesh report" in mixed.info(show=False)
+    np.testing.assert_allclose(
+        pythtb.Mesh.gen_hyper_cube(2, 2),
+        [[0.0, 0.0], [0.0, 0.5], [0.5, 0.0], [0.5, 0.5]],
+    )
+
+    path = pythtb.Mesh(["k"], dim_k=2)
+    path.build_path([[0.0, 0.0], [1.0, 1.0]], n_interp=3)
+    assert path.flat.shape == (4, 2)
+    np.testing.assert_allclose(path.nodes, [[0.0, 0.0], [1.0, 1.0]])
+
+    model = models.haldane(0.2, -1.0, 0.15)
+    mesh = pythtb.Mesh(["k", "k"])
+    mesh.build_grid((7, 7))
+    wavefunctions = pythtb.WFArray(model.lattice, mesh)
+    wavefunctions.solve_model(model)
+    projector, complement = wavefunctions.projectors([0], return_Q=True)
+    np.testing.assert_allclose(
+        projector @ projector,
+        projector,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        projector + complement,
+        np.broadcast_to(
+            np.eye(model.nstate),
+            projector.shape,
+        ),
+        atol=1e-12,
+    )
+    assert wavefunctions.overlap_matrix().shape == (7, 7, 4, 2, 2)
+    abelian = wavefunctions.berry_flux(plane=(0, 1), state_idx=[0])
+    non_abelian = wavefunctions.berry_flux(
+        plane=(0, 1),
+        state_idx=[0],
+        non_abelian=True,
+    )
+    full = wavefunctions.berry_flux(state_idx=[0])
+    np.testing.assert_allclose(
+        abelian,
+        non_abelian[..., 0, 0].real,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(full[1, 0], -full[0, 1], atol=1e-12)
+    assert np.sum(abelian) / (2 * np.pi) == pytest.approx(-1.0, abs=1e-12)

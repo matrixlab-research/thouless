@@ -5,18 +5,56 @@ from __future__ import annotations
 import numpy as np
 
 
-class _Axis:
-    def __init__(self, axis_type, name):
-        self.type = axis_type
-        self.name = name
-        self.size = 0
-        self.loop_components: list[int] = []
-        self.endpoint_components: list[int] = []
-        self.winds_bz_components: list[int] = []
+class Axis:
+    """One sampling axis and its loop, endpoint, and BZ-winding metadata."""
+
+    def __init__(self, axis_type, name=None):
+        if axis_type not in ("k", "l"):
+            raise TypeError("Axis type must be either 'k' or 'l'.")
+        self._type = axis_type
+        self._name = f"{axis_type}_axis" if name is None else name
+        self._size = 0
+        self._loop_components: list[int] = []
+        self._endpoint_components: list[int] = []
+        self._winds_bz_components: list[int] = []
+
+    @property
+    def type(self):
+        return self._type
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        if not isinstance(value, str):
+            raise TypeError("Axis name must be a string.")
+        self._name = value
+
+    @property
+    def size(self):
+        return self._size
+
+    @size.setter
+    def size(self, value):
+        if not isinstance(value, (int, np.integer)):
+            raise TypeError("Axis size must be an integer.")
+        if int(value) < 0:
+            raise ValueError("Axis size must be non-negative.")
+        self._size = int(value)
 
     @property
     def is_loop(self):
         return bool(self.loop_components)
+
+    @property
+    def loop_components(self):
+        return self._loop_components
+
+    @loop_components.setter
+    def loop_components(self, value):
+        self._loop_components = [int(component) for component in value]
 
     @property
     def is_k_axis(self):
@@ -31,8 +69,51 @@ class _Axis:
         return bool(self.endpoint_components)
 
     @property
+    def endpoint_components(self):
+        return self._endpoint_components
+
+    @endpoint_components.setter
+    def endpoint_components(self, value):
+        self._endpoint_components = [int(component) for component in value]
+
+    @property
     def winds_bz(self):
         return bool(self.winds_bz_components)
+
+    @property
+    def winds_bz_components(self):
+        return self._winds_bz_components
+
+    @winds_bz_components.setter
+    def winds_bz_components(self, value):
+        self._winds_bz_components = [int(component) for component in value]
+
+    def add_loop_component(self, comp_idx):
+        if comp_idx not in self.loop_components:
+            self.loop_components.append(comp_idx)
+
+    def remove_loop_component(self, comp_idx):
+        if comp_idx in self.loop_components:
+            self.loop_components.remove(comp_idx)
+
+    def add_endpoint_component(self, comp_idx):
+        if comp_idx not in self.endpoint_components:
+            self.endpoint_components.append(comp_idx)
+
+    def remove_endpoint_component(self, comp_idx):
+        if comp_idx in self.endpoint_components:
+            self.endpoint_components.remove(comp_idx)
+
+    def add_wind_bz_component(self, comp_idx):
+        if comp_idx not in self.winds_bz_components:
+            self.winds_bz_components.append(comp_idx)
+
+    def remove_wind_bz_component(self, comp_idx):
+        if comp_idx in self.winds_bz_components:
+            self.winds_bz_components.remove(comp_idx)
+
+    def __repr__(self):
+        return f"Axis(type={self.type}, name={self.name}, size={self.size})"
 
 
 class Mesh:
@@ -50,7 +131,7 @@ class Mesh:
         if len(axis_names) != len(axis_types):
             raise ValueError("Axis types and axis names must have the same length.")
         self._axes = [
-            _Axis(kind, name) for kind, name in zip(axis_types, axis_names, strict=True)
+            Axis(kind, name) for kind, name in zip(axis_types, axis_names, strict=True)
         ]
         self._dim_k = (
             sum(kind == "k" for kind in axis_types) if dim_k is None else int(dim_k)
@@ -61,6 +142,7 @@ class Mesh:
         self._points = None
         self._k_vectors = []
         self._lambda_vectors = []
+        self._nodes = None
 
     @property
     def axes(self):
@@ -115,6 +197,10 @@ class Mesh:
         return self.dim_k + self.dim_lambda
 
     @property
+    def component_types(self):
+        return tuple(["k"] * self.dim_k + ["l"] * self.dim_lambda)
+
+    @property
     def k_component_indices(self):
         return list(range(self.dim_k))
 
@@ -151,6 +237,10 @@ class Mesh:
         return self._points
 
     @property
+    def nodes(self):
+        return None if self._nodes is None else self._nodes.copy()
+
+    @property
     def filled(self):
         return self._points is not None
 
@@ -167,6 +257,20 @@ class Mesh:
             and len(k_axes) == self.dim_k
             and all(axis.winds_bz_components for axis in k_axes)
         )
+
+    @property
+    def loop_axes(self):
+        return [axis for axis in self.axes if axis.is_loop]
+
+    @property
+    def endpoint_axes(self):
+        return [axis for axis in self.axes if axis.has_endpoint]
+
+    @property
+    def bz_winding_axes(self):
+        return [
+            axis for axis in self.axes if axis.is_k_axis and axis.winds_bz
+        ]
 
     @property
     def loop_mask(self):
@@ -217,15 +321,13 @@ class Mesh:
                 f"component_idx {component_idx} out of bounds for {self.dim_total} components"
             )
         axis = self.axes[axis_idx]
-        if component_idx not in axis.loop_components:
-            axis.loop_components.append(component_idx)
+        axis.add_loop_component(component_idx)
         if winds_bz:
             if not axis.is_k_axis or component_idx >= self.dim_k:
                 raise ValueError("Brillouin-zone winding requires a k-axis and k-component")
-            if component_idx not in axis.winds_bz_components:
-                axis.winds_bz_components.append(component_idx)
-        if closed and component_idx not in axis.endpoint_components:
-            axis.endpoint_components.append(component_idx)
+            axis.add_wind_bz_component(component_idx)
+        if closed:
+            axis.add_endpoint_component(component_idx)
 
     def unloop(self, axis_idx, component_idx, unwind_bz=False, open=False):
         if not 0 <= axis_idx < self.naxes:
@@ -235,12 +337,41 @@ class Mesh:
                 f"component_idx {component_idx} out of bounds for {self.dim_total} components"
             )
         axis = self.axes[axis_idx]
-        if component_idx in axis.loop_components:
-            axis.loop_components.remove(component_idx)
-        if unwind_bz and component_idx in axis.winds_bz_components:
-            axis.winds_bz_components.remove(component_idx)
-        if open and component_idx in axis.endpoint_components:
-            axis.endpoint_components.remove(component_idx)
+        axis.remove_loop_component(component_idx)
+        if unwind_bz:
+            axis.remove_wind_bz_component(component_idx)
+        if open:
+            axis.remove_endpoint_component(component_idx)
+
+    def info(self, show=True):
+        """Return or print mesh dimensions and topology metadata."""
+        mesh_type = (
+            "uninitialized"
+            if not self.filled
+            else "grid" if self.is_grid else "path"
+        )
+        lines = [
+            "----------------------------------------",
+            "            Mesh report",
+            "----------------------------------------",
+            f"type              = {mesh_type}",
+            f"axis types        = {self.axis_types}",
+            f"axis names        = {self.axis_names}",
+            f"shape             = {self.shape}",
+            f"component types   = {self.component_types}",
+            f"k-space torus     = {self.is_k_torus}",
+        ]
+        for index, axis in enumerate(self.axes):
+            lines.append(
+                f"axis {index}: loops={axis.loop_components}, "
+                f"endpoints={axis.endpoint_components}, "
+                f"winds_bz={axis.winds_bz_components}"
+            )
+        report = "\n".join(lines)
+        if show:
+            print(report)
+            return None
+        return report
 
     @staticmethod
     def _broadcast(value, count, default):
@@ -258,9 +389,9 @@ class Mesh:
         shape,
         gamma_centered=False,
         k_endpoints=False,
+        lambda_endpoints=True,
         lambda_start=0.0,
         lambda_stop=1.0,
-        lambda_endpoints=True,
     ):
         shape = tuple(int(size) for size in shape)
         if len(shape) != self.naxes or any(size < 1 for size in shape):
@@ -316,6 +447,44 @@ class Mesh:
                 lambda_index += 1
         self._points = points
         self._flat = points.reshape(-1, self.dim_total)
+        self._nodes = None
+        return self
+
+    def build_path(self, nodes, n_interp=1):
+        """Build a piecewise-linear path through combined k/parameter space."""
+        if self.naxes != 1:
+            raise ValueError("For a path, the mesh must have exactly one axis.")
+        if not isinstance(n_interp, (int, np.integer)) or int(n_interp) < 1:
+            raise ValueError("n_interp must be a positive integer.")
+        nodes = np.asarray(nodes, dtype=float)
+        if nodes.ndim != 2 or nodes.shape[1] != self.dim_total:
+            raise ValueError(
+                f"nodes must have shape (N_nodes, {self.dim_total})"
+            )
+        if len(nodes) < 1 or not np.all(np.isfinite(nodes)):
+            raise ValueError("nodes must contain finite path coordinates")
+        segments = []
+        for start, stop in zip(nodes[:-1], nodes[1:], strict=True):
+            fractions = np.linspace(
+                0.0,
+                1.0,
+                int(n_interp),
+                endpoint=False,
+            )
+            segments.append(
+                start[np.newaxis, :]
+                + fractions[:, np.newaxis]
+                * (stop - start)[np.newaxis, :]
+            )
+        points = (
+            np.vstack([*segments, nodes[-1:]])
+            if segments
+            else nodes.copy()
+        )
+        self.axes[0].size = len(points)
+        self._flat = points.copy()
+        self._points = points.copy()
+        self._nodes = nodes.copy()
         return self
 
     def build_custom(self, points):
@@ -330,10 +499,7 @@ class Mesh:
             axis.size = size
         self._points = points.copy()
         self._flat = points.reshape(-1, self.dim_total)
-        self._k_vectors = [points[..., index] for index in range(self.dim_k)]
-        self._lambda_vectors = [
-            points[..., self.dim_k + index] for index in range(self.dim_lambda)
-        ]
+        self._nodes = None
         return self
 
     def get_axis_range(self, axis_index, component_index):
@@ -354,16 +520,59 @@ class Mesh:
         return np.asarray(values).reshape(-1)
 
     def get_k_points(self):
-        if not self._k_vectors:
-            return np.empty((0, self.dim_k))
-        grids = np.meshgrid(*self._k_vectors, indexing="ij")
-        return np.stack(grids, axis=-1)
+        if not self.filled:
+            raise ValueError("Mesh points are not initialized.")
+        selectors = [
+            slice(None) if axis.is_k_axis else 0 for axis in self.axes
+        ]
+        result = np.asarray(
+            self.points[tuple(selectors) + (slice(0, self.dim_k),)]
+        )
+        return result.reshape(self.shape_k + (self.dim_k,))
 
     def get_param_points(self):
-        if not self._lambda_vectors:
-            return np.empty((0, self.dim_lambda))
-        grids = np.meshgrid(*self._lambda_vectors, indexing="ij")
-        return np.stack(grids, axis=-1)
+        if not self.filled:
+            raise ValueError("Mesh points are not initialized.")
+        selectors = [
+            0 if axis.is_k_axis else slice(None) for axis in self.axes
+        ]
+        result = np.asarray(
+            self.points[
+                tuple(selectors)
+                + (slice(self.dim_k, self.dim_total),)
+            ]
+        )
+        return result.reshape(self.shape_lambda + (self.dim_lambda,))
+
+    @staticmethod
+    def gen_hyper_cube(
+        *n_points,
+        start=0.0,
+        stop=1.0,
+        endpoint=False,
+        flat=True,
+    ):
+        """Generate a regular Cartesian hypercube in arbitrary dimension."""
+        if not n_points or any(
+            not isinstance(size, (int, np.integer)) or int(size) < 1
+            for size in n_points
+        ):
+            raise ValueError("n_points must contain positive integers")
+        dimension = len(n_points)
+        starts = Mesh._broadcast(start, dimension, 0.0)
+        stops = Mesh._broadcast(stop, dimension, 1.0)
+        endpoints = Mesh._broadcast(endpoint, dimension, False)
+        axes = [
+            np.linspace(
+                starts[index],
+                stops[index],
+                int(size),
+                endpoint=bool(endpoints[index]),
+            )
+            for index, size in enumerate(n_points)
+        ]
+        cube = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
+        return cube.reshape(-1, dimension) if flat else cube
 
 
-__all__ = ["Mesh"]
+__all__ = ["Axis", "Mesh"]

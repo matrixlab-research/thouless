@@ -146,3 +146,14 @@ __all__ = [
     "kane_mele",
     "ssh",
 ]
+
+# Import the public constructor modules once during package initialization.
+# This preserves both ``pythtb.models.ssh(...)`` and
+# ``from pythtb.models.ssh import ssh`` without letting Python replace the
+# package-level constructor with the submodule object on first use.
+from .checkerboard import checkerboard as checkerboard
+from .fu_kane_mele import fu_kane_mele as fu_kane_mele
+from .graphene import graphene as graphene
+from .haldane import haldane as haldane
+from .kane_mele import kane_mele as kane_mele
+from .ssh import ssh as ssh
