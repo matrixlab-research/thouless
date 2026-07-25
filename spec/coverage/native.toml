@@ -100,9 +100,9 @@ issue = "https://github.com/matrixlab-research/thouless/issues/2"
 
 [[capability]]
 id = "response.intrinsic"
-description = "Band-resolved Kubo Berry curvature, occupation-weighted linear Hall geometry, and finite-temperature Berry-curvature-dipole integrals with explicit quadrature weights"
-native_api = "thouless::response::{band_response_from_hamiltonian_derivatives,band_response_from_model,occupation_weighted_berry_curvature,berry_curvature_dipole,FermiDistribution,BandResponsePoint}"
-test = "tests/native_response.rs massive-Dirac analytic curvature, constant-basis invariance, reduced-versus-Cartesian model derivatives, tilted-Dirac Fermi-surface dipole, degeneracy rejection, and zero-temperature distribution boundary"
+description = "Band-resolved Kubo Berry curvature, coordinate-consistent uniform-mesh integration of linear Hall geometry, and finite-temperature Berry-curvature-dipole integrals"
+native_api = "thouless::response::{band_response_from_hamiltonian_derivatives,band_response_from_model,occupation_weighted_berry_curvature,berry_curvature_dipole,FermiDistribution,BandResponsePoint,UniformMeshBandResponse}"
+test = "tests/native_response.rs massive-Dirac analytic curvature, constant-basis invariance, reduced-versus-Cartesian model derivatives and mesh measures, quantized Qi-Wu-Zhang integral, inversion cancellation of the dipole, tilted-Dirac Fermi-surface dipole, degeneracy rejection, and zero-temperature distribution boundary"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/2"
 

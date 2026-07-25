@@ -7,9 +7,10 @@
 
 use nalgebra::DMatrix;
 
+use crate::geometry::UniformReciprocalMesh;
 use crate::model::TightBindingModel;
 use crate::spectrum::hermitian_eigensystem;
-use crate::{Complex64, ComplexMatrix, ModelError};
+use crate::{Complex64, ComplexMatrix, GeometryError, ModelError};
 
 const HERMITIAN_TOLERANCE: f64 = 1.0e-8;
 
@@ -165,6 +166,102 @@ impl BandResponsePoint {
     }
 }
 
+/// Intrinsic band response sampled over one uniform primitive reciprocal cell.
+///
+/// The mesh and momentum-derivative coordinates remain attached to the
+/// samples, so integrations can select the matching reduced or Cartesian
+/// quadrature measure without caller-side unit ambiguity.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UniformMeshBandResponse {
+    mesh: UniformReciprocalMesh,
+    coordinates: MomentumCoordinates,
+    points: Vec<BandResponsePoint>,
+}
+
+impl UniformMeshBandResponse {
+    /// Evaluates every point of a uniform mesh constructed from `model`.
+    pub fn from_model(
+        model: &TightBindingModel,
+        shape: &[usize],
+        fractional_offsets: &[f64],
+        fermi: FermiDistribution,
+        coordinates: MomentumCoordinates,
+        degeneracy_tolerance: f64,
+    ) -> Result<Self, IntrinsicResponseError> {
+        let mesh = UniformReciprocalMesh::new(model.lattice(), shape, fractional_offsets)?;
+        let points = mesh
+            .reduced_points()
+            .iter()
+            .map(|momentum| {
+                band_response_from_model(model, momentum, fermi, coordinates, degeneracy_tolerance)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            mesh,
+            coordinates,
+            points,
+        })
+    }
+
+    /// Returns the reciprocal mesh and its coordinate measures.
+    #[must_use]
+    pub const fn mesh(&self) -> &UniformReciprocalMesh {
+        &self.mesh
+    }
+
+    /// Returns the Hamiltonian-derivative coordinates.
+    #[must_use]
+    pub const fn coordinates(&self) -> MomentumCoordinates {
+        self.coordinates
+    }
+
+    /// Returns band-response samples in mesh order.
+    #[must_use]
+    pub fn points(&self) -> &[BandResponsePoint] {
+        &self.points
+    }
+
+    /// Integrates one occupation-weighted Berry-curvature component.
+    ///
+    /// Reduced-coordinate derivatives use the unit reduced-cell measure.
+    /// Cartesian derivatives use the primitive reciprocal-cell volume.
+    pub fn occupation_weighted_berry_curvature(
+        &self,
+        first: usize,
+        second: usize,
+    ) -> Result<f64, IntrinsicResponseError> {
+        occupation_weighted_berry_curvature_with_weights(
+            &self.points,
+            std::iter::repeat(self.quadrature_weight()).take(self.points.len()),
+            first,
+            second,
+        )
+    }
+
+    /// Integrates one finite-temperature Berry-curvature-dipole component.
+    pub fn berry_curvature_dipole(
+        &self,
+        derivative_direction: usize,
+        curvature_first: usize,
+        curvature_second: usize,
+    ) -> Result<f64, IntrinsicResponseError> {
+        berry_curvature_dipole_with_weights(
+            &self.points,
+            std::iter::repeat(self.quadrature_weight()).take(self.points.len()),
+            derivative_direction,
+            curvature_first,
+            curvature_second,
+        )
+    }
+
+    fn quadrature_weight(&self) -> f64 {
+        match self.coordinates {
+            MomentumCoordinates::Reduced => self.mesh.normalized_weight(),
+            MomentumCoordinates::Cartesian => self.mesh.cartesian_weight(),
+        }
+    }
+}
+
 /// Errors raised while evaluating intrinsic band response.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -190,6 +287,8 @@ pub enum IntrinsicResponseError {
     EigensystemFailure,
     /// Tight-binding model evaluation failed.
     Model(ModelError),
+    /// Reciprocal-mesh construction failed.
+    Geometry(GeometryError),
     /// Sample points and explicit quadrature weights are inconsistent.
     InvalidSamples,
     /// A requested momentum or curvature direction is unavailable.
@@ -228,6 +327,7 @@ impl std::fmt::Display for IntrinsicResponseError {
                 write!(formatter, "failed to diagonalize the response Hamiltonian")
             }
             Self::Model(error) => error.fmt(formatter),
+            Self::Geometry(error) => error.fmt(formatter),
             Self::InvalidSamples => write!(
                 formatter,
                 "response samples require one finite explicit quadrature weight per point"
@@ -247,6 +347,7 @@ impl std::error::Error for IntrinsicResponseError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Model(error) => Some(error),
+            Self::Geometry(error) => Some(error),
             _ => None,
         }
     }
@@ -255,6 +356,12 @@ impl std::error::Error for IntrinsicResponseError {
 impl From<ModelError> for IntrinsicResponseError {
     fn from(error: ModelError) -> Self {
         Self::Model(error)
+    }
+}
+
+impl From<GeometryError> for IntrinsicResponseError {
+    fn from(error: GeometryError) -> Self {
+        Self::Geometry(error)
     }
 }
 
@@ -403,8 +510,17 @@ pub fn occupation_weighted_berry_curvature(
     second: usize,
 ) -> Result<f64, IntrinsicResponseError> {
     validate_samples(points, weights)?;
+    occupation_weighted_berry_curvature_with_weights(points, weights.iter().copied(), first, second)
+}
+
+fn occupation_weighted_berry_curvature_with_weights(
+    points: &[BandResponsePoint],
+    weights: impl Iterator<Item = f64>,
+    first: usize,
+    second: usize,
+) -> Result<f64, IntrinsicResponseError> {
     let mut integral = 0.0;
-    for (point, &weight) in points.iter().zip(weights) {
+    for (point, weight) in points.iter().zip(weights) {
         if first >= point.direction_count() || second >= point.direction_count() {
             return Err(IntrinsicResponseError::InvalidDirections);
         }
@@ -435,8 +551,24 @@ pub fn berry_curvature_dipole(
     curvature_second: usize,
 ) -> Result<f64, IntrinsicResponseError> {
     validate_samples(points, weights)?;
+    berry_curvature_dipole_with_weights(
+        points,
+        weights.iter().copied(),
+        derivative_direction,
+        curvature_first,
+        curvature_second,
+    )
+}
+
+fn berry_curvature_dipole_with_weights(
+    points: &[BandResponsePoint],
+    weights: impl Iterator<Item = f64>,
+    derivative_direction: usize,
+    curvature_first: usize,
+    curvature_second: usize,
+) -> Result<f64, IntrinsicResponseError> {
     let mut integral = 0.0;
-    for (point, &weight) in points.iter().zip(weights) {
+    for (point, weight) in points.iter().zip(weights) {
         if derivative_direction >= point.direction_count()
             || curvature_first >= point.direction_count()
             || curvature_second >= point.direction_count()

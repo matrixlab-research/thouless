@@ -3,7 +3,7 @@ use thouless::model::{Lattice, ModelBuilder};
 use thouless::response::{
     band_response_from_hamiltonian_derivatives, band_response_from_model, berry_curvature_dipole,
     occupation_weighted_berry_curvature, FermiDistribution, IntrinsicResponseError,
-    MomentumCoordinates,
+    MomentumCoordinates, UniformMeshBandResponse,
 };
 use thouless::{Complex64, ComplexMatrix};
 
@@ -239,4 +239,136 @@ fn model_response_preserves_reduced_and_cartesian_derivative_coordinates() {
     );
     assert!((cartesian.group_velocity(0, 0).unwrap() - 4.0 * phase.sin()).abs() < 1.0e-12);
     assert_eq!(reduced.berry_curvature(0, 0, 0), Some(0.0));
+}
+
+fn scaled(matrix: &ComplexMatrix, factor: f64) -> ComplexMatrix {
+    ComplexMatrix::new(
+        matrix.rows(),
+        matrix.columns(),
+        matrix
+            .as_slice()
+            .iter()
+            .map(|value| factor * value)
+            .collect(),
+    )
+    .unwrap()
+}
+
+fn add_scaled(
+    left: &ComplexMatrix,
+    left_factor: f64,
+    right: &ComplexMatrix,
+    right_factor: Complex64,
+) -> ComplexMatrix {
+    ComplexMatrix::new(
+        left.rows(),
+        left.columns(),
+        left.as_slice()
+            .iter()
+            .zip(right.as_slice())
+            .map(|(left, right)| left_factor * left + right_factor * right)
+            .collect(),
+    )
+    .unwrap()
+}
+
+fn qi_wu_zhang_model() -> thouless::model::TightBindingModel {
+    let lattice = Lattice::new(vec![vec![1.0, 0.0], vec![0.0, 1.0]], vec![0, 1]).unwrap();
+    let mut builder = ModelBuilder::new(lattice);
+    let orbital = builder
+        .add_orbital_with_dof("spinor", [0.0, 0.0], 2)
+        .unwrap();
+    let sigma_x = ComplexMatrix::new(
+        2,
+        2,
+        vec![
+            Complex64::new(0.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+        ],
+    )
+    .unwrap();
+    let sigma_y = ComplexMatrix::new(
+        2,
+        2,
+        vec![
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, -1.0),
+            Complex64::new(0.0, 1.0),
+            Complex64::new(0.0, 0.0),
+        ],
+    )
+    .unwrap();
+    let sigma_z = ComplexMatrix::new(
+        2,
+        2,
+        vec![
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(-1.0, 0.0),
+        ],
+    )
+    .unwrap();
+    builder
+        .set_onsite_block(orbital, scaled(&sigma_z, -1.0))
+        .unwrap();
+    builder
+        .add_hopping_block(
+            orbital,
+            orbital,
+            [1, 0],
+            add_scaled(&sigma_z, 0.5, &sigma_x, Complex64::new(0.0, -0.5)),
+        )
+        .unwrap();
+    builder
+        .add_hopping_block(
+            orbital,
+            orbital,
+            [0, 1],
+            add_scaled(&sigma_z, 0.5, &sigma_y, Complex64::new(0.0, -0.5)),
+        )
+        .unwrap();
+    builder.build().unwrap()
+}
+
+#[test]
+fn uniform_mesh_response_recovers_chern_integral_and_inversion_cancellation() {
+    let model = qi_wu_zhang_model();
+    let zero_temperature = FermiDistribution::new(0.0, 0.0).unwrap();
+    let cartesian = UniformMeshBandResponse::from_model(
+        &model,
+        &[31, 31],
+        &[0.0, 0.0],
+        zero_temperature,
+        MomentumCoordinates::Cartesian,
+        1.0e-10,
+    )
+    .unwrap();
+    let reduced = UniformMeshBandResponse::from_model(
+        &model,
+        &[31, 31],
+        &[0.0, 0.0],
+        zero_temperature,
+        MomentumCoordinates::Reduced,
+        1.0e-10,
+    )
+    .unwrap();
+    let cartesian_integral = cartesian.occupation_weighted_berry_curvature(0, 1).unwrap();
+    let reduced_integral = reduced.occupation_weighted_berry_curvature(0, 1).unwrap();
+    assert!((cartesian_integral.abs() / std::f64::consts::TAU - 1.0).abs() < 1.0e-8);
+    assert!((reduced_integral - cartesian_integral).abs() < 1.0e-10);
+
+    let finite_temperature = FermiDistribution::new(-1.0, 0.2).unwrap();
+    let centered = UniformMeshBandResponse::from_model(
+        &model,
+        &[24, 24],
+        &[0.5, 0.5],
+        finite_temperature,
+        MomentumCoordinates::Cartesian,
+        1.0e-10,
+    )
+    .unwrap();
+    assert!(centered.berry_curvature_dipole(0, 0, 1).unwrap().abs() < 1.0e-12);
 }
