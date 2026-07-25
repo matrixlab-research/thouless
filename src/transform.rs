@@ -1,6 +1,6 @@
 //! Structure-preserving transformations of tight-binding models.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use nalgebra::{DMatrix, DVector};
 
@@ -37,6 +37,62 @@ impl SupercellModel {
     }
 }
 
+/// One source orbital in one integer lattice cell of a finite geometry.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct FiniteSite {
+    cell: Vec<i32>,
+    orbital: usize,
+}
+
+impl FiniteSite {
+    /// Creates a site from a full-dimensional cell translation and source orbital.
+    pub fn new(cell: impl IntoIterator<Item = i32>, orbital: usize) -> Self {
+        Self {
+            cell: cell.into_iter().collect(),
+            orbital,
+        }
+    }
+
+    /// Returns the source-cell translation.
+    #[must_use]
+    pub fn cell(&self) -> &[i32] {
+        &self.cell
+    }
+
+    /// Returns the source orbital index.
+    #[must_use]
+    pub const fn orbital(&self) -> usize {
+        self.orbital
+    }
+}
+
+/// A finite model together with stable source-site provenance.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FiniteGeometry {
+    model: TightBindingModel,
+    sites: Vec<FiniteSite>,
+}
+
+impl FiniteGeometry {
+    /// Returns the finite tight-binding model.
+    #[must_use]
+    pub const fn model(&self) -> &TightBindingModel {
+        &self.model
+    }
+
+    /// Returns source sites in the same order as output orbitals.
+    #[must_use]
+    pub fn sites(&self) -> &[FiniteSite] {
+        &self.sites
+    }
+
+    /// Consumes the result and returns the finite model.
+    #[must_use]
+    pub fn into_model(self) -> TightBindingModel {
+        self.model
+    }
+}
+
 /// Errors raised by tight-binding model transformations.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -55,6 +111,15 @@ pub enum ModelTransformError {
     },
     /// A tight-binding model must retain at least one orbital.
     EmptyResult,
+    /// A finite site has the wrong full cell dimension.
+    InvalidFiniteCellDimension {
+        /// Required number of integer coordinates.
+        expected: usize,
+        /// Number supplied.
+        actual: usize,
+    },
+    /// The same finite source site occurs more than once.
+    DuplicateFiniteSite,
     /// A real-space direction is outside the lattice.
     InvalidDirection {
         /// Invalid direction.
@@ -118,6 +183,13 @@ impl std::fmt::Display for ModelTransformError {
                 write!(formatter, "orbital {orbital} occurs more than once")
             }
             Self::EmptyResult => write!(formatter, "a model transformation removed every orbital"),
+            Self::InvalidFiniteCellDimension { expected, actual } => write!(
+                formatter,
+                "finite site cell has {actual} coordinates; expected {expected}"
+            ),
+            Self::DuplicateFiniteSite => {
+                write!(formatter, "finite source site occurs more than once")
+            }
             Self::InvalidDirection {
                 direction,
                 dimension,
@@ -175,6 +247,163 @@ impl From<ModelError> for ModelTransformError {
     fn from(error: ModelError) -> Self {
         Self::Model(error)
     }
+}
+
+/// Extracts an arbitrary finite geometry from explicit source sites.
+///
+/// Every output orbital corresponds to one `(cell, orbital)` pair. Onsite
+/// blocks are copied, a source hopping is retained only when both endpoints
+/// occur in `sites`, and all output hopping translations are zero. This single
+/// representation covers open boundaries, vacancies, holes, and shapes with
+/// incomplete boundary cells.
+pub fn make_finite_geometry(
+    model: &TightBindingModel,
+    sites: &[FiniteSite],
+) -> Result<FiniteGeometry, ModelTransformError> {
+    if sites.is_empty() {
+        return Err(ModelTransformError::EmptyResult);
+    }
+    let dimension = model.lattice().real_dimension();
+    let orbital_count = model.orbitals().len();
+    let mut unique = HashSet::with_capacity(sites.len());
+    for site in sites {
+        if site.cell.len() != dimension {
+            return Err(ModelTransformError::InvalidFiniteCellDimension {
+                expected: dimension,
+                actual: site.cell.len(),
+            });
+        }
+        if site.orbital >= orbital_count {
+            return Err(ModelTransformError::InvalidOrbital {
+                orbital: site.orbital,
+                orbital_count,
+            });
+        }
+        if !unique.insert(site.clone()) {
+            return Err(ModelTransformError::DuplicateFiniteSite);
+        }
+    }
+
+    let lattice = Lattice::new(model.lattice().primitive_vectors().to_vec(), Vec::new())?;
+    let mut builder = ModelBuilder::new(lattice);
+    let mut output_orbitals = Vec::with_capacity(sites.len());
+    let mut lookup = HashMap::with_capacity(sites.len());
+    for (output_index, site) in sites.iter().enumerate() {
+        let source = &model.orbitals()[site.orbital];
+        let position = source
+            .reduced_position()
+            .iter()
+            .zip(&site.cell)
+            .map(|(position, cell)| position + f64::from(*cell))
+            .collect::<Vec<_>>();
+        let output = builder.add_orbital_with_dof(
+            format!("{}@finite-{output_index}", source.label()),
+            position,
+            source.degrees_of_freedom(),
+        )?;
+        builder.set_onsite_block(output, model.onsite_blocks()[site.orbital].clone())?;
+        output_orbitals.push(output);
+        lookup.insert(site.clone(), output);
+    }
+
+    let zero_offset = vec![0; dimension];
+    for (target_index, target_site) in sites.iter().enumerate() {
+        for hopping in model
+            .hoppings()
+            .iter()
+            .filter(|hopping| hopping.target().index() == target_site.orbital)
+        {
+            let source_site = FiniteSite {
+                cell: target_site
+                    .cell
+                    .iter()
+                    .zip(hopping.cell_offset())
+                    .map(|(cell, offset)| cell + offset)
+                    .collect(),
+                orbital: hopping.source().index(),
+            };
+            let Some(source) = lookup.get(&source_site) else {
+                continue;
+            };
+            builder.add_hopping_block_sum(
+                output_orbitals[target_index],
+                *source,
+                zero_offset.iter().copied(),
+                hopping.amplitude().clone(),
+            )?;
+        }
+    }
+    Ok(FiniteGeometry {
+        model: builder.build()?,
+        sites: sites.to_vec(),
+    })
+}
+
+/// Extracts complete unit cells into a finite geometry.
+pub fn make_finite_cluster(
+    model: &TightBindingModel,
+    cells: &[Vec<i32>],
+) -> Result<FiniteGeometry, ModelTransformError> {
+    let sites = cells
+        .iter()
+        .flat_map(|cell| {
+            (0..model.orbitals().len())
+                .map(move |orbital| FiniteSite::new(cell.iter().copied(), orbital))
+        })
+        .collect::<Vec<_>>();
+    make_finite_geometry(model, &sites)
+}
+
+/// Replaces selected onsite blocks without changing geometry or hoppings.
+///
+/// This is the structural primitive for deterministic defects, random onsite
+/// disorder, and spatially varying local fields. Replacements are indexed by
+/// native orbital order and remain subject to the core shape and Hermiticity
+/// invariants.
+pub fn replace_onsite_blocks(
+    model: &TightBindingModel,
+    replacements: &[(usize, crate::ComplexMatrix)],
+) -> Result<TightBindingModel, ModelTransformError> {
+    let orbital_count = model.orbitals().len();
+    let mut replacement_map = HashMap::with_capacity(replacements.len());
+    for (orbital, block) in replacements {
+        if *orbital >= orbital_count {
+            return Err(ModelTransformError::InvalidOrbital {
+                orbital: *orbital,
+                orbital_count,
+            });
+        }
+        if replacement_map.insert(*orbital, block).is_some() {
+            return Err(ModelTransformError::DuplicateOrbital { orbital: *orbital });
+        }
+    }
+
+    let mut builder = ModelBuilder::new(model.lattice().clone());
+    let mut orbitals = Vec::with_capacity(orbital_count);
+    for (index, source) in model.orbitals().iter().enumerate() {
+        let output = builder.add_orbital_with_dof(
+            source.label(),
+            source.reduced_position().iter().copied(),
+            source.degrees_of_freedom(),
+        )?;
+        builder.set_onsite_block(
+            output,
+            replacement_map.get(&index).map_or_else(
+                || model.onsite_blocks()[index].clone(),
+                |block| (*block).clone(),
+            ),
+        )?;
+        orbitals.push(output);
+    }
+    for hopping in model.hoppings() {
+        builder.add_hopping_block(
+            orbitals[hopping.target().index()],
+            orbitals[hopping.source().index()],
+            hopping.cell_offset().iter().copied(),
+            hopping.amplitude().clone(),
+        )?;
+    }
+    builder.build().map_err(Into::into)
 }
 
 /// Returns a model with selected localized orbital subspaces removed.

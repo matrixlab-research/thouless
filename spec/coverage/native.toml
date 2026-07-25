@@ -33,10 +33,9 @@ status = "implemented"
 [[capability]]
 id = "geometry.finite"
 description = "Cuts, arbitrary finite shapes, defects, disorder, and boundaries"
-native_api = "thouless::transform::{remove_orbitals,make_supercell,change_nonperiodic_vector}"
-test = "tests/native_transform.rs and pinned PythTB transformed-model workflows"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/3"
+native_api = "thouless::transform::{make_finite_geometry,make_finite_cluster,replace_onsite_blocks,remove_orbitals,make_supercell,change_nonperiodic_vector,FiniteSite,FiniteGeometry}"
+test = "tests/native_transform.rs analytic open-chain spectrum, incomplete boundary cells, vacancy-split spectrum, onsite disorder with invariant connectivity, supercell folding, vector changes, and pinned PythTB transformed-model workflows"
+status = "implemented"
 
 [[capability]]
 id = "geometry.periodic_folding"

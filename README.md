@@ -18,7 +18,9 @@ Berry fluxes and uniform-grid Chern numbers, metric-aware reciprocal paths and
 uniform meshes with explicit quadrature measures, parallel transport,
 hybrid Wannier centers, reduced polarization, mesh-converged time-reversal
 `Z2` classification, local-observable projection, and structure-preserving model
-transformations in Rust. It also provides discrete-symmetry validation and all
+transformations in Rust. Arbitrary finite site selections provide open
+boundaries, incomplete cells, vacancies, and onsite disorder while preserving
+source-site provenance. It also provides discrete-symmetry validation and all
 ten Altland--Zirnbauer Gaussian and circular random-matrix ensembles through
 the native core, together with LLL lattice reduction, closest-vector search,
 Voronoi neighbors, gauge-covariant Wannier projection, sampled-frame overlaps,

@@ -1,8 +1,9 @@
 use thouless::model::{Lattice, ModelBuilder};
 use thouless::transform::{
-    change_nonperiodic_vector, make_supercell, remove_orbitals, ModelTransformError,
+    change_nonperiodic_vector, make_finite_cluster, make_finite_geometry, make_supercell,
+    remove_orbitals, replace_onsite_blocks, FiniteSite, ModelTransformError,
 };
-use thouless::Complex64;
+use thouless::{Complex64, ComplexMatrix};
 
 #[test]
 fn removing_orbitals_compacts_endpoints_and_discards_incident_hoppings() {
@@ -104,4 +105,97 @@ fn supercell_spectrum_matches_folded_primitive_bands() {
     for (actual, expected) in supercell_spectrum.eigenvalues().iter().zip(expected) {
         assert!((actual - expected).abs() < 1.0e-12);
     }
+}
+
+#[test]
+fn finite_chain_has_open_boundaries_and_the_analytic_spectrum() {
+    let lattice = Lattice::new(vec![vec![1.0]], vec![0]).unwrap();
+    let mut builder = ModelBuilder::new(lattice);
+    let orbital = builder.add_orbital("site", [0.0]).unwrap();
+    builder
+        .add_hopping(orbital, orbital, [1], Complex64::new(-1.0, 0.0))
+        .unwrap();
+    let periodic = builder.build().unwrap();
+    let cells = (0..5).map(|cell| vec![cell]).collect::<Vec<_>>();
+    let finite = make_finite_cluster(&periodic, &cells).unwrap();
+
+    assert_eq!(finite.model().lattice().periodic_dimension(), 0);
+    assert_eq!(finite.model().orbitals().len(), 5);
+    assert_eq!(finite.model().hoppings().len(), 4);
+    assert_eq!(finite.sites()[3], FiniteSite::new([3], 0));
+    let spectrum = finite.model().eigensystem(&[]).unwrap();
+    for (mode, actual) in spectrum.eigenvalues().iter().enumerate() {
+        let expected = -2.0 * (std::f64::consts::PI * (mode + 1) as f64 / 6.0).cos();
+        assert!((actual - expected).abs() < 1.0e-12);
+    }
+}
+
+#[test]
+fn explicit_finite_sites_support_incomplete_cells_and_vacancies() {
+    let lattice = Lattice::new(vec![vec![1.0]], vec![0]).unwrap();
+    let mut builder = ModelBuilder::new(lattice);
+    let a = builder.add_orbital("a", [0.0]).unwrap();
+    let b = builder.add_orbital("b", [0.5]).unwrap();
+    builder
+        .add_hopping(a, b, [0], Complex64::new(-1.0, 0.0))
+        .unwrap();
+    builder
+        .add_hopping(a, b, [1], Complex64::new(-0.7, 0.0))
+        .unwrap();
+    let model = builder.build().unwrap();
+    let sites = vec![
+        FiniteSite::new([0], a.index()),
+        FiniteSite::new([0], b.index()),
+        FiniteSite::new([1], a.index()),
+    ];
+    let finite = make_finite_geometry(&model, &sites).unwrap();
+
+    assert_eq!(finite.sites(), sites);
+    assert_eq!(finite.model().orbitals().len(), 3);
+    assert_eq!(finite.model().hoppings().len(), 1);
+    assert_eq!(finite.model().orbitals()[2].reduced_position(), &[1.0]);
+
+    let chain = {
+        let mut builder = ModelBuilder::new(Lattice::new(vec![vec![1.0]], vec![0]).unwrap());
+        let site = builder.add_orbital("site", [0.0]).unwrap();
+        builder
+            .add_hopping(site, site, [1], Complex64::new(-1.0, 0.0))
+            .unwrap();
+        builder.build().unwrap()
+    };
+    let cluster =
+        make_finite_cluster(&chain, &(0..5).map(|cell| vec![cell]).collect::<Vec<_>>()).unwrap();
+    let vacancy = remove_orbitals(cluster.model(), &[2]).unwrap();
+    let spectrum = vacancy.eigensystem(&[]).unwrap();
+    assert_eq!(spectrum.eigenvalues(), &[-1.0, -1.0, 1.0, 1.0]);
+}
+
+#[test]
+fn onsite_replacements_add_disorder_without_changing_connectivity() {
+    let lattice = Lattice::finite(1).unwrap();
+    let mut builder = ModelBuilder::new(lattice);
+    let first = builder.add_orbital("first", [0.0]).unwrap();
+    let second = builder.add_orbital("second", [1.0]).unwrap();
+    builder
+        .add_hopping(first, second, [0], Complex64::new(-0.5, 0.2))
+        .unwrap();
+    let clean = builder.build().unwrap();
+    let disordered = replace_onsite_blocks(
+        &clean,
+        &[
+            (0, ComplexMatrix::scalar(Complex64::new(-0.7, 0.0))),
+            (1, ComplexMatrix::scalar(Complex64::new(0.4, 0.0))),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(disordered.hoppings(), clean.hoppings());
+    assert_eq!(
+        disordered.onsite_blocks()[0].as_slice(),
+        &[Complex64::new(-0.7, 0.0)]
+    );
+    assert_eq!(
+        disordered.onsite_blocks()[1].as_slice(),
+        &[Complex64::new(0.4, 0.0)]
+    );
 }
