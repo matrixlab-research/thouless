@@ -17,7 +17,8 @@ Hermitian assembly, eigensolvers, momentum derivatives, discrete Wilson phases,
 Berry fluxes and uniform-grid Chern numbers, metric-aware reciprocal paths and
 uniform meshes with explicit quadrature measures, parallel transport,
 hybrid Wannier centers, reduced polarization, mesh-converged time-reversal
-`Z2` classification, local-observable projection, and structure-preserving model
+`Z2` classification, block-sparse local densities, bond currents, onsite
+sources, local-observable projection, and structure-preserving model
 transformations in Rust. Arbitrary finite site selections provide open
 boundaries, incomplete cells, vacancies, and onsite disorder while preserving
 source-site provenance. It also provides discrete-symmetry validation and all
@@ -34,7 +35,10 @@ extension and compatibility layers pass all 98 pinned PythTB 2.0 tests and all
 398 pinned Kwant 1.5 tests without changing their tolerances. Executable API
 manifests cover the public modules, exports, and core object members of both
 source packages, including Wannier, visualization, low-level system, solver,
-and linear-algebra entry points. Complete semantic parity, broader Wannier
+linear-algebra, and local-operator entry points. Kwant density, current, and
+source evaluation now resolves the continuity equation in the shared Rust
+core; Python performs only site, callback, and array mapping. Complete
+semantic parity, broader Wannier
 differential fixtures, realistic material-scale validation, complete topology
 and response theory, and scientific-scale open-system transport remain open.
 

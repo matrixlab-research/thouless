@@ -82,12 +82,11 @@ issue = "https://github.com/matrixlab-research/thouless/issues/5"
 name = "local observables"
 source_entries = ["Density", "Current", "Source"]
 compat_entry = "python/kwant/operator"
-rust_capability = "transport.steady_state"
-public_test = "compat-tests/test_kwant_api.py"
+rust_capability = "observables.local"
+public_test = "compat-tests/test_kwant_api.py exact continuity equation through traced Rust entry points"
 source_test = "complete pinned operator module: construction, finite/infinite continuity, scattering and spin currents, gauge covariance, sparse matrices, parameter binding, and pickling"
-actual_result = "13 source tests and entry-point smoke passed"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/5"
+actual_result = "13 source tests and an exact continuity smoke passed through the Rust block-sparse density, bond-current, and onsite-source core; Python retains only site selection, callback evaluation, argument binding, and array conversion"
+status = "implemented"
 
 [[interface]]
 name = "transport statistics"

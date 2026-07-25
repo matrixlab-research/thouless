@@ -104,11 +104,10 @@ issue = "https://github.com/matrixlab-research/thouless/issues/2"
 
 [[capability]]
 id = "observables.local"
-description = "Projection of local basis observables and position operators"
-native_api = "thouless::observables::project_diagonal_observable"
-test = "tests/native_observables.rs and pinned PythTB position and Pauli workflows"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/3"
+description = "Block-sparse site densities, oriented bond currents, onsite sources, bilinear evaluation, basis projection, and position operators"
+native_api = "thouless::observables::{LocalBasisLayout,LocalOperatorSet,local_densities,bond_currents,local_sources,project_diagonal_observable}"
+test = "tests/native_observables.rs mixed-site evaluation, exact local continuity, conserved-current antisymmetry, independent-site gauge covariance, validation boundaries, projection, and Pauli decomposition; Rust-path compatibility smoke; and complete pinned Kwant operator plus PythTB position and Pauli workflows"
+status = "implemented"
 
 [[capability]]
 id = "transport.steady_state"

@@ -502,6 +502,51 @@ impl Error for GeometryError {}
 pub enum ObservableError {
     /// A state frame must contain at least one state and one basis component.
     EmptyStateFrame,
+    /// A local basis must contain at least one physical site.
+    EmptyLocalBasis,
+    /// Every physical site must contain at least one basis state.
+    EmptyLocalSite {
+        /// Index of the empty site.
+        site: usize,
+    },
+    /// The total number of local basis states overflowed `usize`.
+    LocalBasisSizeOverflow,
+    /// Explicit dense materialization would overflow the addressable size.
+    DenseLocalOperatorSizeOverflow {
+        /// Hilbert-space dimension of the requested dense operator.
+        dimension: usize,
+    },
+    /// A local operator references a site outside the basis layout.
+    InvalidLocalSite {
+        /// Supplied site index.
+        site: usize,
+        /// Number of sites in the layout.
+        site_count: usize,
+    },
+    /// A local operator block does not match its row and column sites.
+    InvalidLocalBlockShape {
+        /// Row-site index.
+        row_site: usize,
+        /// Column-site index.
+        column_site: usize,
+        /// Required number of rows.
+        expected_rows: usize,
+        /// Required number of columns.
+        expected_columns: usize,
+        /// Supplied number of rows.
+        actual_rows: usize,
+        /// Supplied number of columns.
+        actual_columns: usize,
+    },
+    /// A state vector does not span the complete local basis.
+    InvalidStateLength {
+        /// Required vector length.
+        expected: usize,
+        /// Supplied vector length.
+        actual: usize,
+    },
+    /// A state vector contains NaN or infinity.
+    NonFiniteStateValue,
     /// A diagonal observable must provide one value per basis component.
     InvalidDiagonalLength {
         /// Required number of values.
@@ -524,6 +569,43 @@ impl fmt::Display for ObservableError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyStateFrame => write!(formatter, "state frame must be nonempty"),
+            Self::EmptyLocalBasis => {
+                write!(formatter, "local basis must contain at least one site")
+            }
+            Self::EmptyLocalSite { site } => {
+                write!(formatter, "local basis site {site} has no basis states")
+            }
+            Self::LocalBasisSizeOverflow => {
+                write!(formatter, "local basis dimension exceeds usize")
+            }
+            Self::DenseLocalOperatorSizeOverflow { dimension } => write!(
+                formatter,
+                "cannot materialize a {dimension}x{dimension} local operator"
+            ),
+            Self::InvalidLocalSite { site, site_count } => write!(
+                formatter,
+                "local operator site {site} is out of range for {site_count} sites"
+            ),
+            Self::InvalidLocalBlockShape {
+                row_site,
+                column_site,
+                expected_rows,
+                expected_columns,
+                actual_rows,
+                actual_columns,
+            } => write!(
+                formatter,
+                "local operator block ({row_site}, {column_site}) has shape \
+                 {actual_rows}x{actual_columns}; expected \
+                 {expected_rows}x{expected_columns}"
+            ),
+            Self::InvalidStateLength { expected, actual } => write!(
+                formatter,
+                "state vector has length {actual}; expected {expected}"
+            ),
+            Self::NonFiniteStateValue => {
+                write!(formatter, "state vector values must be finite")
+            }
             Self::InvalidDiagonalLength { expected, actual } => write!(
                 formatter,
                 "diagonal observable has {actual} values; expected {expected}"

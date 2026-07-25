@@ -43,7 +43,10 @@ use thouless::lead_modes::{
     setup_lead_linear_system_from_svd, LeadLinearSystem, LeadLinearSystemOptions,
 };
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
-use thouless::observables::{pauli_coefficients, project_diagonal_observable};
+use thouless::observables::{
+    bond_currents, local_densities, local_sources, pauli_coefficients, project_diagonal_observable,
+    BondCurrentTerm, LocalBasisLayout, LocalDensityTerm, LocalOperatorSet, LocalSourceTerm,
+};
 use thouless::periodic::{fold_terms, PeriodicTerm};
 use thouless::random_matrix::{circular_from_components, gaussian_from_components, SymmetryClass};
 use thouless::spectrum::hermitian_eigensystem;
@@ -98,6 +101,9 @@ type ReciprocalPathOutput = (Vec<Vec<f64>>, Vec<f64>, Vec<f64>);
 type SupercellOutput = (ModelOutput, Vec<Vec<i32>>);
 type MatrixRows = Vec<Vec<Complex64>>;
 type MatrixGrid = Vec<MatrixRows>;
+type LocalDensityInput = (usize, MatrixRows);
+type BondCurrentInput = (usize, usize, MatrixRows, MatrixRows);
+type LocalSourceInput = (usize, MatrixRows, MatrixRows);
 type NeighborMatrixGrid = Vec<Vec<MatrixRows>>;
 type WannierSpreadOutput = (Vec<Vec<f64>>, Vec<f64>, f64, f64, f64);
 type WannierOptimizationOutput = (MatrixGrid, f64, f64, f64, usize, bool);
@@ -2158,6 +2164,105 @@ fn diagonal_observable_matrix(
         .map_err(value_error)
 }
 
+#[pyclass(name = "LocalOperatorSet")]
+struct PythonLocalOperatorSet {
+    inner: LocalOperatorSet,
+}
+
+#[pymethods]
+impl PythonLocalOperatorSet {
+    #[getter]
+    fn dimension(&self) -> usize {
+        self.inner.layout().dimension()
+    }
+
+    fn matrix_elements(
+        &self,
+        bra: Vec<Complex64>,
+        ket: Vec<Complex64>,
+    ) -> PyResult<Vec<Complex64>> {
+        self.inner.matrix_elements(&bra, &ket).map_err(value_error)
+    }
+
+    fn apply_total(&self, ket: Vec<Complex64>) -> PyResult<Vec<Complex64>> {
+        self.inner.apply_total(&ket).map_err(value_error)
+    }
+
+    fn total_matrix(&self) -> PyResult<MatrixRows> {
+        self.inner
+            .total_matrix()
+            .map(|matrix| matrix_to_rows(&matrix))
+            .map_err(value_error)
+    }
+
+    fn component_matrices(&self) -> PyResult<MatrixGrid> {
+        self.inner
+            .component_matrices()
+            .map(|matrices| matrices_to_rows(&matrices))
+            .map_err(value_error)
+    }
+}
+
+#[pyfunction]
+fn local_density_operators(
+    site_dimensions: Vec<usize>,
+    densities: Vec<LocalDensityInput>,
+) -> PyResult<PythonLocalOperatorSet> {
+    let layout = LocalBasisLayout::new(site_dimensions).map_err(value_error)?;
+    let densities = densities
+        .into_iter()
+        .map(|(site, observable)| {
+            matrix_from_rows(observable).map(|observable| LocalDensityTerm::new(site, observable))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    local_densities(&layout, &densities)
+        .map(|inner| PythonLocalOperatorSet { inner })
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn bond_current_operators(
+    site_dimensions: Vec<usize>,
+    currents: Vec<BondCurrentInput>,
+) -> PyResult<PythonLocalOperatorSet> {
+    let layout = LocalBasisLayout::new(site_dimensions).map_err(value_error)?;
+    let currents = currents
+        .into_iter()
+        .map(|(site, neighbor, observable, hopping)| {
+            Ok(BondCurrentTerm::new(
+                site,
+                neighbor,
+                matrix_from_rows(observable)?,
+                matrix_from_rows(hopping)?,
+            ))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    bond_currents(&layout, &currents)
+        .map(|inner| PythonLocalOperatorSet { inner })
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn local_source_operators(
+    site_dimensions: Vec<usize>,
+    sources: Vec<LocalSourceInput>,
+) -> PyResult<PythonLocalOperatorSet> {
+    let layout = LocalBasisLayout::new(site_dimensions).map_err(value_error)?;
+    let sources = sources
+        .into_iter()
+        .map(|(site, observable, onsite)| {
+            Ok(LocalSourceTerm::new(
+                site,
+                matrix_from_rows(observable)?,
+                matrix_from_rows(onsite)?,
+            ))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    local_sources(&layout, &sources)
+        .map(|inner| PythonLocalOperatorSet { inner })
+        .map_err(value_error)
+}
+
 #[pyfunction]
 fn matrix_eigensystem(matrix: Vec<Vec<Complex64>>) -> PyResult<(Vec<f64>, Vec<Vec<Complex64>>)> {
     let matrix = matrix_from_rows(matrix)?;
@@ -2650,6 +2755,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
         "DisabledFeatureError",
         module.py().get_type::<DisabledFeatureError>(),
     )?;
+    module.add_class::<PythonLocalOperatorSet>()?;
     module.add_class::<PyGraphBuilder>()?;
     module.add_class::<PyCompressedGraph>()?;
     module.add_class::<PyLeadLinearSystem>()?;
@@ -2729,6 +2835,9 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(wannier_inverse_bloch_transform, module)?)?;
     module.add_function(wrap_pyfunction!(wannier_interpolate_matrices, module)?)?;
     module.add_function(wrap_pyfunction!(diagonal_observable_matrix, module)?)?;
+    module.add_function(wrap_pyfunction!(local_density_operators, module)?)?;
+    module.add_function(wrap_pyfunction!(bond_current_operators, module)?)?;
+    module.add_function(wrap_pyfunction!(local_source_operators, module)?)?;
     module.add_function(wrap_pyfunction!(matrix_eigensystem, module)?)?;
     module.add_function(wrap_pyfunction!(pauli_decompose, module)?)?;
     module.add_function(wrap_pyfunction!(reciprocal_path, module)?)?;

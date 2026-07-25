@@ -6,6 +6,7 @@ import copy
 import inspect
 
 import numpy as np
+from thouless import _core
 
 from .builder import _block, _evaluate
 
@@ -160,21 +161,40 @@ class _LocalOperator:
             offsets.append(offsets[-1] + site.family.norbs)
         return offsets
 
-    def _matrix(self, args, params):
+    def _site_dimensions(self):
+        return [
+            int(site.family.norbs)
+            for site in self.syst.sites[: self._cell_size]
+        ]
+
+    @staticmethod
+    def _native_matrices(operator):
+        return (
+            np.asarray(operator.total_matrix(), dtype=complex),
+            [
+                np.asarray(component, dtype=complex)
+                for component in operator.component_matrices()
+            ],
+        )
+
+    def _native_operator(self, args, params):
         raise NotImplementedError
+
+    def _matrix(self, args, params):
+        return self._native_matrices(self._native_operator(args, params))
 
     def __call__(self, bra, ket=None, args=(), *, params=None):
         args, params = self._arguments(args, params)
-        matrix, components = self._matrix(args, params)
+        operator = self._native_operator(args, params)
         bra = np.asarray(bra, dtype=complex)
-        if bra.ndim != 1 or bra.shape[0] != matrix.shape[0]:
+        if bra.ndim != 1 or bra.shape[0] != operator.dimension:
             raise ValueError("Wave function has incompatible size")
         diagonal = ket is None
         ket = bra if ket is None else np.asarray(ket, dtype=complex)
-        if ket.ndim != 1 or ket.shape[0] != matrix.shape[1]:
+        if ket.ndim != 1 or ket.shape[0] != operator.dimension:
             raise ValueError("Wave function has incompatible size")
         values = np.asarray(
-            [np.vdot(bra, component @ ket) for component in components],
+            operator.matrix_elements(bra.tolist(), ket.tolist()),
             dtype=complex,
         )
         if self.sum:
@@ -185,11 +205,11 @@ class _LocalOperator:
 
     def act(self, ket, args=(), *, params=None):
         args, params = self._arguments(args, params)
-        matrix, _ = self._matrix(args, params)
+        operator = self._native_operator(args, params)
         ket = np.asarray(ket, dtype=complex)
-        if ket.ndim != 1 or ket.shape[0] != matrix.shape[1]:
+        if ket.ndim != 1 or ket.shape[0] != operator.dimension:
             raise ValueError("Wave function has incompatible size")
-        return matrix @ ket
+        return np.asarray(operator.apply_total(ket.tolist()), dtype=complex)
 
     def bind(self, args=(), *, params=None):
         _validate_call_arguments(args, params)
@@ -207,29 +227,27 @@ class _LocalOperator:
 
     def tocoo(self, args=(), *, params=None):
         args, params = self._arguments(args, params)
-        matrix, _ = self._matrix(args, params)
+        operator = self._native_operator(args, params)
         from scipy.sparse import coo_matrix
 
-        return coo_matrix(matrix)
+        return coo_matrix(np.asarray(operator.total_matrix(), dtype=complex))
 
 
 class Density(_LocalOperator):
     """Site-resolved matrix elements of a local observable."""
 
-    def _matrix(self, args, params):
-        offsets = self._offsets()
-        size = offsets[self._cell_size]
-        total = np.zeros((size, size), dtype=complex)
-        components = []
-        for (index,) in self.where:
-            component = np.zeros_like(total)
-            start, stop = offsets[index : index + 2]
-            component[start:stop, start:stop] = self._onsite_matrix(
-                index, args, params
+    def _native_operator(self, args, params):
+        densities = [
+            (
+                int(index),
+                self._onsite_matrix(index, args, params).tolist(),
             )
-            components.append(component)
-            total += component
-        return total, components
+            for (index,) in self.where
+        ]
+        return _core.local_density_operators(
+            self._site_dimensions(),
+            densities,
+        )
 
 
 class Current(_LocalOperator):
@@ -237,11 +255,9 @@ class Current(_LocalOperator):
 
     _where_rank = 2
 
-    def _matrix(self, args, params):
+    def _native_operator(self, args, params):
         offsets = self._offsets()
-        size = offsets[self._cell_size]
-        total = np.zeros((size, size), dtype=complex)
-        components = []
+        currents = []
         for first, second in self.where:
             first_slice = slice(offsets[first], offsets[first + 1])
             second_slice = slice(offsets[second], offsets[second + 1])
@@ -251,24 +267,26 @@ class Current(_LocalOperator):
                 first_slice.stop - first_slice.start,
                 second_slice.stop - second_slice.start,
             )
-            component = np.zeros_like(total)
-            component[first_slice, second_slice] = -1j * density @ hopping
-            component[second_slice, first_slice] = (
-                1j * hopping.conj().T @ density
+            currents.append(
+                (
+                    int(first),
+                    int(second),
+                    density.tolist(),
+                    hopping.tolist(),
+                )
             )
-            components.append(component)
-            total += component
-        return total, components
+        return _core.bond_current_operators(
+            self._site_dimensions(),
+            currents,
+        )
 
 
 class Source(_LocalOperator):
     """Onsite production rate of a local density."""
 
-    def _matrix(self, args, params):
+    def _native_operator(self, args, params):
         offsets = self._offsets()
-        size = offsets[self._cell_size]
-        total = np.zeros((size, size), dtype=complex)
-        components = []
+        sources = []
         for (index,) in self.where:
             site_slice = slice(offsets[index], offsets[index + 1])
             density = self._onsite_matrix(index, args, params)
@@ -278,13 +296,17 @@ class Source(_LocalOperator):
                 site_slice.stop - site_slice.start,
                 onsite=True,
             )
-            component = np.zeros_like(total)
-            component[site_slice, site_slice] = (
-                1j * (onsite @ density - density @ onsite)
+            sources.append(
+                (
+                    int(index),
+                    density.tolist(),
+                    onsite.tolist(),
+                )
             )
-            components.append(component)
-            total += component
-        return total, components
+        return _core.local_source_operators(
+            self._site_dimensions(),
+            sources,
+        )
 
 
 __all__ = ["Current", "Density", "Source"]

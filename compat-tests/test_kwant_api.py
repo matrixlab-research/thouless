@@ -228,11 +228,60 @@ def test_green_function_and_ldos_contract() -> None:
     assert np.all(density > 0)
 
 
-def test_local_operator_entry_points_exist() -> None:
+def test_local_operators_execute_the_rust_continuity_core(monkeypatch) -> None:
     kwant = require_compat_module("kwant", ISSUE_URL)
-    assert callable(kwant.operator.Density)
-    assert callable(kwant.operator.Current)
-    assert callable(kwant.operator.Source)
+    lattice = kwant.lattice.chain(norbs=2)
+    first, second = lattice(0), lattice(1)
+    onsite = np.asarray([[0.4, -0.2j], [0.2j, -0.1]])
+    neighbor_onsite = np.asarray([[0.3, 0.1], [0.1, -0.5]])
+    hopping = np.asarray(
+        [[0.5 + 0.1j, -0.2], [0.3j, 0.4 - 0.15j]]
+    )
+    observable = np.asarray([[1.0, 0.2j], [-0.2j, -0.4]])
+    builder = kwant.Builder()
+    builder[first] = onsite
+    builder[second] = neighbor_onsite
+    builder[first, second] = hopping
+    finalized = builder.finalized()
+
+    called = set()
+    for name in (
+        "local_density_operators",
+        "bond_current_operators",
+        "local_source_operators",
+    ):
+        original = getattr(kwant.operator._core, name)
+
+        def traced(*args, _name=name, _original=original, **kwargs):
+            called.add(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(kwant.operator._core, name, traced)
+
+    density = kwant.operator.Density(
+        finalized, observable, where=[first], sum=True
+    )
+    current = kwant.operator.Current(
+        finalized, observable, where=[(first, second)], sum=True
+    )
+    source = kwant.operator.Source(
+        finalized, observable, where=[first], sum=True
+    )
+
+    local_density = density.tocoo().toarray()
+    rate = 1j * (
+        finalized.hamiltonian_submatrix() @ local_density
+        - local_density @ finalized.hamiltonian_submatrix()
+    )
+    resolved_rate = (
+        current.tocoo().toarray() + source.tocoo().toarray()
+    )
+    np.testing.assert_allclose(resolved_rate, rate, atol=1e-13)
+    assert called == {
+        "local_density_operators",
+        "bond_current_operators",
+        "local_source_operators",
+    }
 
 
 def test_kpm_trace_sum_uses_the_rust_recurrence(monkeypatch) -> None:
