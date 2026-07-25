@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from thouless import _core
+
 from .utils import get_trial_wfs
 from .wfarray import WFArray
-
-
-def _polar_factor(matrix):
-    left, _, right = np.linalg.svd(matrix, full_matrices=False)
-    return left @ right
 
 
 class Wannier:
@@ -179,18 +176,23 @@ class Wannier:
             trial_wfs,
             state_idx,
         )
-        alignment = np.empty(
-            overlap.shape[:-2]
-            + (overlap.shape[-2], overlap.shape[-1]),
+        self._A = overlap
+        projected = np.asarray(
+            _core.wannier_project_trials(
+                states.reshape(
+                    -1,
+                    states.shape[-2],
+                    states.shape[-1],
+                ).tolist(),
+                np.asarray(trial_wfs, dtype=complex)
+                .reshape(len(trial_wfs), -1)
+                .tolist(),
+            ),
             dtype=complex,
         )
-        for index in np.ndindex(overlap.shape[:-2]):
-            alignment[index] = _polar_factor(overlap[index])
-        self._A = overlap
-        return np.einsum(
-            "...mn,...mb->...nb",
-            alignment,
-            states,
+        return projected.reshape(
+            states.shape[:-2]
+            + (len(trial_wfs), states.shape[-1])
         )
 
     def project(self, tf_list=None, band_idxs=None, use_tilde=False):
@@ -253,12 +255,23 @@ class Wannier:
             is_spin_axis_flat=is_spin_axis_flat,
         )
         self._tilde_states = tilde
-        self._wannier = np.fft.ifftn(
-            tilde.psi_nk,
-            axes=tuple(range(self.mesh.nk_axes)),
+        psi = np.asarray(tilde.psi_nk, dtype=complex)
+        psi_flat = psi.reshape(
+            self.nks + (state_count, -1)
         )
+        transformed = np.asarray(
+            _core.wannier_inverse_bloch_transform(
+                list(self.nks),
+                psi_flat.reshape(
+                    -1,
+                    state_count,
+                    psi_flat.shape[-1],
+                ).tolist(),
+            ),
+            dtype=complex,
+        )
+        self._wannier = transformed.reshape(psi.shape)
         self.WFs = self._wannier
-        self._compute_real_space_moments()
         self._compute_spread_decomposition()
 
     def _cell_coordinates(self):
@@ -338,8 +351,7 @@ class Wannier:
         self._spread = np.asarray(spreads)
 
     def _compute_spread_decomposition(self):
-        overlaps = self.tilde_states.overlap_matrix(use_k_metric=True)
-        vector_shells, _ = self.lattice.nn_k_shell(
+        vector_shells, shift_shells = self.lattice.nn_k_shell(
             self.nks,
             n_shell=1,
         )
@@ -348,53 +360,39 @@ class Wannier:
             n_shell=1,
             return_shell=False,
         )
-        neighbor_vectors = vector_shells[0]
-        neighbor_weights = np.full(
-            len(neighbor_vectors),
-            weights[0],
-            dtype=float,
+        neighbor_vectors = np.asarray(vector_shells[0], dtype=float)
+        displacements = np.asarray(shift_shells[0], dtype=int)
+        frames = self.tilde_states.states(flatten_spin_axis=True)
+        boundary_twists = [
+            self.tilde_states._basis_phase(mesh_axis)
+            for mesh_axis in self.mesh.k_axis_indices
+        ]
+        overlaps = _core.wannier_periodic_overlaps(
+            list(self.nks),
+            frames.reshape(
+                -1,
+                frames.shape[-2],
+                frames.shape[-1],
+            ).tolist(),
+            displacements.tolist(),
+            [twist.tolist() for twist in boundary_twists],
         )
-        state_count = overlaps.shape[-1]
-        norm = float(np.prod(self.nks))
-        if np.isnan(overlaps).any():
-            raise ValueError(
-                "Wannier spread requires periodic k-mesh neighbors at every point."
+        centers, spreads, omega_i, omega_d, omega_od = (
+            _core.wannier_spread_decomposition(
+                overlaps,
+                neighbor_vectors.tolist(),
+                np.full(
+                    len(neighbor_vectors),
+                    weights[0],
+                    dtype=float,
+                ).tolist(),
             )
-        diagonal = np.diagonal(overlaps, axis1=-2, axis2=-1)
-        phases = np.angle(diagonal)
-        absolute_diagonal_sq = np.abs(diagonal) ** 2
-        k_axes = tuple(range(self.mesh.nk_axes))
-        weight = neighbor_weights[0]
-        centers = (
-            -(weight / norm)
-            * np.sum(phases, axis=k_axes).T
-            @ neighbor_vectors
-        )
-        radius_sq = (weight / norm) * np.sum(
-            1.0 - absolute_diagonal_sq + phases**2,
-            axis=k_axes + (self.mesh.nk_axes,),
         )
         self._centers = np.asarray(centers, dtype=float)
-        self._spread = np.asarray(
-            radius_sq - np.sum(centers**2, axis=1),
-            dtype=float,
-        )
-        self._omega_i = float(
-            weight * state_count * len(neighbor_vectors)
-            - (weight / norm) * np.sum(np.abs(overlaps) ** 2)
-        )
-        center_projection = neighbor_vectors @ centers.T
-        self._omega_d = float(
-            (weight / norm)
-            * np.sum((-phases - center_projection) ** 2)
-        )
-        self._omega_od = float(
-            (weight / norm)
-            * (
-                np.sum(np.abs(overlaps) ** 2)
-                - np.sum(absolute_diagonal_sq)
-            )
-        )
+        self._spread = np.asarray(spreads, dtype=float)
+        self._omega_i = float(omega_i)
+        self._omega_d = float(omega_d)
+        self._omega_od = float(omega_od)
 
     def _window_mask(self, window):
         energies = self.bloch_states.energies
@@ -568,24 +566,26 @@ class Wannier:
                 for transverse in np.ndindex(transverse_shape):
                     line = moved[(slice(None),) + transverse]
                     for point in range(1, len(line)):
-                        overlap = line[point - 1].conj() @ line[point].T
-                        link = _polar_factor(overlap)
-                        line[point] = link.conj() @ line[point]
-                    boundary = line[0] * self.tilde_states._basis_phase(axis)
-                    closure = _polar_factor(
-                        line[-1].conj() @ boundary.T
-                    )
-                    eigenvalues, eigenvectors = np.linalg.eig(closure)
-                    root = (
-                        eigenvectors
-                        @ np.diag(
-                            np.exp(
-                                1j
-                                * np.angle(eigenvalues)
-                                / len(line)
+                        link = np.asarray(
+                            _core.transport_link(
+                                line[point - 1].tolist(),
+                                line[point].tolist(),
                             )
                         )
-                        @ np.linalg.inv(eigenvectors)
+                        line[point] = link.conj() @ line[point]
+                    boundary = line[0] * self.tilde_states._basis_phase(axis)
+                    closure = np.asarray(
+                        _core.transport_link(
+                            line[-1].tolist(),
+                            boundary.tolist(),
+                        )
+                    )
+                    root = np.asarray(
+                        _core.unitary_power(
+                            closure.tolist(),
+                            1.0 / len(line),
+                        ),
+                        dtype=complex,
                     )
                     rotation = np.eye(len(line[0]), dtype=complex)
                     for point in range(len(line)):
@@ -654,48 +654,49 @@ class Wannier:
             flat_points,
             flatten_spin_axis=True,
         ).reshape(self.nks + (self.bloch_states.model.nstate,) * 2)
-        rotated = np.einsum(
-            "...ni,...ij,...mj->...nm",
-            states.conj(),
-            hamiltonian,
-            states,
-        )
-        real_space = np.fft.fftn(
-            rotated,
-            axes=tuple(range(self.mesh.nk_axes)),
-        ) / np.prod(self.nks)
-        frequency_axes = [
-            np.fft.fftfreq(size) * size for size in self.nks
-        ]
-        translations = np.stack(
-            np.meshgrid(*frequency_axes, indexing="ij"),
-            axis=-1,
+        rotated = np.asarray(
+            _core.wannier_operators_in_frames(
+                states.reshape(
+                    -1,
+                    states.shape[-2],
+                    states.shape[-1],
+                ).tolist(),
+                hamiltonian.reshape(
+                    -1,
+                    hamiltonian.shape[-2],
+                    hamiltonian.shape[-1],
+                ).tolist(),
+            ),
+            dtype=complex,
         )
         path, _, _ = self.lattice.k_path(
             k_nodes,
             int(n_interp),
             report=False,
         )
-        interpolated = np.empty(
-            (len(path), rotated.shape[-1], rotated.shape[-1]),
+        interpolated = np.asarray(
+            _core.wannier_interpolate_matrices(
+                list(self.nks),
+                rotated.tolist(),
+                path.tolist(),
+            ),
             dtype=complex,
         )
-        for index, momentum in enumerate(path):
-            phases = np.exp(
-                2j
-                * np.pi
-                * np.einsum(
-                    "...d,d->...",
-                    translations,
-                    momentum,
-                )
-            )
-            interpolated[index] = np.sum(
-                phases[..., np.newaxis, np.newaxis] * real_space,
-                axis=tuple(range(self.mesh.nk_axes)),
-            )
-        eigenvalues, eigenvectors = np.linalg.eigh(interpolated)
-        eigenvectors = np.swapaxes(eigenvectors, -1, -2)
+        eigenpairs = [
+            _core.matrix_eigensystem(matrix.tolist())
+            for matrix in interpolated
+        ]
+        eigenvalues = np.asarray(
+            [values for values, _ in eigenpairs],
+            dtype=float,
+        )
+        eigenvectors = np.asarray(
+            [
+                np.asarray(vectors, dtype=complex).T
+                for _, vectors in eigenpairs
+            ],
+            dtype=complex,
+        )
         return (
             (eigenvalues, eigenvectors)
             if ret_eigvecs

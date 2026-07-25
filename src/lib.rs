@@ -31,6 +31,7 @@ pub mod symmetry;
 pub mod topology;
 pub mod transform;
 pub mod transport;
+pub mod wannier;
 
 pub use error::{
     DifferentiationError, GeometryError, MatrixError, ModelError, ObservableError, SpectrumError,

@@ -3,12 +3,37 @@ use thouless::topology::{
     chern_numbers_on_uniform_grid, connection_from_link, local_chern_marker_from_hamiltonian,
     local_chern_marker_from_projector, parallel_transport_link, plaquette_flux,
     quantum_geometric_tensor_from_hamiltonian_derivatives,
-    second_chern_from_hamiltonian_derivatives, wilson_line_phase, wilson_loop_eigenphases,
+    second_chern_from_hamiltonian_derivatives, unitary_matrix_power, wilson_line_phase,
+    wilson_loop_eigenphases,
 };
 use thouless::{Complex64, ComplexMatrix};
 
 fn frame(values: &[Complex64]) -> ComplexMatrix {
     ComplexMatrix::new(1, values.len(), values.to_vec()).unwrap()
+}
+
+#[test]
+fn fractional_unitary_power_reconstructs_the_holonomy() {
+    let phase = Complex64::from_polar(1.0, 0.73);
+    let link = ComplexMatrix::new(
+        2,
+        2,
+        vec![
+            Complex64::new(0.0, 0.0),
+            phase,
+            phase,
+            Complex64::new(0.0, 0.0),
+        ],
+    )
+    .unwrap();
+
+    let root = unitary_matrix_power(&link, 0.25).unwrap();
+    let root = nalgebra::DMatrix::from_row_slice(2, 2, root.as_slice());
+    let reconstructed = &root * &root * &root * &root;
+
+    for (actual, expected) in reconstructed.iter().zip(link.as_slice()) {
+        assert!((*actual - expected).norm() < 1.0e-10);
+    }
 }
 
 #[test]

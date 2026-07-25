@@ -53,13 +53,18 @@ use thouless::symmetry::{
 use thouless::topology::{
     chern_numbers_on_uniform_grid, connection_from_link, local_chern_marker_from_hamiltonian,
     parallel_transport_link, plaquette_flux, quantum_geometric_tensor_from_hamiltonian_derivatives,
-    second_chern_from_hamiltonian_derivatives, wilson_line_phase, wilson_loop_eigenphases,
+    second_chern_from_hamiltonian_derivatives, unitary_matrix_power, wilson_line_phase,
+    wilson_loop_eigenphases,
 };
 use thouless::transform::{change_nonperiodic_vector, make_supercell, remove_orbitals};
 use thouless::transport::{
     open_system_self_energies, partition_shot_noise, regularize_retarded_self_energy,
     retarded_lead_self_energy, solve_open_system, square_lattice_self_energy, LeadContact,
     SurfaceGreenOptions,
+};
+use thouless::wannier::{
+    interpolate_periodic_matrices, inverse_bloch_transform, operators_in_frames, periodic_overlaps,
+    project_trials, spread_decomposition,
 };
 use thouless::{Complex64, ComplexMatrix};
 
@@ -91,6 +96,9 @@ type ModelOutput = (
 type ReciprocalPathOutput = (Vec<Vec<f64>>, Vec<f64>, Vec<f64>);
 type SupercellOutput = (ModelOutput, Vec<Vec<i32>>);
 type MatrixRows = Vec<Vec<Complex64>>;
+type MatrixGrid = Vec<MatrixRows>;
+type NeighborMatrixGrid = Vec<Vec<MatrixRows>>;
+type WannierSpreadOutput = (Vec<Vec<f64>>, Vec<f64>, f64, f64, f64);
 type ComplexTensor3 = Vec<Vec<Vec<Complex64>>>;
 type KpmReconstructionOutput = (Vec<f64>, ComplexTensor3, ComplexTensor3, ComplexTensor3);
 type PeriodicTermInput = (MatrixRows, Vec<i64>, bool);
@@ -456,6 +464,17 @@ fn matrix_to_rows(matrix: &ComplexMatrix) -> Vec<Vec<Complex64>> {
         .chunks(matrix.columns())
         .map(<[Complex64]>::to_vec)
         .collect()
+}
+
+fn matrices_from_rows(matrices: MatrixGrid) -> PyResult<Vec<ComplexMatrix>> {
+    matrices
+        .into_iter()
+        .map(matrix_from_rows)
+        .collect::<PyResult<Vec<_>>>()
+}
+
+fn matrices_to_rows(matrices: &[ComplexMatrix]) -> MatrixGrid {
+    matrices.iter().map(matrix_to_rows).collect()
 }
 
 type ScipyZgesdd = unsafe extern "C" fn(
@@ -1915,6 +1934,101 @@ fn link_connection(
 }
 
 #[pyfunction]
+fn unitary_power(link: MatrixRows, exponent: f64) -> PyResult<MatrixRows> {
+    let link = matrix_from_rows(link)?;
+    unitary_matrix_power(&link, exponent)
+        .map(|powered| matrix_to_rows(&powered))
+        .map_err(value_error)
+}
+
+#[pyfunction]
+#[pyo3(signature = (frames, trials, singular_tolerance=1.0e-12))]
+fn wannier_project_trials(
+    frames: MatrixGrid,
+    trials: MatrixRows,
+    singular_tolerance: f64,
+) -> PyResult<MatrixGrid> {
+    let frames = matrices_from_rows(frames)?;
+    let trials = matrix_from_rows(trials)?;
+    project_trials(&frames, &trials, singular_tolerance)
+        .map(|projected| matrices_to_rows(&projected))
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn wannier_operators_in_frames(frames: MatrixGrid, operators: MatrixGrid) -> PyResult<MatrixGrid> {
+    let frames = matrices_from_rows(frames)?;
+    let operators = matrices_from_rows(operators)?;
+    operators_in_frames(&frames, &operators)
+        .map(|rotated| matrices_to_rows(&rotated))
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn wannier_periodic_overlaps(
+    mesh_shape: Vec<usize>,
+    frames: MatrixGrid,
+    displacements: Vec<Vec<isize>>,
+    boundary_twists: Vec<Vec<Complex64>>,
+) -> PyResult<NeighborMatrixGrid> {
+    let frames = matrices_from_rows(frames)?;
+    periodic_overlaps(&mesh_shape, &frames, &displacements, &boundary_twists)
+        .map(|samples| {
+            samples
+                .iter()
+                .map(|neighbors| matrices_to_rows(neighbors))
+                .collect()
+        })
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn wannier_spread_decomposition(
+    overlaps: NeighborMatrixGrid,
+    neighbor_vectors: Vec<Vec<f64>>,
+    neighbor_weights: Vec<f64>,
+) -> PyResult<WannierSpreadOutput> {
+    let overlaps = overlaps
+        .into_iter()
+        .map(matrices_from_rows)
+        .collect::<PyResult<Vec<_>>>()?;
+    spread_decomposition(&overlaps, &neighbor_vectors, &neighbor_weights)
+        .map(|spread| {
+            (
+                spread.centers().to_vec(),
+                spread.spreads().to_vec(),
+                spread.invariant(),
+                spread.diagonal(),
+                spread.off_diagonal(),
+            )
+        })
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn wannier_inverse_bloch_transform(
+    mesh_shape: Vec<usize>,
+    frames: MatrixGrid,
+) -> PyResult<MatrixGrid> {
+    let frames = matrices_from_rows(frames)?;
+    inverse_bloch_transform(&mesh_shape, &frames)
+        .map(|transformed| matrices_to_rows(&transformed))
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn wannier_interpolate_matrices(
+    mesh_shape: Vec<usize>,
+    samples: MatrixGrid,
+    points: Vec<Vec<f64>>,
+) -> PyResult<MatrixGrid> {
+    let samples = matrices_from_rows(samples)?;
+    interpolate_periodic_matrices(&mesh_shape, &samples, &points)
+        .map(|interpolated| matrices_to_rows(&interpolated))
+        .map_err(value_error)
+}
+
+#[pyfunction]
 fn diagonal_observable_matrix(
     states: Vec<Vec<Complex64>>,
     diagonal: Vec<f64>,
@@ -2486,6 +2600,13 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(transport_link, module)?)?;
     module.add_function(wrap_pyfunction!(wilson_eigenphases, module)?)?;
     module.add_function(wrap_pyfunction!(link_connection, module)?)?;
+    module.add_function(wrap_pyfunction!(unitary_power, module)?)?;
+    module.add_function(wrap_pyfunction!(wannier_project_trials, module)?)?;
+    module.add_function(wrap_pyfunction!(wannier_operators_in_frames, module)?)?;
+    module.add_function(wrap_pyfunction!(wannier_periodic_overlaps, module)?)?;
+    module.add_function(wrap_pyfunction!(wannier_spread_decomposition, module)?)?;
+    module.add_function(wrap_pyfunction!(wannier_inverse_bloch_transform, module)?)?;
+    module.add_function(wrap_pyfunction!(wannier_interpolate_matrices, module)?)?;
     module.add_function(wrap_pyfunction!(diagonal_observable_matrix, module)?)?;
     module.add_function(wrap_pyfunction!(matrix_eigensystem, module)?)?;
     module.add_function(wrap_pyfunction!(pauli_decompose, module)?)?;

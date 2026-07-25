@@ -352,6 +352,10 @@ pub enum TopologyError {
     NonSquareLink,
     /// A Berry-connection coordinate step must be finite and nonzero.
     InvalidConnectionStep,
+    /// A matrix advertised as a transport link is not unitary.
+    NonUnitaryLink,
+    /// A unitary matrix power requires a finite real exponent.
+    InvalidUnitaryExponent,
 }
 
 impl fmt::Display for TopologyError {
@@ -378,6 +382,10 @@ impl fmt::Display for TopologyError {
                     formatter,
                     "Berry-connection step must be finite and nonzero"
                 )
+            }
+            Self::NonUnitaryLink => write!(formatter, "transport link must be unitary"),
+            Self::InvalidUnitaryExponent => {
+                write!(formatter, "unitary matrix exponent must be finite")
             }
         }
     }

@@ -72,8 +72,8 @@ issue = "https://github.com/matrixlab-research/thouless/issues/1"
 [[capability]]
 id = "geometry.topology"
 description = "Berry geometry, Wilson loops, and topological invariants"
-native_api = "thouless::topology link, Wilson-loop, connection, flux, first-Chern, and Kubo second-Chern functions"
-test = "tests/native_topology.rs and pinned PythTB topology/link tests"
+native_api = "thouless::topology link, Wilson-loop, principal unitary-power, connection, flux, first-Chern, and Kubo second-Chern functions"
+test = "tests/native_topology.rs, including holonomy-root reconstruction, and pinned PythTB topology/link tests"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/2"
 
@@ -90,6 +90,14 @@ description = "Bianco-Resta local Chern marker from either an occupied projector
 native_api = "thouless::topology::{local_chern_marker_from_projector,local_chern_marker_from_hamiltonian}"
 test = "tests/native_topology.rs projector-gauge equivalence and compat-tests/test_pythtb_api.py finite Haldane bulk marker"
 status = "implemented"
+
+[[capability]]
+id = "geometry.wannier"
+description = "Gauge-covariant trial projection, periodic sampled-frame overlaps, Marzari-Vanderbilt spread decomposition, multidimensional Bloch transforms, frame-projected operators, and periodic matrix interpolation"
+native_api = "thouless::wannier::{project_trials,periodic_overlaps,spread_decomposition,inverse_bloch_transform,operators_in_frames,interpolate_periodic_matrices}"
+test = "tests/native_wannier.rs gauge independence, embedded atomic zero-spread invariant, and unseen two-dimensional off-mesh matrix interpolation plus PythTB SSH differential workflow"
+status = "partial"
+issue = "https://github.com/matrixlab-research/thouless/issues/2"
 
 [[capability]]
 id = "response.intrinsic"

@@ -19,7 +19,9 @@ transport, local-observable projection, and structure-preserving model
 transformations in Rust. It also provides discrete-symmetry validation and all
 ten Altland--Zirnbauer Gaussian and circular random-matrix ensembles through
 the native core, together with LLL lattice reduction, closest-vector search,
-and Voronoi neighbors. The Python extension and partial PythTB 2.0 layer pass
+Voronoi neighbors, gauge-covariant Wannier projection, sampled-frame overlaps,
+multidimensional FFTs, spread decomposition, and periodic matrix
+interpolation. The Python extension and partial PythTB 2.0 layer pass
 all 98 pinned upstream tests without changing their tolerances. Every public
 PythTB 2.0 module, class, function, and method is now represented, including
 Wannier and visualization entry points, but complete semantic parity,

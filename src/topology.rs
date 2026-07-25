@@ -1146,6 +1146,45 @@ pub fn connection_from_link(
         .map_err(|_| TopologyError::EigendecompositionFailed)
 }
 
+/// Raises a unitary transport matrix to a finite real power.
+///
+/// Principal eigenphases are used, so fractional powers are deterministic
+/// away from the branch cut.  This is the native primitive needed to
+/// distribute a Wilson-loop holonomy smoothly over a sampled path.
+pub fn unitary_matrix_power(
+    link: &ComplexMatrix,
+    exponent: f64,
+) -> Result<ComplexMatrix, TopologyError> {
+    if link.rows() == 0 || link.rows() != link.columns() {
+        return Err(TopologyError::NonSquareLink);
+    }
+    if !exponent.is_finite() {
+        return Err(TopologyError::InvalidUnitaryExponent);
+    }
+    let dimension = link.rows();
+    let matrix = DMatrix::from_row_slice(dimension, dimension, link.as_slice());
+    let residual =
+        matrix.adjoint() * &matrix - DMatrix::<Complex64>::identity(dimension, dimension);
+    if residual.iter().any(|value| value.norm() > 1.0e-8) {
+        return Err(TopologyError::NonUnitaryLink);
+    }
+    let (vectors, triangular) = Schur::new(matrix).unpack();
+    let mut powered_phases = DMatrix::<Complex64>::zeros(dimension, dimension);
+    for index in 0..dimension {
+        powered_phases[(index, index)] =
+            Complex64::from_polar(1.0, triangular[(index, index)].arg() * exponent);
+    }
+    let powered = &vectors * powered_phases * vectors.adjoint();
+    let mut entries = Vec::with_capacity(dimension * dimension);
+    for row in 0..dimension {
+        for column in 0..dimension {
+            entries.push(powered[(row, column)]);
+        }
+    }
+    ComplexMatrix::new(dimension, dimension, entries)
+        .map_err(|_| TopologyError::EigendecompositionFailed)
+}
+
 fn validate_frames(frames: &[ComplexMatrix]) -> Result<(), TopologyError> {
     if frames.len() < 2 {
         return Err(TopologyError::InsufficientFrames);

@@ -19,4 +19,5 @@ resolver = "2"
 md-5 = "0.10.6"
 nalgebra = "0.33.2"
 num-complex = "0.4.6"
+rustfft = "6.2.0"
 thouless-lapack = { path = "crates/thouless-lapack" }
