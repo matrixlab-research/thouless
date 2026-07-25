@@ -557,21 +557,27 @@ pub fn propagating_modes(
         .map(Complex64::norm_sqr)
         .sum::<f64>()
         .sqrt();
-    let hopping_backend = backend(inter_cell_hopping);
-    let singular_values = hopping_backend.clone().svd(false, false).singular_values;
-    let singular_tolerance = singular_values[0] * 1.0e-10;
-    let hopping_rank = singular_values
+    let hopping_svd = complex_svd(dimension, inter_cell_hopping.as_slice())
+        .map_err(|_| LeadModeError::DecompositionFailure)?;
+    let largest_singular_value = hopping_svd.singular_values()[0];
+    let hopping_rank = hopping_svd
+        .singular_values()
         .iter()
-        .filter(|&&value| value > singular_tolerance)
+        .filter(|&&value| value > f64::EPSILON * 1.0e6 * largest_singular_value)
         .count();
-    let raw_modes = if hopping_rank < dimension {
-        reduced_raw_modes(cell_hamiltonian, inter_cell_hopping, hopping_rank)?
-    } else {
+    let raw_modes = if hopping_rank == dimension {
         regular_raw_modes(
             cell_hamiltonian,
             inter_cell_hopping,
             cell_norm.max(hopping_norm),
         )?
+    } else {
+        let linear_system = setup_lead_linear_system(
+            cell_hamiltonian,
+            inter_cell_hopping,
+            LeadLinearSystemOptions::automatic(1.0e6),
+        )?;
+        raw_modes_from_linear_system(&linear_system)?
     };
 
     let mut candidates = Vec::new();
@@ -1667,122 +1673,32 @@ fn regular_raw_modes(
         right.set(dimension + row, dimension + row, Complex64::new(1.0, 0.0))?;
     }
     raw_modes_from_pencil(&left, &right, |mode, _, vectors| {
-        (0..dimension)
+        Ok((0..dimension)
             .map(|row| vectors.as_slice()[row * pencil_dimension + mode])
-            .collect()
+            .collect())
     })
 }
 
-fn reduced_raw_modes(
-    cell_hamiltonian: &ComplexMatrix,
-    inter_cell_hopping: &ComplexMatrix,
-    rank: usize,
+fn raw_modes_from_linear_system(
+    linear_system: &LeadLinearSystem,
 ) -> Result<Vec<(Complex64, Vec<Complex64>)>, LeadModeError> {
-    let dimension = cell_hamiltonian.rows();
-    let decomposition = backend(inter_cell_hopping).svd(true, true);
-    let left_vectors = decomposition.u.ok_or(LeadModeError::DecompositionFailure)?;
-    let right_vectors = decomposition
-        .v_t
-        .ok_or(LeadModeError::DecompositionFailure)?
-        .adjoint();
-    let mut left_factor = DMatrix::<Complex64>::zeros(dimension, rank);
-    let mut right_factor = DMatrix::<Complex64>::zeros(dimension, rank);
-    for column in 0..rank {
-        let scale = decomposition.singular_values[column].sqrt();
-        for row in 0..dimension {
-            left_factor[(row, column)] = left_vectors[(row, column)] * scale;
-            right_factor[(row, column)] = right_vectors[(row, column)] * scale;
-        }
-    }
-
-    let stabilizer = &left_factor * left_factor.adjoint() + &right_factor * right_factor.adjoint();
-    let stabilized_cell = backend(cell_hamiltonian) + stabilizer * Complex64::new(0.0, 1.0);
-    let cell_inverse = stabilized_cell
-        .try_inverse()
-        .ok_or(LeadModeError::DecompositionFailure)?;
-    let inverse_right = &cell_inverse * &right_factor;
-    let left_inverse_right = left_factor.adjoint() * &inverse_right;
-    let right_inverse_right = right_factor.adjoint() * inverse_right;
-    let inverse_left = &cell_inverse * &left_factor;
-    let left_inverse_left = left_factor.adjoint() * &inverse_left;
-    let right_inverse_left = right_factor.adjoint() * inverse_left;
-
-    let pencil_dimension = 2 * rank;
-    let mut left = DMatrix::<Complex64>::zeros(pencil_dimension, pencil_dimension);
-    let mut right = DMatrix::<Complex64>::zeros(pencil_dimension, pencil_dimension);
-    for index in 0..rank {
-        left[(rank + index, index)] = Complex64::new(1.0, 0.0);
-        right[(index, rank + index)] = Complex64::new(-1.0, 0.0);
-    }
-    add_block(
-        &mut left,
-        0,
-        0,
-        &left_inverse_right,
-        Complex64::new(0.0, -1.0),
-    );
-    add_block(
-        &mut left,
-        0,
-        rank,
-        &left_inverse_right,
-        Complex64::new(1.0, 0.0),
-    );
-    add_block(
-        &mut left,
-        rank,
-        0,
-        &right_inverse_right,
-        Complex64::new(0.0, -1.0),
-    );
-    add_block(
-        &mut left,
-        rank,
-        rank,
-        &right_inverse_right,
-        Complex64::new(1.0, 0.0),
-    );
-    add_block(
-        &mut right,
-        0,
-        0,
-        &left_inverse_left,
-        Complex64::new(-1.0, 0.0),
-    );
-    add_block(
-        &mut right,
-        0,
-        rank,
-        &left_inverse_left,
-        Complex64::new(0.0, 1.0),
-    );
-    add_block(
-        &mut right,
-        rank,
-        0,
-        &right_inverse_left,
-        Complex64::new(-1.0, 0.0),
-    );
-    add_block(
-        &mut right,
-        rank,
-        rank,
-        &right_inverse_left,
-        Complex64::new(0.0, 1.0),
-    );
-
-    let left = owned(&left)?;
-    let right = owned(&right)?;
-    raw_modes_from_pencil(&left, &right, |mode, inverse_bloch, vectors| {
-        let projected = backend(vectors).column(mode).into_owned();
-        let first = projected.rows(0, rank).into_owned();
-        let second = projected.rows(rank, rank).into_owned();
-        let rhs = -&left_factor * (&first * inverse_bloch) - &right_factor * &second
-            + (&right_factor * &first + &left_factor * (&second * inverse_bloch))
-                * Complex64::new(0.0, 1.0);
-        let wave = &cell_inverse * rhs;
-        wave.iter().copied().collect()
-    })
+    let identity;
+    let right = if let Some(right) = linear_system.right() {
+        right
+    } else {
+        identity = ComplexMatrix::identity(linear_system.left().rows());
+        &identity
+    };
+    raw_modes_from_pencil(
+        linear_system.left(),
+        right,
+        |mode, inverse_bloch, vectors| {
+            let projected = (0..vectors.rows())
+                .map(|row| vectors.as_slice()[row * vectors.columns() + mode])
+                .collect::<Vec<_>>();
+            linear_system.extract_wave_function(&projected, inverse_bloch)
+        },
+    )
     .map(|modes| {
         modes
             .into_iter()
@@ -1797,7 +1713,7 @@ fn raw_modes_from_pencil<F>(
     extract_wave: F,
 ) -> Result<Vec<(Complex64, Vec<Complex64>)>, LeadModeError>
 where
-    F: Fn(usize, Complex64, &ComplexMatrix) -> Vec<Complex64>,
+    F: Fn(usize, Complex64, &ComplexMatrix) -> Result<Vec<Complex64>, LeadModeError>,
 {
     let decomposition = generalized_schur(left, right)?;
     let pencil_dimension = left.rows();
@@ -1827,7 +1743,7 @@ where
         {
             continue;
         }
-        let mut wave = extract_wave(mode, eigenvalue, right_vectors);
+        let mut wave = extract_wave(mode, eigenvalue, right_vectors)?;
         let norm = wave.iter().map(Complex64::norm_sqr).sum::<f64>().sqrt();
         if norm <= 1.0e-14 {
             continue;
@@ -2201,6 +2117,29 @@ mod tests {
             .norm()
                 < 1.0e-10
         );
+    }
+
+    #[test]
+    fn time_reversal_adapts_a_multichannel_real_strip() {
+        let dimension = 6;
+        let mut cell = ComplexMatrix::zeros(dimension, dimension);
+        let mut hopping = ComplexMatrix::zeros(dimension, dimension);
+        for index in 0..dimension {
+            cell.set(index, index, Complex64::new(0.7, 0.0)).unwrap();
+            hopping
+                .set(index, index, Complex64::new(-0.5, 0.0))
+                .unwrap();
+            if index + 1 < dimension {
+                cell.set(index, index + 1, Complex64::new(-0.5, 0.0))
+                    .unwrap();
+                cell.set(index + 1, index, Complex64::new(-0.5, 0.0))
+                    .unwrap();
+            }
+        }
+        let identity = ComplexMatrix::identity(dimension);
+        let modes = propagating_modes_with_symmetries(&cell, &hopping, Some(&identity), None, None)
+            .unwrap();
+        assert_eq!(modes.incoming_count(), 4);
     }
 
     #[test]

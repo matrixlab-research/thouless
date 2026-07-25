@@ -211,8 +211,8 @@ class Polyatomic:
                 ):
                     displacement = (
                         np.asarray(delta) @ self.prim_vecs
-                        + second.offset
-                        - first.offset
+                        + first.offset
+                        - second.offset
                     )
                     distance = float(np.linalg.norm(displacement) / length_scale)
                     candidates.append(

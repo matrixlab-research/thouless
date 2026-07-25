@@ -11,8 +11,8 @@ test_modules = 24
 static_test_functions = 241
 collection_status = "blocked"
 collection_blocker = "The source test suite imports compiled Cython extensions before collection."
-strict_tests = 203
-strict_passes = 202
+strict_tests = 204
+strict_passes = 203
 strict_skips = 1
 strict_test_nodes = [
   "kwant/tests/test_lattice.py::test_closest",
@@ -91,6 +91,7 @@ strict_test_nodes = [
   "kwant/physics/tests/test_leads.py::test_singular_degenerate_with_crossing",
   "kwant/physics/tests/test_leads.py::test_singular_h_and_t",
   "kwant/physics/tests/test_leads.py::test_modes",
+  "kwant/physics/tests/test_leads.py::test_modes_bearded_ribbon",
   "kwant/physics/tests/test_leads.py::test_zero_hopping",
   "kwant/physics/tests/test_leads.py::test_for_all_evs_equal",
   "kwant/physics/tests/test_leads.py::test_dtype_linsys",
