@@ -371,3 +371,23 @@ def test_periodic_bands_execute_without_python_eigensolvers(monkeypatch) -> None
     np.testing.assert_allclose(velocity, [2.4 * np.sin(momentum)])
     np.testing.assert_allclose(curvature, [2.4 * np.cos(momentum)])
     assert eigenvectors.shape == (1, 1)
+
+
+def test_propagating_modes_execute_without_scipy_eigensolvers(monkeypatch) -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    import scipy.linalg
+
+    def forbidden(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("SciPy eigensolver must not implement lead modes")
+
+    monkeypatch.setattr(scipy.linalg, "eig", forbidden)
+    onsite = np.array([[0.3]])
+    hopping = np.array([[0.7]])
+    propagating, stabilized = kwant.physics.modes(onsite, hopping)
+
+    momentum = np.arccos(-0.3 / 1.4)
+    velocity = 1.4 * np.sin(momentum)
+    np.testing.assert_allclose(propagating.velocities, [-velocity, velocity])
+    np.testing.assert_allclose(propagating.momenta, [momentum, -momentum])
+    assert stabilized.nmodes == 1

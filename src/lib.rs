@@ -15,6 +15,7 @@ mod error;
 pub mod geometry;
 pub mod graph;
 pub mod lattice_reduction;
+pub mod lead_modes;
 pub mod matrix;
 pub mod model;
 pub mod observables;

@@ -63,10 +63,10 @@ status = "implemented"
 name = "lead modes and self-energies"
 source_entries = ["modes", "selfenergy", "PropagatingModes", "StabilizedModes"]
 compat_entry = "python/kwant/physics"
-rust_capability = "transport.steady_state"
-public_test = "pinned low-level lead protocol and sparse-solver workflow"
+rust_capability = "transport.propagating_modes and transport.steady_state"
+public_test = "pinned low-level lead protocol and sparse-solver workflow plus a regular-chain boundary with the SciPy eigensolver disabled"
 source_test = "low-level modes/self-energy lead replacement and sparse-solver modes, self-energy, singular-lead, and precalculation workflows; complete physics lead module not yet selected"
-actual_result = "1 low-level lead-protocol and 16 sparse-solver source tests passed; full physics lead module remains missing"
+actual_result = "regular square propagating modes now use a Rust generalized eigenproblem; 1 low-level lead-protocol and 16 sparse-solver source tests passed; stabilized evanescent modes, rectangular or singular hopping, symmetry blocks, selfenergy, and the complete physics lead module remain missing"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 

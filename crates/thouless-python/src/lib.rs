@@ -15,6 +15,7 @@ use thouless::lattice_reduction::{
     closest_lattice_vectors, gram_schmidt, gram_schmidt_coefficient, is_c_reduced, lll_reduce,
     voronoi_neighbors,
 };
+use thouless::lead_modes::propagating_modes;
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
 use thouless::observables::{pauli_coefficients, project_diagonal_observable};
 use thouless::random_matrix::{circular_from_components, gaussian_from_components, SymmetryClass};
@@ -74,6 +75,7 @@ type BandOutput = (
     Option<Vec<f64>>,
     Option<MatrixRows>,
 );
+type LeadModeOutput = (MatrixRows, Vec<f64>, Vec<f64>, usize);
 type DiscreteSymmetryOutput = (
     Option<Vec<MatrixRows>>,
     Option<MatrixRows>,
@@ -422,6 +424,26 @@ fn lead_band_evaluation(
 #[pyfunction]
 fn reflection_shot_noise(reflection_amplitudes: MatrixRows) -> PyResult<f64> {
     partition_shot_noise(&matrix_from_rows(reflection_amplitudes)?).map_err(value_error)
+}
+
+#[pyfunction]
+fn lead_propagating_modes(
+    cell_hamiltonian: MatrixRows,
+    inter_cell_hopping: MatrixRows,
+) -> PyResult<LeadModeOutput> {
+    propagating_modes(
+        &matrix_from_rows(cell_hamiltonian)?,
+        &matrix_from_rows(inter_cell_hopping)?,
+    )
+    .map(|modes| {
+        (
+            matrix_to_rows(modes.wave_functions()),
+            modes.velocities().to_vec(),
+            modes.momenta().to_vec(),
+            modes.incoming_count(),
+        )
+    })
+    .map_err(value_error)
 }
 
 #[pyfunction]
@@ -1293,6 +1315,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(validate_periodic_bands, module)?)?;
     module.add_function(wrap_pyfunction!(lead_band_evaluation, module)?)?;
     module.add_function(wrap_pyfunction!(reflection_shot_noise, module)?)?;
+    module.add_function(wrap_pyfunction!(lead_propagating_modes, module)?)?;
     module.add_function(wrap_pyfunction!(dense_schur, module)?)?;
     module.add_function(wrap_pyfunction!(dense_reorder_schur, module)?)?;
     module.add_function(wrap_pyfunction!(dense_schur_eigenvectors, module)?)?;

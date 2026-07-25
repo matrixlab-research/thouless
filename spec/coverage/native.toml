@@ -73,6 +73,14 @@ status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/3"
 
 [[capability]]
+id = "transport.propagating_modes"
+description = "Current-normalized propagating Bloch modes for regular square nearest-cell leads"
+native_api = "thouless::lead_modes::{propagating_modes,PropagatingLeadModes}"
+test = "src/lead_modes.rs analytic scalar-chain test and compatibility boundary with the SciPy eigensolver disabled"
+status = "partial"
+issue = "https://github.com/matrixlab-research/thouless/issues/3"
+
+[[capability]]
 id = "symmetry.discrete"
 description = "Validated unitary, antiunitary, and chiral symmetries with conservation-law projectors"
 native_api = "thouless::symmetry::{DiscreteSymmetry,SymmetryViolation}"
