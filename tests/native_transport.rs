@@ -1,5 +1,6 @@
 use thouless::transport::{
-    solve_open_system, surface_green_function, LeadContact, SurfaceGreenOptions,
+    partition_shot_noise, solve_open_system, surface_green_function, LeadContact,
+    SurfaceGreenOptions,
 };
 use thouless::{Complex64, ComplexMatrix};
 
@@ -32,4 +33,21 @@ fn matched_one_site_device_has_unit_ballistic_transmission() {
     .unwrap();
     assert!((solution.transmission(1, 0).unwrap() - 1.0).abs() < 2.0e-6);
     assert!((solution.transmission(0, 1).unwrap() - 1.0).abs() < 2.0e-6);
+}
+
+#[test]
+fn partition_noise_is_sum_of_channel_binomial_variances() {
+    let reflection = ComplexMatrix::new(
+        2,
+        2,
+        vec![
+            Complex64::new(0.5_f64.sqrt(), 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.8_f64.sqrt(), 0.0),
+        ],
+    )
+    .unwrap();
+    let expected = 0.5 * 0.5 + 0.8 * 0.2;
+    assert!((partition_shot_noise(&reflection).unwrap() - expected).abs() < 1.0e-12);
 }

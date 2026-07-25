@@ -50,13 +50,23 @@ status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
 [[interface]]
+name = "periodic lead band dispersion"
+source_entries = ["Bands"]
+compat_entry = "python/kwant/physics"
+rust_capability = "spectrum.lead_bands"
+public_test = "analytic scalar-chain energy, velocity, and curvature plus multiband source contracts"
+source_test = "complete pinned band-dispersion module"
+actual_result = "7 source tests passed through Rust-native energy, derivative, and eigenvector evaluation"
+status = "implemented"
+
+[[interface]]
 name = "lead modes and self-energies"
-source_entries = ["Bands", "modes", "selfenergy", "PropagatingModes", "StabilizedModes"]
+source_entries = ["modes", "selfenergy", "PropagatingModes", "StabilizedModes"]
 compat_entry = "python/kwant/physics"
 rust_capability = "transport.steady_state"
-public_test = "pinned infinite-system operator workflow"
-source_test = "complete pinned band-dispersion module plus low-level modes/self-energy lead replacement and sparse-solver modes, self-energy, singular-lead, and precalculation workflows"
-actual_result = "7 band-dispersion, 1 low-level lead-protocol, and 16 sparse-solver source tests passed"
+public_test = "pinned low-level lead protocol and sparse-solver workflow"
+source_test = "low-level modes/self-energy lead replacement and sparse-solver modes, self-energy, singular-lead, and precalculation workflows; complete physics lead module not yet selected"
+actual_result = "1 low-level lead-protocol and 16 sparse-solver source tests passed; full physics lead module remains missing"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
@@ -79,8 +89,7 @@ rust_capability = "transport.steady_state"
 public_test = "pinned two-terminal scattering workflow"
 source_test = "complete pinned shot-noise module"
 actual_result = "2 source tests passed"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/5"
+status = "implemented"
 
 [[interface]]
 name = "discrete symmetries"

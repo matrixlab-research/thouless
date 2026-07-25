@@ -193,6 +193,42 @@ impl From<MatrixError> for TransportError {
     }
 }
 
+/// Zero-temperature partition noise from one reflection-amplitude block.
+///
+/// The returned dimensionless value is `Tr[R - R²]` with `R = r rᴴ`.
+pub fn partition_shot_noise(reflection_amplitudes: &ComplexMatrix) -> Result<f64, TransportError> {
+    let channels = reflection_amplitudes.rows();
+    let incoming = reflection_amplitudes.columns();
+    let mut probabilities = vec![Complex64::new(0.0, 0.0); channels * channels];
+    for row in 0..channels {
+        for column in 0..channels {
+            probabilities[row * channels + column] = (0..incoming)
+                .map(|inner| {
+                    reflection_amplitudes.as_slice()[row * incoming + inner]
+                        * reflection_amplitudes.as_slice()[column * incoming + inner].conj()
+                })
+                .sum();
+        }
+    }
+    let trace = (0..channels)
+        .map(|index| probabilities[index * channels + index])
+        .sum::<Complex64>();
+    let squared_trace = (0..channels)
+        .flat_map(|row| {
+            let probabilities = &probabilities;
+            (0..channels).map(move |column| {
+                probabilities[row * channels + column] * probabilities[column * channels + row]
+            })
+        })
+        .sum::<Complex64>();
+    let noise = (trace - squared_trace).re;
+    if noise < 0.0 && noise.abs() <= 1.0e-12 {
+        Ok(0.0)
+    } else {
+        Ok(noise)
+    }
+}
+
 /// Computes the retarded surface Green function by López-Sancho decimation.
 pub fn surface_green_function(
     cell_hamiltonian: &ComplexMatrix,

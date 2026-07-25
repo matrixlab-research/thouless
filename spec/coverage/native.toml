@@ -18,6 +18,13 @@ status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/1"
 
 [[capability]]
+id = "spectrum.lead_bands"
+description = "Periodic principal-cell band energies, eigenvectors, velocities, and curvatures"
+native_api = "thouless::bands::{PeriodicBands,BandEvaluation}"
+test = "src/bands.rs analytic derivative tests and complete pinned Kwant dispersion module"
+status = "implemented"
+
+[[capability]]
 id = "geometry.finite"
 description = "Cuts, arbitrary finite shapes, defects, disorder, and boundaries"
 native_api = "thouless::transform::{remove_orbitals,make_supercell,change_nonperiodic_vector}"

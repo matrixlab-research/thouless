@@ -344,3 +344,30 @@ def test_dense_decompositions_generalize_to_nonnormal_matrix_pencils() -> None:
         calc_ev=False,
     )
     assert len(generalized_forms) == 2
+
+
+def test_periodic_bands_execute_without_python_eigensolvers(monkeypatch) -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    lattice = kwant.lattice.chain(norbs=1)
+    lead = kwant.Builder(kwant.TranslationalSymmetry(lattice.vec((-1,))))
+    lead[lattice(0)] = 0.3
+    lead[lattice(0), lattice(1)] = -1.2
+    bands = kwant.physics.Bands(lead.finalized())
+
+    def forbidden(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("Python eigensolver must not implement Bands")
+
+    monkeypatch.setattr(np.linalg, "eigh", forbidden)
+    monkeypatch.setattr(np.linalg, "eigvalsh", forbidden)
+
+    momentum = 0.7
+    energy, velocity, curvature, eigenvectors = bands(
+        momentum,
+        derivative_order=2,
+        return_eigenvectors=True,
+    )
+    np.testing.assert_allclose(energy, [0.3 - 2.4 * np.cos(momentum)])
+    np.testing.assert_allclose(velocity, [2.4 * np.sin(momentum)])
+    np.testing.assert_allclose(curvature, [2.4 * np.cos(momentum)])
+    assert eigenvectors.shape == (1, 1)

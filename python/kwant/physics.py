@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import scipy.linalg
 from scipy import sparse as scipy_sparse
@@ -106,18 +104,21 @@ class Bands:
             system.cell_hamiltonian(args=args, params=params),
             dtype=complex,
         )
-        if (
-            self.ham.ndim != 2
-            or self.ham.shape[0] != self.ham.shape[1]
-            or not np.allclose(self.ham, self.ham.conj().T)
-        ):
-            raise ValueError("The cell Hamiltonian is not Hermitian.")
+        if self.ham.ndim != 2 or self.ham.shape[0] != self.ham.shape[1]:
+            raise ValueError("The cell Hamiltonian is not square.")
         inter_cell = np.asarray(
             system.inter_cell_hopping(args=args, params=params),
             dtype=complex,
         )
         self.hop = np.zeros_like(self.ham, dtype=complex)
         self.hop[:, : inter_cell.shape[1]] = inter_cell
+        try:
+            _core.validate_periodic_bands(
+                self.ham.tolist(),
+                self.hop.tolist(),
+            )
+        except ValueError as error:
+            raise ValueError("The cell Hamiltonian is not Hermitian.") from error
 
     def __call__(
         self,
@@ -129,62 +130,20 @@ class Bands:
             raise NotImplementedError(
                 "Band derivatives are implemented only through second order"
             )
-        phase = complex(
-            math.cos(float(momentum)), -math.sin(float(momentum))
+        energies, first, second, eigenvectors = _core.lead_band_evaluation(
+            self.ham.tolist(),
+            self.hop.tolist(),
+            float(momentum),
+            int(derivative_order),
+            bool(return_eigenvectors),
         )
-        phased_hopping = self.hop * phase
-        hamiltonian = (
-            self.ham
-            + phased_hopping
-            + phased_hopping.conj().T
-        )
-        need_vectors = return_eigenvectors or derivative_order > 0
-        if need_vectors:
-            energies, eigenvectors = np.linalg.eigh(hamiltonian)
-        else:
-            energies = np.linalg.eigvalsh(hamiltonian)
-            eigenvectors = None
-        output = [energies.real]
+        output = [np.asarray(energies, dtype=float)]
         if derivative_order:
-            first_derivative = 1j * (
-                -phased_hopping + phased_hopping.conj().T
-            )
-            transformed_first = (
-                eigenvectors.conj().T
-                @ first_derivative
-                @ eigenvectors
-            )
-            output.append(np.diag(transformed_first).real)
+            output.append(np.asarray(first, dtype=float))
         if derivative_order == 2:
-            second_derivative = -(
-                phased_hopping + phased_hopping.conj().T
-            )
-            transformed_second = (
-                eigenvectors.conj().T
-                @ second_derivative
-                @ eigenvectors
-            )
-            energy_difference = energies[:, None] - energies[None, :]
-            inverse_difference = np.zeros_like(energy_difference)
-            np.divide(
-                1.0,
-                energy_difference,
-                out=inverse_difference,
-                where=energy_difference != 0,
-            )
-            output.append(
-                (
-                    np.diag(transformed_second)
-                    - 2
-                    * np.sum(
-                        inverse_difference
-                        * np.abs(transformed_first) ** 2,
-                        axis=0,
-                    )
-                ).real
-            )
+            output.append(np.asarray(second, dtype=float))
         if return_eigenvectors:
-            output.append(eigenvectors)
+            output.append(np.asarray(eigenvectors, dtype=complex))
         return output[0] if len(output) == 1 else tuple(output)
 
 
@@ -233,10 +192,7 @@ def two_terminal_shotnoise(scattering_matrix):
         scattering_matrix.out_leads[0],
         scattering_matrix.in_leads[0],
     )
-    probabilities = block @ block.conj().T
-    return float(
-        np.trace(probabilities - probabilities @ probabilities).real
-    )
+    return _core.reflection_shot_noise(np.asarray(block, dtype=complex).tolist())
 
 
 def modes(h_cell, h_hop, tol=1e6, stabilization=None, *, discrete_symmetry=None):

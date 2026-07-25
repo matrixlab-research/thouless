@@ -1,6 +1,7 @@
 use pyo3::create_exception;
 use pyo3::exceptions::{PyIndexError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use thouless::bands::PeriodicBands;
 use thouless::decomposition::{
     complexify_generalized_schur, complexify_schur, eigenvectors_from_generalized_schur,
     eigenvectors_from_schur, generalized_schur, reorder_generalized_schur, reorder_schur, schur,
@@ -24,7 +25,9 @@ use thouless::topology::{
     second_chern_from_hamiltonian_derivatives, wilson_line_phase, wilson_loop_eigenphases,
 };
 use thouless::transform::{change_nonperiodic_vector, make_supercell, remove_orbitals};
-use thouless::transport::{solve_open_system, LeadContact, SurfaceGreenOptions};
+use thouless::transport::{
+    partition_shot_noise, solve_open_system, LeadContact, SurfaceGreenOptions,
+};
 use thouless::{Complex64, ComplexMatrix};
 
 create_exception!(thouless_python, NodeDoesNotExistError, PyIndexError);
@@ -65,6 +68,12 @@ type GeneralizedSchurOutput = (
     Vec<Complex64>,
 );
 type EigenvectorOutput = (Option<MatrixRows>, Option<MatrixRows>);
+type BandOutput = (
+    Vec<f64>,
+    Option<Vec<f64>>,
+    Option<Vec<f64>>,
+    Option<MatrixRows>,
+);
 type DiscreteSymmetryOutput = (
     Option<Vec<MatrixRows>>,
     Option<MatrixRows>,
@@ -371,6 +380,48 @@ fn eigenvector_output(vectors: thouless::decomposition::EigenvectorSet) -> Eigen
         vectors.left().map(matrix_to_rows),
         vectors.right().map(matrix_to_rows),
     )
+}
+
+#[pyfunction]
+fn validate_periodic_bands(
+    cell_hamiltonian: MatrixRows,
+    inter_cell_hopping: MatrixRows,
+) -> PyResult<()> {
+    PeriodicBands::new(
+        matrix_from_rows(cell_hamiltonian)?,
+        matrix_from_rows(inter_cell_hopping)?,
+    )
+    .map(|_| ())
+    .map_err(value_error)
+}
+
+#[pyfunction]
+fn lead_band_evaluation(
+    cell_hamiltonian: MatrixRows,
+    inter_cell_hopping: MatrixRows,
+    momentum: f64,
+    derivative_order: usize,
+    return_eigenvectors: bool,
+) -> PyResult<BandOutput> {
+    let bands = PeriodicBands::new(
+        matrix_from_rows(cell_hamiltonian)?,
+        matrix_from_rows(inter_cell_hopping)?,
+    )
+    .map_err(value_error)?;
+    let result = bands
+        .evaluate(momentum, derivative_order, return_eigenvectors)
+        .map_err(value_error)?;
+    Ok((
+        result.energies().to_vec(),
+        result.first_derivatives().map(<[f64]>::to_vec),
+        result.second_derivatives().map(<[f64]>::to_vec),
+        result.eigenvectors().map(matrix_to_rows),
+    ))
+}
+
+#[pyfunction]
+fn reflection_shot_noise(reflection_amplitudes: MatrixRows) -> PyResult<f64> {
+    partition_shot_noise(&matrix_from_rows(reflection_amplitudes)?).map_err(value_error)
 }
 
 #[pyfunction]
@@ -1239,6 +1290,9 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     module.add_class::<PyGraphBuilder>()?;
     module.add_class::<PyCompressedGraph>()?;
+    module.add_function(wrap_pyfunction!(validate_periodic_bands, module)?)?;
+    module.add_function(wrap_pyfunction!(lead_band_evaluation, module)?)?;
+    module.add_function(wrap_pyfunction!(reflection_shot_noise, module)?)?;
     module.add_function(wrap_pyfunction!(dense_schur, module)?)?;
     module.add_function(wrap_pyfunction!(dense_reorder_schur, module)?)?;
     module.add_function(wrap_pyfunction!(dense_schur_eigenvectors, module)?)?;
