@@ -78,6 +78,13 @@ status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/2"
 
 [[capability]]
+id = "geometry.quantum_geometric_tensor"
+description = "Abelian and non-Abelian Kubo quantum geometric tensor, Berry curvature, and quantum metric for occupied subspaces"
+native_api = "thouless::topology::{quantum_geometric_tensor_from_hamiltonian_derivatives,QuantumGeometricTensor}"
+test = "tests/native_topology.rs massive Dirac analytic tensor plus PythTB compatibility differential evaluation at generic momentum"
+status = "implemented"
+
+[[capability]]
 id = "response.intrinsic"
 description = "Linear Kubo and intrinsic nonlinear Hall response"
 native_api = "not designed"

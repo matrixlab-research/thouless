@@ -4,6 +4,7 @@ source_version = "2.0.0"
 source_repository = "https://github.com/pythtb/pythtb"
 source_commit = "0f3bb0b8588101cafbdf428c70fb43c9302fe7cf"
 collected_tests = 98
+root_public_exports = 13
 inventory_status = "incomplete"
 inventory_issue = "https://github.com/matrixlab-research/thouless/issues/4"
 
@@ -97,3 +98,117 @@ public_test = "tests/native_topology.rs"
 source_test = "tests/test_tbmodel/test_invariants_tbmodel.py::test_berry_curvature_second_chern"
 actual_result = "1 passed"
 status = "implemented"
+
+[[interface]]
+name = "Hamiltonian quantum geometry"
+source_entries = [
+  "TBModel.quantum_geometric_tensor",
+  "TBModel.berry_curvature",
+  "TBModel.quantum_metric",
+]
+compat_entry = "python/pythtb/tbmodel.py"
+rust_capability = "geometry.quantum_geometric_tensor"
+public_test = "compat-tests/test_pythtb_api.py massive Dirac Kubo tensor, curvature, and metric contract"
+source_test = "differential massive Dirac evaluation against PythTB 2.0 at generic momentum"
+actual_result = "Abelian and non-Abelian tensors are evaluated by the Rust Kubo core over arbitrary momentum and parameter sampling axes"
+status = "implemented"
+
+[[interface]]
+name = "predefined model constructors"
+source_entries = [
+  "models.checkerboard",
+  "models.fu_kane_mele",
+  "models.graphene",
+  "models.haldane",
+  "models.kane_mele",
+  "models.ssh",
+]
+compat_entry = "python/pythtb/models"
+rust_capability = "model.structure"
+public_test = "repository constructor smoke and SSH spectral contract"
+source_test = "no dedicated source test module"
+actual_result = "all six PythTB 2.0 constructors are available; the SSH constructor uses the physically intended intercell hopping instead of the broken zero-cell conjugate duplicate in the source release"
+status = "implemented"
+
+[[interface]]
+name = "public numerical utilities"
+source_entries = [
+  "levi_civita",
+  "finite_diff_coeffs",
+  "finite_difference",
+  "is_Hermitian",
+  "pauli_decompose",
+  "get_trial_wfs",
+]
+compat_entry = "python/pythtb/utils.py"
+rust_capability = "differentiation.finite_difference and observables.pauli"
+public_test = "repository polynomial differentiation, antisymmetry, normalization, Hermiticity, and Pauli contracts"
+source_test = "no dedicated source test module"
+actual_result = "all six root-exported utilities are implemented; Pauli decomposition uses Rust and generic array finite differences retain the source boundary modes"
+status = "implemented"
+
+[[interface]]
+name = "Wannier90 and Quantum ESPRESSO input"
+source_entries = [
+  "W90",
+  "io.w90",
+  "io.qe",
+]
+compat_entry = "python/pythtb/w90.py and python/pythtb/io"
+rust_capability = "model.structure through the shared TBModel Hamiltonian representation"
+public_test = "compat-tests/test_pythtb_api.py synthetic scalar-chain Wannier90 and Quantum ESPRESSO import contract"
+source_test = "no collected source tests"
+actual_result = "the public W90 adapter and w90/qe text readers build and evaluate a general model; broader real-output differential fixtures remain to be added"
+status = "partial"
+issue = "https://github.com/matrixlab-research/thouless/issues/4"
+
+[[interface]]
+name = "Wannier projection and localization"
+source_entries = ["Wannier"]
+compat_entry = "not implemented"
+rust_capability = "Wannier localization not yet designed"
+public_test = "not implemented"
+source_test = "no collected source tests"
+actual_result = "missing"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/4"
+
+[[interface]]
+name = "model, lattice, and Wannier visualization"
+source_entries = [
+  "visualization.plot_lattice",
+  "visualization.plot_lattice_3d",
+  "visualization.plot_tbmodel",
+  "visualization.plot_tbmodel_3d",
+  "visualization.plot_bands",
+  "visualization.plot_centers",
+  "visualization.plot_decay",
+  "visualization.plot_density",
+]
+compat_entry = "not implemented"
+rust_capability = "visualization.regular_field only covers Kwant interpolation"
+public_test = "not implemented"
+source_test = "uncollected visualization scripts"
+actual_result = "missing"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/4"
+
+[[interface]]
+name = "remaining model mutation and real-space diagnostics"
+source_entries = [
+  "TBModel.add_orb",
+  "TBModel.clear_hoppings",
+  "TBModel.clear_onsite",
+  "TBModel.make_finite",
+  "TBModel.reduce_dim",
+  "TBModel.set_shell_hops",
+  "TBModel.with_parameters",
+  "TBModel.local_chern_marker",
+]
+compat_entry = "python/pythtb/tbmodel.py"
+rust_capability = "model.structure, geometry.finite, and geometry.topology"
+public_test = "partial transformed-model and Chern contracts"
+source_test = "no complete collected source coverage"
+actual_result = "partial"
+status = "partial"
+issue = "https://github.com/matrixlab-research/thouless/issues/4"

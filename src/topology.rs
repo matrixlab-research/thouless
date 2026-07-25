@@ -9,6 +9,188 @@ use crate::{Complex64, ComplexMatrix, TopologyError};
 
 const SINGULAR_OVERLAP_TOLERANCE: f64 = 1.0e-14;
 
+/// Occupied-subspace quantum geometric tensor for one Hamiltonian.
+///
+/// Components are ordered row-major over coordinate directions. Every
+/// component is an occupied-by-occupied matrix, retaining the non-Abelian
+/// structure of a possibly multiband occupied subspace.
+#[derive(Clone, Debug, PartialEq)]
+pub struct QuantumGeometricTensor {
+    direction_count: usize,
+    occupied_count: usize,
+    components: Vec<ComplexMatrix>,
+}
+
+impl QuantumGeometricTensor {
+    /// Returns the number of Hamiltonian-derivative directions.
+    #[must_use]
+    pub const fn direction_count(&self) -> usize {
+        self.direction_count
+    }
+
+    /// Returns the dimension of the occupied subspace.
+    #[must_use]
+    pub const fn occupied_count(&self) -> usize {
+        self.occupied_count
+    }
+
+    /// Returns the non-Abelian component `Q[first, second]`.
+    #[must_use]
+    pub fn component(&self, first: usize, second: usize) -> Option<&ComplexMatrix> {
+        if first >= self.direction_count || second >= self.direction_count {
+            return None;
+        }
+        self.components.get(first * self.direction_count + second)
+    }
+
+    /// Returns all components in row-major direction order.
+    #[must_use]
+    pub fn components(&self) -> &[ComplexMatrix] {
+        &self.components
+    }
+}
+
+/// Errors raised while evaluating the Kubo quantum geometric tensor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum QuantumGeometricError {
+    /// The Hamiltonian is not a finite, nonempty Hermitian square matrix.
+    InvalidHamiltonian,
+    /// At least one compatible Hermitian derivative is required.
+    InvalidDerivatives,
+    /// Occupied indices must be unique, valid, nonempty, and leave empty states.
+    InvalidOccupiedStates,
+    /// The occupied and empty manifolds touch.
+    ClosedOccupiedGap,
+    /// Diagonalization of a validated Hamiltonian failed.
+    EigensystemFailure,
+}
+
+impl std::fmt::Display for QuantumGeometricError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidHamiltonian => write!(
+                formatter,
+                "quantum geometry requires a finite, nonempty Hermitian square Hamiltonian"
+            ),
+            Self::InvalidDerivatives => write!(
+                formatter,
+                "quantum geometry requires compatible Hermitian Hamiltonian derivatives"
+            ),
+            Self::InvalidOccupiedStates => write!(
+                formatter,
+                "occupied states must be unique and valid and leave at least one empty state"
+            ),
+            Self::ClosedOccupiedGap => write!(
+                formatter,
+                "occupied and empty states are degenerate in the quantum-geometric response"
+            ),
+            Self::EigensystemFailure => {
+                write!(
+                    formatter,
+                    "failed to diagonalize the quantum-geometric Hamiltonian"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for QuantumGeometricError {}
+
+/// Computes the non-Abelian Kubo quantum geometric tensor.
+///
+/// For occupied states `m,n` and empty states `l`, this evaluates
+/// `Q[μ,ν]ₘₙ = Σₗ <m|∂μH|l><l|∂νH|n> /
+/// ((Eₘ-Eₗ)(Eₙ-Eₗ))`. The result is invariant under basis changes within the
+/// occupied and empty subspaces and is independent of any sampled-state gauge.
+pub fn quantum_geometric_tensor_from_hamiltonian_derivatives(
+    hamiltonian: &ComplexMatrix,
+    derivatives: &[ComplexMatrix],
+    occupied_states: &[usize],
+) -> Result<QuantumGeometricTensor, QuantumGeometricError> {
+    let dimension = hamiltonian.rows();
+    if dimension == 0
+        || hamiltonian.shape() != (dimension, dimension)
+        || !hamiltonian.is_hermitian(1.0e-8).unwrap_or(false)
+    {
+        return Err(QuantumGeometricError::InvalidHamiltonian);
+    }
+    if derivatives.is_empty()
+        || derivatives.iter().any(|derivative| {
+            derivative.shape() != (dimension, dimension)
+                || !derivative.is_hermitian(1.0e-8).unwrap_or(false)
+        })
+    {
+        return Err(QuantumGeometricError::InvalidDerivatives);
+    }
+
+    let mut occupied_mask = vec![false; dimension];
+    for &state in occupied_states {
+        if state >= dimension || occupied_mask[state] {
+            return Err(QuantumGeometricError::InvalidOccupiedStates);
+        }
+        occupied_mask[state] = true;
+    }
+    let empty_states = (0..dimension)
+        .filter(|state| !occupied_mask[*state])
+        .collect::<Vec<_>>();
+    if occupied_states.is_empty() || empty_states.is_empty() {
+        return Err(QuantumGeometricError::InvalidOccupiedStates);
+    }
+
+    let eigensystem = hermitian_eigensystem(hamiltonian, 1.0e-8)
+        .map_err(|_| QuantumGeometricError::EigensystemFailure)?;
+    let eigenvalues = eigensystem.eigenvalues();
+    if occupied_states.iter().any(|&occupied| {
+        empty_states
+            .iter()
+            .any(|&empty| (eigenvalues[occupied] - eigenvalues[empty]).abs() < 1.0e-12)
+    }) {
+        return Err(QuantumGeometricError::ClosedOccupiedGap);
+    }
+    let eigenvectors = dmatrix(eigensystem.eigenvectors());
+    let eigenvectors_adjoint = eigenvectors.adjoint();
+    let rotated_derivatives = derivatives
+        .iter()
+        .map(|derivative| &eigenvectors_adjoint * dmatrix(derivative) * &eigenvectors)
+        .collect::<Vec<_>>();
+
+    let occupied_count = occupied_states.len();
+    let direction_count = derivatives.len();
+    let mut components = Vec::with_capacity(direction_count * direction_count);
+    for first in 0..direction_count {
+        for second in 0..direction_count {
+            let values = occupied_states
+                .iter()
+                .flat_map(|&left_occupied| {
+                    let rotated_derivatives = &rotated_derivatives;
+                    let empty_states = &empty_states;
+                    occupied_states.iter().map(move |&right_occupied| {
+                        empty_states
+                            .iter()
+                            .map(|&empty| {
+                                rotated_derivatives[first][(left_occupied, empty)]
+                                    * rotated_derivatives[second][(empty, right_occupied)]
+                                    / ((eigenvalues[left_occupied] - eigenvalues[empty])
+                                        * (eigenvalues[right_occupied] - eigenvalues[empty]))
+                            })
+                            .sum()
+                    })
+                })
+                .collect();
+            components.push(
+                ComplexMatrix::new(occupied_count, occupied_count, values)
+                    .map_err(|_| QuantumGeometricError::InvalidOccupiedStates)?,
+            );
+        }
+    }
+    Ok(QuantumGeometricTensor {
+        direction_count,
+        occupied_count,
+        components,
+    })
+}
+
 /// Second-Chern density integrated over three coordinates of a four-torus.
 ///
 /// `slice_densities[lambda]` contains the Brillouin-zone integral at one

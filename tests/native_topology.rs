@@ -1,6 +1,7 @@
 use thouless::model::{Lattice, ModelBuilder};
 use thouless::topology::{
     chern_numbers_on_uniform_grid, connection_from_link, parallel_transport_link, plaquette_flux,
+    quantum_geometric_tensor_from_hamiltonian_derivatives,
     second_chern_from_hamiltonian_derivatives, wilson_line_phase, wilson_loop_eigenphases,
 };
 use thouless::{Complex64, ComplexMatrix};
@@ -107,6 +108,66 @@ fn unitary_link_logarithm_produces_hermitian_connection() {
     let connection = connection_from_link(&link, 0.1).unwrap();
     assert!((connection.get(0, 0).unwrap() - Complex64::new(-2.0, 0.0)).norm() < 1.0e-12);
     assert!(connection.is_hermitian(1.0e-12).unwrap());
+}
+
+#[test]
+fn massive_dirac_quantum_geometry_matches_the_kubo_tensor() {
+    let mass = 2.0;
+    let hamiltonian = ComplexMatrix::new(
+        2,
+        2,
+        vec![
+            Complex64::new(mass, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(-mass, 0.0),
+        ],
+    )
+    .unwrap();
+    let sigma_x = ComplexMatrix::new(
+        2,
+        2,
+        vec![
+            Complex64::new(0.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+        ],
+    )
+    .unwrap();
+    let sigma_y = ComplexMatrix::new(
+        2,
+        2,
+        vec![
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, -1.0),
+            Complex64::new(0.0, 1.0),
+            Complex64::new(0.0, 0.0),
+        ],
+    )
+    .unwrap();
+    let tensor = quantum_geometric_tensor_from_hamiltonian_derivatives(
+        &hamiltonian,
+        &[sigma_x, sigma_y],
+        &[0],
+    )
+    .unwrap();
+    let diagonal = 1.0 / (4.0 * mass * mass);
+    assert_eq!(tensor.direction_count(), 2);
+    assert_eq!(tensor.occupied_count(), 1);
+    assert!(
+        (tensor.component(0, 0).unwrap().get(0, 0).unwrap() - Complex64::new(diagonal, 0.0)).norm()
+            < 1.0e-12
+    );
+    assert!(
+        (tensor.component(1, 1).unwrap().get(0, 0).unwrap() - Complex64::new(diagonal, 0.0)).norm()
+            < 1.0e-12
+    );
+    assert!(
+        (tensor.component(0, 1).unwrap().get(0, 0).unwrap() - Complex64::new(0.0, -diagonal))
+            .norm()
+            < 1.0e-12
+    );
 }
 
 #[test]

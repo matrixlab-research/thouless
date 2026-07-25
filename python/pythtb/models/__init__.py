@@ -8,6 +8,87 @@ from ..lattice import Lattice
 from ..tbmodel import TBModel
 
 
+def checkerboard(delta, t):
+    """Construct the two-sublattice square-lattice checkerboard model."""
+    lattice = Lattice(
+        [[1.0, 0.0], [0.0, 1.0]],
+        [[0.0, 0.0], [0.5, 0.5]],
+        periodic_dirs=[0, 1],
+    )
+    model = TBModel(lattice)
+    model.set_onsite([-delta, delta])
+    for offset in ([0, 0], [1, 0], [0, 1], [1, 1]):
+        model.set_hop(t, 1, 0, offset)
+    return model
+
+
+def graphene(delta, t):
+    """Construct the nearest-neighbor two-band graphene model."""
+    lattice = Lattice(
+        [[1.0, 0.0], [0.5, np.sqrt(3.0) / 2.0]],
+        [[1.0 / 3.0, 1.0 / 3.0], [2.0 / 3.0, 2.0 / 3.0]],
+        periodic_dirs=[0, 1],
+    )
+    model = TBModel(lattice)
+    model.set_onsite([-delta, delta])
+    model.set_hop(t, 0, 1, [0, 0])
+    model.set_hop(t, 1, 0, [1, 0])
+    model.set_hop(t, 1, 0, [0, 1])
+    return model
+
+
+def ssh(v, w):
+    """Construct the dimerized Su-Schrieffer-Heeger chain."""
+    lattice = Lattice(
+        [[1.0]],
+        [[0.0], [0.5]],
+        periodic_dirs=[0],
+    )
+    model = TBModel(lattice)
+    model.set_hop(v, 0, 1, [0])
+    model.set_hop(w, 1, 0, [1])
+    return model
+
+
+def fu_kane_mele(t, soc, dt=(0.0, 0.0, 0.0, 0.0)):
+    """Construct the spinful Fu-Kane-Mele model on a diamond lattice."""
+    if len(dt) != 4:
+        raise ValueError("dt must contain four nearest-neighbor offsets")
+    lattice = Lattice(
+        [[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]],
+        [[0.0, 0.0, 0.0], [0.25, 0.25, 0.25]],
+        periodic_dirs=[0, 1, 2],
+    )
+    model = TBModel(lattice, spinful=True)
+    for offset, correction in zip(
+        ([0, 0, 0], [-1, 0, 0], [0, -1, 0], [0, 0, -1]),
+        dt,
+        strict=True,
+    ):
+        model.set_hop(t + correction, 0, 1, offset)
+    offsets = (
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [-1, 1, 0],
+        [0, -1, 1],
+        [1, 0, -1],
+    )
+    directions = (
+        [0, 1, -1],
+        [-1, 0, 1],
+        [1, -1, 0],
+        [1, 1, 0],
+        [0, 1, 1],
+        [1, 0, 1],
+    )
+    for offset, direction in zip(offsets, directions, strict=True):
+        spin_hopping = 1j * soc * np.array([0.0, *direction])
+        model.set_hop(spin_hopping, 0, 0, offset)
+        model.set_hop(-spin_hopping, 1, 1, offset)
+    return model
+
+
 def haldane(delta, t1, t2, phi=np.pi / 2):
     """Construct the two-band Haldane model on a honeycomb lattice."""
     lattice = Lattice(
@@ -57,4 +138,11 @@ def kane_mele(delta, t, soc, rashba):
     return model
 
 
-__all__ = ["haldane", "kane_mele"]
+__all__ = [
+    "checkerboard",
+    "fu_kane_mele",
+    "graphene",
+    "haldane",
+    "kane_mele",
+    "ssh",
+]

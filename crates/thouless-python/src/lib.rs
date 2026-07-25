@@ -52,6 +52,7 @@ use thouless::symmetry::{
 };
 use thouless::topology::{
     chern_numbers_on_uniform_grid, connection_from_link, parallel_transport_link, plaquette_flux,
+    quantum_geometric_tensor_from_hamiltonian_derivatives,
     second_chern_from_hamiltonian_derivatives, wilson_line_phase, wilson_loop_eigenphases,
 };
 use thouless::transform::{change_nonperiodic_vector, make_supercell, remove_orbitals};
@@ -78,6 +79,7 @@ type OpenSystemOutput = (
     Vec<Vec<Vec<Complex64>>>,
     Vec<Vec<f64>>,
 );
+type QuantumGeometricOutput = Vec<Vec<Vec<Vec<Vec<Complex64>>>>>;
 type ModelOutput = (
     Vec<Vec<f64>>,
     Vec<usize>,
@@ -1628,6 +1630,50 @@ fn second_chern_kubo(
 }
 
 #[pyfunction]
+fn quantum_geometric_tensor_kubo(
+    hamiltonians: Vec<Vec<Vec<Complex64>>>,
+    derivatives: Vec<Vec<Vec<Vec<Complex64>>>>,
+    occupied_states: Vec<usize>,
+) -> PyResult<QuantumGeometricOutput> {
+    if hamiltonians.len() != derivatives.len() {
+        return Err(PyValueError::new_err(
+            "Hamiltonian and derivative batch sizes must match",
+        ));
+    }
+    hamiltonians
+        .into_iter()
+        .zip(derivatives)
+        .map(|(hamiltonian, derivative_group)| {
+            let hamiltonian = matrix_from_rows(hamiltonian)?;
+            let derivative_group = derivative_group
+                .into_iter()
+                .map(matrix_from_rows)
+                .collect::<PyResult<Vec<_>>>()?;
+            let tensor = quantum_geometric_tensor_from_hamiltonian_derivatives(
+                &hamiltonian,
+                &derivative_group,
+                &occupied_states,
+            )
+            .map_err(value_error)?;
+            let direction_count = tensor.direction_count();
+            Ok((0..direction_count)
+                .map(|first| {
+                    (0..direction_count)
+                        .map(|second| {
+                            matrix_to_rows(
+                                tensor
+                                    .component(first, second)
+                                    .expect("validated tensor component"),
+                            )
+                        })
+                        .collect()
+                })
+                .collect())
+        })
+        .collect()
+}
+
+#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn momentum_derivatives(
     primitive_vectors: Vec<Vec<f64>>,
@@ -2402,6 +2448,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(make_model_supercell, module)?)?;
     module.add_function(wrap_pyfunction!(uniform_grid_chern, module)?)?;
     module.add_function(wrap_pyfunction!(second_chern_kubo, module)?)?;
+    module.add_function(wrap_pyfunction!(quantum_geometric_tensor_kubo, module)?)?;
     module.add_function(wrap_pyfunction!(momentum_derivatives, module)?)?;
     module.add_function(wrap_pyfunction!(finite_difference, module)?)?;
     module.add_function(wrap_pyfunction!(open_system_transmissions, module)?)?;

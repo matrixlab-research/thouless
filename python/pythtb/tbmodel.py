@@ -36,6 +36,8 @@ class TBModel:
         self._hoppings: list[dict] = []
         self._onsite_providers: dict[int, object] = {}
         self._hopping_providers: dict[tuple[int, int, tuple[int, ...]], object] = {}
+        self._from_w90 = False
+        self._assume_position_operator_diagonal = True
 
     @property
     def lattice(self):
@@ -134,6 +136,20 @@ class TBModel:
                 }
             )
         return result
+
+    @property
+    def from_w90(self):
+        return self._from_w90
+
+    @property
+    def assume_position_operator_diagonal(self):
+        return self._assume_position_operator_diagonal
+
+    @assume_position_operator_diagonal.setter
+    def assume_position_operator_diagonal(self, value):
+        if not isinstance(value, bool):
+            raise ValueError("assume_position_operator_diagonal must be a boolean.")
+        self._assume_position_operator_diagonal = value
 
     def get_lat_vecs(self):
         return self.lat_vecs
@@ -645,6 +661,188 @@ class TBModel:
                 hybrid.shape[0], self.norb, self.nspin
             )
         return centers, orbital_hybrid
+
+    def quantum_geometric_tensor(
+        self,
+        k_pts,
+        occ_idxs=None,
+        plane=None,
+        *,
+        cartesian=False,
+        non_abelian=False,
+        param_periods=None,
+        diff_scheme="central",
+        diff_order=2,
+        use_tensorflow=False,
+        **params,
+    ):
+        """Evaluate the occupied-subspace Kubo quantum geometric tensor."""
+        if use_tensorflow:
+            warnings.warn(
+                "Thouless evaluates quantum geometry in its Rust core; "
+                "use_tensorflow is ignored."
+            )
+        hamiltonians = np.asarray(
+            self.hamiltonian(
+                k_pts,
+                flatten_spin_axis=True,
+                **params,
+            ),
+            dtype=complex,
+        )
+        derivatives = np.asarray(
+            self.velocity(
+                k_pts,
+                cartesian=cartesian,
+                flatten_spin_axis=True,
+                param_periods=param_periods,
+                diff_scheme=diff_scheme,
+                diff_order=diff_order,
+                **params,
+            ),
+            dtype=complex,
+        )
+        if self.dim_k == 0 and derivatives.shape[1] == 1:
+            derivatives = derivatives[:, 0]
+        direction_count = derivatives.shape[0]
+        if direction_count < 2:
+            raise ValueError(
+                "Quantum geometric tensor requires at least two independent "
+                "coordinates (crystal momenta and/or varying parameters)."
+            )
+        sample_shape = hamiltonians.shape[:-2]
+        if derivatives.shape[1:-2] != sample_shape:
+            raise ValueError(
+                "Hamiltonian and derivative sampling axes are inconsistent"
+            )
+        occupied = (
+            np.arange(self.nstate // 2, dtype=int)
+            if occ_idxs is None
+            else np.atleast_1d(occ_idxs).astype(int)
+        )
+        if (
+            len(occupied) == 0
+            or len(np.unique(occupied)) != len(occupied)
+            or np.any(occupied < 0)
+            or np.any(occupied >= self.nstate)
+            or len(occupied) == self.nstate
+        ):
+            raise ValueError(
+                "occ_idxs must contain unique valid occupied states and "
+                "leave at least one empty state"
+            )
+
+        derivative_groups = np.moveaxis(derivatives, 0, -3)
+        tensor = np.asarray(
+            _core.quantum_geometric_tensor_kubo(
+                hamiltonians.reshape(
+                    -1,
+                    self.nstate,
+                    self.nstate,
+                ).tolist(),
+                derivative_groups.reshape(
+                    -1,
+                    direction_count,
+                    self.nstate,
+                    self.nstate,
+                ).tolist(),
+                occupied.tolist(),
+            ),
+            dtype=complex,
+        )
+        tensor = tensor.reshape(
+            sample_shape
+            + (
+                direction_count,
+                direction_count,
+                len(occupied),
+                len(occupied),
+            )
+        )
+        tensor = np.moveaxis(tensor, (-4, -3), (0, 1))
+        if not non_abelian:
+            tensor = np.trace(tensor, axis1=-2, axis2=-1)
+        if plane is None:
+            return tensor
+        if not isinstance(plane, tuple) or len(plane) != 2:
+            raise ValueError("plane must be a tuple of length 2.")
+        return tensor[plane]
+
+    def berry_curvature(
+        self,
+        k_pts,
+        occ_idxs=None,
+        plane=None,
+        *,
+        cartesian=False,
+        non_abelian=False,
+        param_periods=None,
+        diff_scheme="central",
+        diff_order=2,
+        use_tensorflow=False,
+        **params,
+    ):
+        """Evaluate Kubo Berry curvature for an occupied subspace."""
+        tensor = self.quantum_geometric_tensor(
+            k_pts,
+            occ_idxs=occ_idxs,
+            cartesian=cartesian,
+            non_abelian=non_abelian,
+            param_periods=param_periods,
+            diff_scheme=diff_scheme,
+            diff_order=diff_order,
+            use_tensorflow=use_tensorflow,
+            **params,
+        )
+        if non_abelian:
+            curvature = 1j * (
+                tensor - np.swapaxes(tensor, -1, -2).conj()
+            )
+        else:
+            curvature = -2 * tensor.imag
+        if plane is None:
+            return curvature
+        if not isinstance(plane, tuple) or len(plane) != 2:
+            raise ValueError("plane must be a tuple of length 2.")
+        return curvature[plane]
+
+    def quantum_metric(
+        self,
+        k_pts,
+        occ_idxs=None,
+        plane=None,
+        *,
+        cartesian=False,
+        non_abelian=False,
+        param_periods=None,
+        diff_scheme="central",
+        diff_order=2,
+        use_tensorflow=False,
+        **params,
+    ):
+        """Evaluate the Kubo quantum metric for an occupied subspace."""
+        tensor = self.quantum_geometric_tensor(
+            k_pts,
+            occ_idxs=occ_idxs,
+            cartesian=cartesian,
+            non_abelian=non_abelian,
+            param_periods=param_periods,
+            diff_scheme=diff_scheme,
+            diff_order=diff_order,
+            use_tensorflow=use_tensorflow,
+            **params,
+        )
+        if non_abelian:
+            metric = 0.5 * (
+                tensor + np.swapaxes(tensor, -1, -2)
+            )
+        else:
+            metric = tensor.real
+        if plane is None:
+            return metric
+        if not isinstance(plane, tuple) or len(plane) != 2:
+            raise ValueError("plane must be a tuple of length 2.")
+        return metric[plane]
 
     def axion_angle(
         self,
