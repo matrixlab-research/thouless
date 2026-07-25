@@ -18,7 +18,8 @@ Berry fluxes and uniform-grid Chern numbers, reciprocal paths, parallel
 transport, local-observable projection, and structure-preserving model
 transformations in Rust. It also provides discrete-symmetry validation and all
 ten Altland--Zirnbauer Gaussian and circular random-matrix ensembles through
-the native core. The Python extension and partial PythTB 2.0 layer pass
+the native core, together with LLL lattice reduction, closest-vector search,
+and Voronoi neighbors. The Python extension and partial PythTB 2.0 layer pass
 all 98 pinned upstream tests without changing their tolerances. It does
 not yet implement the complete PythTB surface, complete topology and response
 theory, complete open-system transport, or the complete Kwant compatibility
@@ -106,7 +107,7 @@ PYTHONPATH=python python -m pytest -q -ra compat-tests
 ```
 
 The Kwant ballistic smoke contract executes through the Rust transport core,
-and a strict 97-test upstream slice validates the compatibility layer;
+and a strict 99-test upstream slice validates the compatibility layer;
 remaining Kwant gaps are tracked in issue #5. The strict PythTB runner executes
 all 98 collected source tests through the repository-built extension. Broader
 PythTB public-interface inventory work remains tracked in issue #4. A skip

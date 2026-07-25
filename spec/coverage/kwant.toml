@@ -112,6 +112,44 @@ actual_result = "3 source tests passed"
 status = "implemented"
 
 [[interface]]
+name = "lattice reduction and closest vectors"
+source_entries = [
+  "linalg.lll.lll",
+  "linalg.lll.cvp",
+  "linalg.lll.voronoi",
+  "linalg.lll.gs",
+  "linalg.lll.gs_coefficient",
+  "linalg.lll.is_c_reduced",
+]
+compat_entry = "python/kwant/linalg/lll"
+rust_capability = "geometry.lattice_reduction"
+public_test = "repository Voronoi and degenerate-neighbor geometry contract"
+source_test = "complete pinned linalg LLL module with randomized reductions and closest-vector degeneracies"
+actual_result = "2 source tests passed"
+status = "implemented"
+
+[[interface]]
+name = "matrix decompositions and optional sparse backends"
+source_entries = [
+  "linalg.schur",
+  "linalg.convert_r2c_schur",
+  "linalg.order_schur",
+  "linalg.evecs_from_schur",
+  "linalg.gen_schur",
+  "linalg.convert_r2c_gen_schur",
+  "linalg.order_gen_schur",
+  "linalg.evecs_from_gen_schur",
+  "linalg.mumps",
+]
+compat_entry = "python/kwant/linalg"
+rust_capability = "dense and sparse decomposition APIs not yet designed"
+public_test = "not implemented"
+source_test = "pinned linalg decomposition and MUMPS modules"
+actual_result = "not selected"
+status = "missing"
+issue = "https://github.com/matrixlab-research/thouless/issues/5"
+
+[[interface]]
 name = "optional scientific modules"
 source_entries = ["kpm", "continuum", "wraparound", "digest", "plotter"]
 compat_entry = "python/kwant"

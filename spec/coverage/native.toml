@@ -80,6 +80,13 @@ test = "src/random_matrix.rs property tests, LAPACK QR tests, repository general
 status = "implemented"
 
 [[capability]]
+id = "geometry.lattice_reduction"
+description = "LLL basis reduction, closest lattice-vector search, and Voronoi neighbors"
+native_api = "thouless::lattice_reduction"
+test = "src/lattice_reduction.rs property tests, repository Voronoi contract, and complete pinned Kwant linalg LLL module"
+status = "implemented"
+
+[[capability]]
 id = "validation.held_out"
 description = "Evaluator-owned tests on unseen models and workflows"
 native_api = "not applicable"

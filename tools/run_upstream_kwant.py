@@ -56,6 +56,12 @@ def main() -> int:
         str(checkout / "kwant" / "physics" / "tests")
     ]
     sys.modules["kwant.physics.tests"] = physics_tests_package
+    kwant.linalg.__path__ = []
+    linalg_tests_package = types.ModuleType("kwant.linalg.tests")
+    linalg_tests_package.__path__ = [
+        str(checkout / "kwant" / "linalg" / "tests")
+    ]
+    sys.modules["kwant.linalg.tests"] = linalg_tests_package
 
     test_nodes = [str(checkout / node) for node in manifest["strict_test_nodes"]]
     return pytest.main(["-q", "-ra", *test_nodes])

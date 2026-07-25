@@ -11,6 +11,7 @@
 pub mod differentiation;
 mod error;
 pub mod geometry;
+pub mod lattice_reduction;
 pub mod matrix;
 pub mod model;
 pub mod observables;

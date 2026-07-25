@@ -1,6 +1,6 @@
 """Kwant 1.5 compatibility layer backed by the Thouless Rust core."""
 
-from . import builder, digest, lattice, operator, physics, rmt, solvers
+from . import builder, digest, lattice, linalg, operator, physics, rmt, solvers
 from .builder import Builder, HoppingKind, Site, SiteFamily, UserCodeError
 from .lattice import TranslationalSymmetry
 from .solvers import (
@@ -26,6 +26,7 @@ __all__ = [
     "builder",
     "digest",
     "lattice",
+    "linalg",
     "operator",
     "physics",
     "rmt",

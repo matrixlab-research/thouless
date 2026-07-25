@@ -2,6 +2,10 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use thouless::differentiation::{finite_difference_uniform, DifferenceScheme};
 use thouless::geometry::ReciprocalPath;
+use thouless::lattice_reduction::{
+    closest_lattice_vectors, gram_schmidt, gram_schmidt_coefficient, is_c_reduced, lll_reduce,
+    voronoi_neighbors,
+};
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
 use thouless::observables::{pauli_coefficients, project_diagonal_observable};
 use thouless::random_matrix::{circular_from_components, gaussian_from_components, SymmetryClass};
@@ -38,6 +42,7 @@ type ModelOutput = (
 type ReciprocalPathOutput = (Vec<Vec<f64>>, Vec<f64>, Vec<f64>);
 type SupercellOutput = (ModelOutput, Vec<Vec<i32>>);
 type MatrixRows = Vec<Vec<Complex64>>;
+type LatticeReductionOutput = (Vec<Vec<f64>>, Vec<Vec<i64>>);
 type DiscreteSymmetryOutput = (
     Option<Vec<MatrixRows>>,
     Option<MatrixRows>,
@@ -749,6 +754,74 @@ fn discrete_symmetry_validate(
         .map_err(value_error)
 }
 
+#[pyfunction]
+fn lattice_gs_coefficient(vector: Vec<f64>, reference: Vec<f64>) -> PyResult<f64> {
+    gram_schmidt_coefficient(&vector, &reference).map_err(value_error)
+}
+
+#[pyfunction]
+fn lattice_gram_schmidt(basis: Vec<Vec<f64>>) -> PyResult<Vec<Vec<f64>>> {
+    gram_schmidt(&basis).map_err(value_error)
+}
+
+#[pyfunction]
+fn lattice_is_c_reduced(basis: Vec<Vec<f64>>, reduction_parameter: f64) -> PyResult<bool> {
+    is_c_reduced(&basis, reduction_parameter).map_err(value_error)
+}
+
+#[pyfunction(signature = (basis, reduction_parameter=1.34))]
+fn lattice_lll(basis: Vec<Vec<f64>>, reduction_parameter: f64) -> PyResult<LatticeReductionOutput> {
+    lll_reduce(&basis, reduction_parameter)
+        .map(|reduced| {
+            let transformation = (0..reduced.transformation().len())
+                .map(|row| {
+                    (0..reduced.transformation().len())
+                        .map(|column| reduced.transformation()[column][row])
+                        .collect()
+                })
+                .collect();
+            (reduced.vectors().to_vec(), transformation)
+        })
+        .map_err(value_error)
+}
+
+#[pyfunction(signature = (
+    target,
+    basis,
+    neighbor_count=1,
+    group_by_length=false,
+    relative_tolerance=1.0e-9
+))]
+fn lattice_cvp(
+    target: Vec<f64>,
+    basis: Vec<Vec<f64>>,
+    neighbor_count: usize,
+    group_by_length: bool,
+    relative_tolerance: f64,
+) -> PyResult<Vec<Vec<i64>>> {
+    closest_lattice_vectors(
+        &target,
+        &basis,
+        neighbor_count,
+        group_by_length,
+        relative_tolerance,
+    )
+    .map_err(value_error)
+}
+
+#[pyfunction(signature = (
+    basis,
+    reduced=false,
+    relative_tolerance=1.0e-9
+))]
+fn lattice_voronoi(
+    basis: Vec<Vec<f64>>,
+    reduced: bool,
+    relative_tolerance: f64,
+) -> PyResult<Vec<Vec<i64>>> {
+    voronoi_neighbors(&basis, reduced, relative_tolerance).map_err(value_error)
+}
+
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(hamiltonian, module)?)?;
@@ -775,5 +848,11 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(rmt_circular, module)?)?;
     module.add_function(wrap_pyfunction!(discrete_symmetry_normalize, module)?)?;
     module.add_function(wrap_pyfunction!(discrete_symmetry_validate, module)?)?;
+    module.add_function(wrap_pyfunction!(lattice_gs_coefficient, module)?)?;
+    module.add_function(wrap_pyfunction!(lattice_gram_schmidt, module)?)?;
+    module.add_function(wrap_pyfunction!(lattice_is_c_reduced, module)?)?;
+    module.add_function(wrap_pyfunction!(lattice_lll, module)?)?;
+    module.add_function(wrap_pyfunction!(lattice_cvp, module)?)?;
+    module.add_function(wrap_pyfunction!(lattice_voronoi, module)?)?;
     Ok(())
 }

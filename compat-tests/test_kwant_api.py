@@ -187,3 +187,31 @@ def test_discrete_symmetry_generalizes_to_three_conservation_blocks() -> None:
             ]
         )
     ) == ["Conservation law"]
+
+
+def test_lattice_reduction_exposes_voronoi_geometry() -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    lll = kwant.linalg.lll
+
+    basis = np.eye(2)
+    full_neighbors = lll.voronoi(basis)
+    assert full_neighbors.shape == (6, 2)
+
+    reduced_neighbors = {
+        tuple(vector)
+        for vector in lll.voronoi(basis, reduced=True)
+    }
+    assert reduced_neighbors == {
+        (-1, 0),
+        (0, -1),
+        (1, 0),
+        (0, 1),
+    }
+
+    closest = lll.cvp([0.5, 0.5], basis, group_by_length=True)
+    assert {tuple(vector) for vector in closest} == {
+        (0, 0),
+        (0, 1),
+        (1, 0),
+        (1, 1),
+    }
