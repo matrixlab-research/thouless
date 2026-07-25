@@ -22,7 +22,10 @@ the native core, together with LLL lattice reduction, closest-vector search,
 Voronoi neighbors, gauge-covariant Wannier projection, sampled-frame overlaps,
 multidimensional FFTs, spread decomposition, and periodic matrix
 interpolation, including a native multidimensional maximal-localization
-optimizer and fixed-rank SMV disentanglement with frozen subspaces. The Python
+optimizer and fixed-rank SMV disentanglement with frozen subspaces. The native
+response core additionally evaluates band-resolved Kubo Berry curvature,
+occupation-weighted Hall geometry, and finite-temperature Berry-curvature
+dipoles from explicit Hamiltonian derivatives and quadrature weights. The Python
 extension and compatibility layers pass all 98 pinned PythTB 2.0 tests and all
 398 pinned Kwant 1.5 tests without changing their tolerances. Executable API
 manifests cover the public modules, exports, and core object members of both

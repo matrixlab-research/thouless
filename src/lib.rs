@@ -26,6 +26,7 @@ pub mod model;
 pub mod observables;
 pub mod periodic;
 pub mod random_matrix;
+pub mod response;
 pub mod spectrum;
 pub mod symmetry;
 pub mod topology;
