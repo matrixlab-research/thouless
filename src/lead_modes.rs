@@ -467,6 +467,42 @@ fn validate_lead_symmetry(
     operator: Option<&ComplexMatrix>,
     kind: SymmetryViolation,
 ) -> Result<Option<ComplexMatrix>, LeadModeError> {
+    let operator = validate_symmetry_operator(operator, kind)?;
+    let Some(operator) = operator else {
+        return Ok(None);
+    };
+    let operator_reference = Some(&operator);
+    let symmetry = match kind {
+        SymmetryViolation::TimeReversal => {
+            DiscreteSymmetry::new(None, operator_reference.cloned(), None, None)
+        }
+        SymmetryViolation::ParticleHole => {
+            DiscreteSymmetry::new(None, None, operator_reference.cloned(), None)
+        }
+        SymmetryViolation::Chiral => {
+            DiscreteSymmetry::new(None, None, None, operator_reference.cloned())
+        }
+        SymmetryViolation::ConservationLaw => {
+            return Err(LeadModeError::InvalidSymmetries);
+        }
+    }
+    .map_err(|_| LeadModeError::InvalidSymmetries)?;
+    for matrix in [cell_hamiltonian, inter_cell_hopping] {
+        if symmetry
+            .validate(matrix)
+            .map_err(|_| LeadModeError::InvalidSymmetries)?
+            .contains(&kind)
+        {
+            return Err(LeadModeError::InvalidSymmetries);
+        }
+    }
+    Ok(Some(operator.clone()))
+}
+
+fn validate_symmetry_operator(
+    operator: Option<&ComplexMatrix>,
+    kind: SymmetryViolation,
+) -> Result<Option<ComplexMatrix>, LeadModeError> {
     let Some(operator) = operator else {
         return Ok(None);
     };
@@ -485,16 +521,14 @@ fn validate_lead_symmetry(
         }
     }
     .map_err(|_| LeadModeError::InvalidSymmetries)?;
-    for matrix in [cell_hamiltonian, inter_cell_hopping] {
-        if symmetry
-            .validate(matrix)
-            .map_err(|_| LeadModeError::InvalidSymmetries)?
-            .contains(&kind)
-        {
-            return Err(LeadModeError::InvalidSymmetries);
-        }
+    let validated = match kind {
+        SymmetryViolation::TimeReversal => symmetry.time_reversal(),
+        SymmetryViolation::ParticleHole => symmetry.particle_hole(),
+        SymmetryViolation::Chiral => symmetry.chiral(),
+        SymmetryViolation::ConservationLaw => None,
     }
-    Ok(Some(operator.clone()))
+    .ok_or(LeadModeError::InvalidSymmetries)?;
+    Ok(Some(validated.clone()))
 }
 
 /// Solve propagating modes independently in complete orthogonal subspaces.
@@ -544,6 +578,361 @@ pub fn propagating_modes_in_subspaces(
         blocks.push((projector_dense, modes));
     }
 
+    combine_projected_blocks(dimension, &blocks)
+}
+
+/// Solve conservation-law blocks under declared discrete-symmetry relations.
+///
+/// Operators are checked for unitary structure and canonical block mappings.
+/// Their physical relation to the Hamiltonian is treated as a caller
+/// declaration, matching workflows that construct a target energy block from
+/// a symmetry-related source block.
+pub fn propagating_modes_in_declared_symmetric_subspaces(
+    cell_hamiltonian: &ComplexMatrix,
+    inter_cell_hopping: &ComplexMatrix,
+    projectors: &[ComplexMatrix],
+    time_reversal: Option<&ComplexMatrix>,
+    particle_hole: Option<&ComplexMatrix>,
+    chiral: Option<&ComplexMatrix>,
+) -> Result<ProjectedLeadModes, LeadModeError> {
+    let dimension = cell_hamiltonian.rows();
+    if cell_hamiltonian.shape() != (dimension, dimension)
+        || inter_cell_hopping.shape() != (dimension, dimension)
+        || projectors.is_empty()
+    {
+        return Err(LeadModeError::InvalidShape);
+    }
+    let projector_symmetry = DiscreteSymmetry::new(Some(projectors.to_vec()), None, None, None)
+        .map_err(|_| LeadModeError::InvalidProjectors)?;
+    for matrix in [cell_hamiltonian, inter_cell_hopping] {
+        if projector_symmetry
+            .validate(matrix)
+            .map_err(|_| LeadModeError::InvalidProjectors)?
+            .contains(&SymmetryViolation::ConservationLaw)
+        {
+            return Err(LeadModeError::InvalidProjectors);
+        }
+    }
+    let projectors = projector_symmetry
+        .projectors()
+        .ok_or(LeadModeError::InvalidProjectors)?
+        .iter()
+        .map(backend)
+        .collect::<Vec<_>>();
+    let time_reversal = validate_symmetry_operator(time_reversal, SymmetryViolation::TimeReversal)?
+        .map(|matrix| backend(&matrix));
+    let particle_hole = validate_symmetry_operator(particle_hole, SymmetryViolation::ParticleHole)?
+        .map(|matrix| backend(&matrix));
+    let chiral = validate_symmetry_operator(chiral, SymmetryViolation::Chiral)?
+        .map(|matrix| backend(&matrix));
+    validate_canonical_block_maps(
+        &projectors,
+        [
+            time_reversal.as_ref().map(|operator| (operator, true)),
+            particle_hole.as_ref().map(|operator| (operator, true)),
+            chiral.as_ref().map(|operator| (operator, false)),
+        ],
+    )?;
+
+    let cell = backend(cell_hamiltonian);
+    let hopping = backend(inter_cell_hopping);
+    let projected_cells = projectors
+        .iter()
+        .map(|projector| projector.adjoint() * &cell * projector)
+        .collect::<Vec<_>>();
+    let projected_hoppings = projectors
+        .iter()
+        .map(|projector| projector.adjoint() * &hopping * projector)
+        .collect::<Vec<_>>();
+    let mut modes: Vec<Option<PropagatingLeadModes>> = vec![None; projectors.len()];
+
+    for target in 0..projectors.len() {
+        let mut transformed = None;
+        for source in 0..target {
+            let Some(source_modes) = modes[source].as_ref() else {
+                continue;
+            };
+            if projected_cells[source].shape() != projected_cells[target].shape() {
+                continue;
+            }
+            if matrices_are_close(&projected_cells[source], &projected_cells[target])
+                && matrices_are_close(&projected_hoppings[source], &projected_hoppings[target])
+            {
+                transformed = Some(source_modes.clone());
+                break;
+            }
+            for (operator, relation) in [
+                (time_reversal.as_ref(), BlockRelation::TimeReversal),
+                (particle_hole.as_ref(), BlockRelation::ParticleHole),
+                (chiral.as_ref(), BlockRelation::Chiral),
+            ] {
+                let Some(operator) = operator else {
+                    continue;
+                };
+                let block = projected_symmetry_block(
+                    &projectors[target],
+                    operator,
+                    &projectors[source],
+                    relation.is_antiunitary(),
+                );
+                if maximum_norm(&block) > 1.0e-7 {
+                    transformed = Some(transform_block_modes(source_modes, &block, relation)?);
+                    break;
+                }
+            }
+            if transformed.is_some() {
+                break;
+            }
+        }
+
+        modes[target] = Some(if let Some(transformed) = transformed {
+            transformed
+        } else {
+            let local_time_reversal = time_reversal.as_ref().and_then(|operator| {
+                nonzero_projected_symmetry(&projectors[target], operator, true)
+            });
+            let local_particle_hole = particle_hole.as_ref().and_then(|operator| {
+                nonzero_projected_symmetry(&projectors[target], operator, true)
+            });
+            let local_chiral = chiral.as_ref().and_then(|operator| {
+                nonzero_projected_symmetry(&projectors[target], operator, false)
+            });
+            propagating_modes_with_symmetries(
+                &owned(&projected_cells[target])?,
+                &owned(&projected_hoppings[target])?,
+                local_time_reversal.as_ref(),
+                local_particle_hole.as_ref(),
+                local_chiral.as_ref(),
+            )?
+        });
+    }
+
+    let blocks = projectors
+        .into_iter()
+        .zip(modes)
+        .map(|(projector, modes)| {
+            modes
+                .map(|modes| (projector, modes))
+                .ok_or(LeadModeError::DecompositionFailure)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    combine_projected_blocks(dimension, &blocks)
+}
+
+#[derive(Clone, Copy)]
+enum BlockRelation {
+    TimeReversal,
+    ParticleHole,
+    Chiral,
+}
+
+impl BlockRelation {
+    const fn is_antiunitary(self) -> bool {
+        matches!(self, Self::TimeReversal | Self::ParticleHole)
+    }
+}
+
+fn transform_block_modes(
+    source: &PropagatingLeadModes,
+    operator: &DMatrix<Complex64>,
+    relation: BlockRelation,
+) -> Result<PropagatingLeadModes, LeadModeError> {
+    let incoming = source.incoming_count();
+    let mode_count = source.wave_functions().columns();
+    if mode_count != 2 * incoming
+        || operator.shape()
+            != (
+                source.wave_functions().rows(),
+                source.wave_functions().rows(),
+            )
+    {
+        return Err(LeadModeError::InvalidSymmetries);
+    }
+    let permutation = match relation {
+        BlockRelation::TimeReversal => (0..mode_count).rev().collect::<Vec<_>>(),
+        BlockRelation::ParticleHole => (0..mode_count)
+            .map(|index| {
+                mode_count - 1 - index - incoming * usize::from(index < incoming)
+                    + incoming * usize::from(index >= incoming)
+            })
+            .collect(),
+        BlockRelation::Chiral => (0..mode_count)
+            .map(|index| {
+                if index < incoming {
+                    incoming + index
+                } else {
+                    index - incoming
+                }
+            })
+            .collect(),
+    };
+    let conjugate = relation.is_antiunitary();
+    let flip_energy = matches!(
+        relation,
+        BlockRelation::ParticleHole | BlockRelation::Chiral
+    );
+    let wave_functions = transform_block_matrix(
+        source.wave_functions(),
+        operator,
+        &permutation,
+        conjugate,
+        false,
+    )?;
+    let stabilized_vectors =
+        permute_block_matrix(source.stabilized_vectors(), &permutation, conjugate, false)?;
+    let stabilized_vectors_lambda_inverse = permute_block_matrix(
+        source.stabilized_vectors_lambda_inverse(),
+        &permutation,
+        conjugate,
+        flip_energy,
+    )?;
+    let square_root_hopping =
+        transform_square_root(source.square_root_hopping(), operator, conjugate)?;
+    let velocity_sign = if flip_energy != conjugate { -1.0 } else { 1.0 };
+    let velocities = permutation
+        .iter()
+        .map(|&index| velocity_sign * source.velocities()[index])
+        .collect();
+    let momenta = permutation
+        .iter()
+        .map(|&index| {
+            canonical_momentum(if conjugate {
+                -source.momenta()[index]
+            } else {
+                source.momenta()[index]
+            })
+        })
+        .collect();
+    Ok(PropagatingLeadModes {
+        wave_functions,
+        velocities,
+        momenta,
+        incoming_count: incoming,
+        stabilized_vectors,
+        stabilized_vectors_lambda_inverse,
+        square_root_hopping,
+    })
+}
+
+fn transform_block_matrix(
+    matrix: &ComplexMatrix,
+    operator: &DMatrix<Complex64>,
+    permutation: &[usize],
+    conjugate: bool,
+    negate: bool,
+) -> Result<ComplexMatrix, LeadModeError> {
+    let transformed = permute_dense(&backend(matrix), permutation, conjugate, negate);
+    owned(&(operator * transformed))
+}
+
+fn permute_block_matrix(
+    matrix: &ComplexMatrix,
+    permutation: &[usize],
+    conjugate: bool,
+    negate: bool,
+) -> Result<ComplexMatrix, LeadModeError> {
+    owned(&permute_dense(
+        &backend(matrix),
+        permutation,
+        conjugate,
+        negate,
+    ))
+}
+
+fn permute_dense(
+    matrix: &DMatrix<Complex64>,
+    permutation: &[usize],
+    conjugate: bool,
+    negate: bool,
+) -> DMatrix<Complex64> {
+    DMatrix::from_fn(matrix.nrows(), permutation.len(), |row, column| {
+        let mut value = matrix[(row, permutation[column])];
+        if conjugate {
+            value = value.conj();
+        }
+        if negate {
+            value = -value;
+        }
+        value
+    })
+}
+
+fn transform_square_root(
+    square_root: &ComplexMatrix,
+    operator: &DMatrix<Complex64>,
+    conjugate: bool,
+) -> Result<ComplexMatrix, LeadModeError> {
+    let square_root = backend(square_root);
+    let square_root = if conjugate {
+        square_root.map(|value| value.conj())
+    } else {
+        square_root
+    };
+    owned(&(operator * square_root))
+}
+
+fn validate_canonical_block_maps(
+    projectors: &[DMatrix<Complex64>],
+    operators: [Option<(&DMatrix<Complex64>, bool)>; 3],
+) -> Result<(), LeadModeError> {
+    for (operator, antiunitary) in operators.into_iter().flatten() {
+        for target in projectors {
+            let nonzero_sources = projectors
+                .iter()
+                .filter(|source| {
+                    maximum_norm(&projected_symmetry_block(
+                        target,
+                        operator,
+                        source,
+                        antiunitary,
+                    )) > 1.0e-7
+                })
+                .count();
+            if nonzero_sources != 1 {
+                return Err(LeadModeError::InvalidSymmetries);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn nonzero_projected_symmetry(
+    projector: &DMatrix<Complex64>,
+    operator: &DMatrix<Complex64>,
+    antiunitary: bool,
+) -> Option<ComplexMatrix> {
+    let block = projected_symmetry_block(projector, operator, projector, antiunitary);
+    (maximum_norm(&block) > 1.0e-7)
+        .then(|| owned(&block).ok())
+        .flatten()
+}
+
+fn projected_symmetry_block(
+    target: &DMatrix<Complex64>,
+    operator: &DMatrix<Complex64>,
+    source: &DMatrix<Complex64>,
+    antiunitary: bool,
+) -> DMatrix<Complex64> {
+    let source = if antiunitary {
+        source.map(|value| value.conj())
+    } else {
+        source.clone()
+    };
+    target.adjoint() * operator * source
+}
+
+fn matrices_are_close(left: &DMatrix<Complex64>, right: &DMatrix<Complex64>) -> bool {
+    left.shape() == right.shape() && maximum_norm(&(left - right)) <= 1.0e-8
+}
+
+fn maximum_norm(matrix: &DMatrix<Complex64>) -> f64 {
+    matrix.iter().map(|value| value.norm()).fold(0.0, f64::max)
+}
+
+fn combine_projected_blocks(
+    dimension: usize,
+    blocks: &[(DMatrix<Complex64>, PropagatingLeadModes)],
+) -> Result<ProjectedLeadModes, LeadModeError> {
     let block_incoming_counts = blocks
         .iter()
         .map(|(_, modes)| modes.incoming_count())
@@ -559,7 +948,7 @@ pub fn propagating_modes_in_subspaces(
     let mut row_offset = 0;
     let mut mode_offset = 0;
 
-    for (projector, modes) in &blocks {
+    for (projector, modes) in blocks {
         let block_dimension = projector.ncols();
         let block_incoming = modes.incoming_count();
         let lifted_wave_functions = projector * backend(modes.wave_functions());
@@ -1266,6 +1655,79 @@ mod tests {
         assert_eq!(modes.incoming_count(), 1);
         for &value in modes.wave_functions().as_slice() {
             assert!(value.im.abs() < 1.0e-10);
+        }
+    }
+
+    #[test]
+    fn symmetry_related_projector_blocks_share_one_mode_solution() {
+        let projectors = vec![
+            ComplexMatrix::new(
+                2,
+                1,
+                vec![Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)],
+            )
+            .unwrap(),
+            ComplexMatrix::new(
+                2,
+                1,
+                vec![Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)],
+            )
+            .unwrap(),
+        ];
+        let cell = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(0.3, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.3, 0.0),
+            ],
+        )
+        .unwrap();
+        let hopping = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(0.7, 0.2),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.7, -0.2),
+            ],
+        )
+        .unwrap();
+        let time_reversal = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(0.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ],
+        )
+        .unwrap();
+
+        let projected = propagating_modes_in_declared_symmetric_subspaces(
+            &cell,
+            &hopping,
+            &projectors,
+            Some(&time_reversal),
+            None,
+            None,
+        )
+        .unwrap();
+        let wave_functions = projected.modes().wave_functions();
+        for (source, target) in [(2, 1), (0, 3)] {
+            for row in 0..2 {
+                let transformed = (0..2)
+                    .map(|column| {
+                        time_reversal.get(row, column).unwrap()
+                            * wave_functions.get(column, source).unwrap().conj()
+                    })
+                    .sum::<Complex64>();
+                assert!((wave_functions.get(row, target).unwrap() - transformed).norm() < 1.0e-10);
+            }
         }
     }
 }

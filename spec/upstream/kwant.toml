@@ -11,8 +11,8 @@ test_modules = 24
 static_test_functions = 241
 collection_status = "blocked"
 collection_blocker = "The source test suite imports compiled Cython extensions before collection."
-strict_tests = 199
-strict_passes = 198
+strict_tests = 202
+strict_passes = 201
 strict_skips = 1
 strict_test_nodes = [
   "kwant/tests/test_lattice.py::test_closest",
@@ -83,6 +83,7 @@ strict_test_nodes = [
   "kwant/solvers/tests/test_solvers.py::test_wavefunc_ldos_consistency[sparse()]",
   "kwant/solvers/tests/test_solvers.py::test_arg_passing[sparse()]",
   "kwant/physics/tests/test_leads.py::test_analytic_numeric",
+  "kwant/physics/tests/test_leads.py::test_regular_fully_degenerate",
   "kwant/physics/tests/test_leads.py::test_regular_degenerate_with_crossing",
   "kwant/physics/tests/test_leads.py::test_singular",
   "kwant/physics/tests/test_leads.py::test_singular_but_square",
@@ -100,6 +101,8 @@ strict_test_nodes = [
   "kwant/physics/tests/test_leads.py::test_cons_singular_hopping",
   "kwant/physics/tests/test_leads.py::test_cons_rectangular_hopping",
   "kwant/physics/tests/test_leads.py::test_cons_blocks_sizes",
+  "kwant/physics/tests/test_leads.py::test_block_relations_cons_PHS",
+  "kwant/physics/tests/test_leads.py::test_blocks_symm_complex_projectors",
   "kwant/physics/tests/test_dispersion.py",
   "kwant/physics/tests/test_noise.py",
   "kwant/physics/tests/test_symmetry.py",

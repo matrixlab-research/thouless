@@ -232,11 +232,16 @@ def modes(
         symmetry is not None
         for symmetry in (time_reversal, particle_hole, chiral)
     )
-    if projectors is not None and has_symmetries:
-        raise NotImplementedError(
-            "Symmetry-related conservation blocks are tracked in "
-            "https://github.com/matrixlab-research/thouless/issues/5"
-        )
+
+    def symmetry_rows(symmetry):
+        if symmetry is None:
+            return None
+        return (
+            symmetry.toarray()
+            if scipy_sparse.issparse(symmetry)
+            else np.asarray(symmetry, dtype=complex)
+        ).tolist()
+
     h_cell = np.asarray(h_cell, dtype=complex)
     h_hop = np.asarray(h_hop, dtype=complex)
     if h_cell.ndim != 2 or h_cell.shape[0] != h_cell.shape[1]:
@@ -263,15 +268,6 @@ def modes(
         block_nmodes = [incoming_count]
         projected = False
     elif projectors is None:
-        def symmetry_rows(symmetry):
-            if symmetry is None:
-                return None
-            return (
-                symmetry.toarray()
-                if scipy_sparse.issparse(symmetry)
-                else np.asarray(symmetry, dtype=complex)
-            ).tolist()
-
         (
             wave_functions,
             velocities,
@@ -290,6 +286,29 @@ def modes(
         block_nmodes = [incoming_count]
         projected = False
     else:
+        projector_rows = [
+            (
+                projector.toarray()
+                if scipy_sparse.issparse(projector)
+                else np.asarray(projector, dtype=complex)
+            ).tolist()
+            for projector in projectors
+        ]
+        if has_symmetries:
+            result = _core.lead_symmetric_projected_modes(
+                h_cell.tolist(),
+                square_hopping.tolist(),
+                projector_rows,
+                symmetry_rows(time_reversal),
+                symmetry_rows(particle_hole),
+                symmetry_rows(chiral),
+            )
+        else:
+            result = _core.lead_projected_modes(
+                h_cell.tolist(),
+                square_hopping.tolist(),
+                projector_rows,
+            )
         (
             wave_functions,
             velocities,
@@ -299,18 +318,7 @@ def modes(
             stabilized_vectors_lambda_inverse,
             square_root_hopping,
             block_nmodes,
-        ) = _core.lead_projected_modes(
-            h_cell.tolist(),
-            square_hopping.tolist(),
-            [
-                (
-                    projector.toarray()
-                    if scipy_sparse.issparse(projector)
-                    else np.asarray(projector, dtype=complex)
-                ).tolist()
-                for projector in projectors
-            ],
-        )
+        ) = result
         projected = True
     wave_functions = np.asarray(wave_functions, dtype=complex).reshape(
         size,
