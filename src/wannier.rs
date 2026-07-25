@@ -7,14 +7,16 @@
 
 use std::f64::consts::TAU;
 
-use nalgebra::linalg::SVD;
+use nalgebra::linalg::{Schur, SVD};
 use nalgebra::DMatrix;
 use rustfft::FftPlanner;
 
+use crate::spectrum::hermitian_eigensystem;
 use crate::{Complex64, ComplexMatrix};
 
 const ORTHONORMAL_TOLERANCE: f64 = 1.0e-8;
 const UNITARY_TOLERANCE: f64 = 1.0e-8;
+const SINGULAR_DIAGONAL_TOLERANCE: f64 = 1.0e-12;
 
 /// Failures in sampled-frame projection, overlap, or Fourier operations.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -38,6 +40,16 @@ pub enum WannierError {
     InvalidNeighborGeometry,
     /// Interpolation points have the wrong dimensionality.
     InvalidInterpolationPoints,
+    /// Localization controls are non-finite or outside their valid range.
+    InvalidOptimization,
+    /// A diagonal neighbor overlap vanished during localization.
+    SingularNeighborOverlap,
+    /// Candidate, frozen, trial, or initial subspaces are inconsistent.
+    InvalidSubspace,
+    /// The requested fixed-rank subspace could not be constructed.
+    SubspaceConstructionFailed,
+    /// A Hermitian subspace update could not be diagonalized.
+    EigensystemFailed,
 }
 
 impl std::fmt::Display for WannierError {
@@ -64,6 +76,21 @@ impl std::fmt::Display for WannierError {
             Self::InvalidInterpolationPoints => {
                 "interpolation points must have one coordinate per mesh axis"
             }
+            Self::InvalidOptimization => {
+                "localization controls must be finite and nonnegative, with a positive step"
+            }
+            Self::SingularNeighborOverlap => {
+                "maximal localization encountered a vanishing diagonal neighbor overlap"
+            }
+            Self::InvalidSubspace => {
+                "candidate, frozen, trial, and initial subspaces must be basis-compatible"
+            }
+            Self::SubspaceConstructionFailed => {
+                "the requested fixed-rank subspace could not be constructed"
+            }
+            Self::EigensystemFailed => {
+                "a Hermitian disentanglement update could not be diagonalized"
+            }
         };
         formatter.write_str(message)
     }
@@ -79,6 +106,103 @@ pub struct SpreadDecomposition {
     invariant: f64,
     diagonal: f64,
     off_diagonal: f64,
+}
+
+/// Result and convergence diagnostics for maximal-localization optimization.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GaugeOptimization {
+    frames: Vec<ComplexMatrix>,
+    initial_spread: f64,
+    final_spread: f64,
+    gradient_norm: f64,
+    iterations: usize,
+    converged: bool,
+}
+
+/// Result and convergence diagnostics for fixed-rank subspace optimization.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SubspaceOptimization {
+    frames: Vec<ComplexMatrix>,
+    initial_invariant_spread: f64,
+    final_invariant_spread: f64,
+    iterations: usize,
+    converged: bool,
+}
+
+impl SubspaceOptimization {
+    /// Optimized fixed-rank frames, in the same mesh order as the candidates.
+    #[must_use]
+    pub fn frames(&self) -> &[ComplexMatrix] {
+        &self.frames
+    }
+
+    /// Initial discrete gauge-invariant spread.
+    #[must_use]
+    pub const fn initial_invariant_spread(&self) -> f64 {
+        self.initial_invariant_spread
+    }
+
+    /// Final discrete gauge-invariant spread.
+    #[must_use]
+    pub const fn final_invariant_spread(&self) -> f64 {
+        self.final_invariant_spread
+    }
+
+    /// Number of completed self-consistent updates.
+    #[must_use]
+    pub const fn iterations(&self) -> usize {
+        self.iterations
+    }
+
+    /// Whether the invariant-spread change reached the requested tolerance.
+    #[must_use]
+    pub const fn converged(&self) -> bool {
+        self.converged
+    }
+}
+
+impl GaugeOptimization {
+    /// Optimized orthonormal frames, in the same mesh order as the input.
+    #[must_use]
+    pub fn frames(&self) -> &[ComplexMatrix] {
+        &self.frames
+    }
+
+    /// Consumes the report and returns the optimized frames.
+    #[must_use]
+    pub fn into_frames(self) -> Vec<ComplexMatrix> {
+        self.frames
+    }
+
+    /// Initial gauge-dependent spread, `Omega_D + Omega_OD`.
+    #[must_use]
+    pub const fn initial_spread(&self) -> f64 {
+        self.initial_spread
+    }
+
+    /// Final gauge-dependent spread, `Omega_D + Omega_OD`.
+    #[must_use]
+    pub const fn final_spread(&self) -> f64 {
+        self.final_spread
+    }
+
+    /// Root-mean-square Frobenius norm of the final anti-Hermitian gradient.
+    #[must_use]
+    pub const fn gradient_norm(&self) -> f64 {
+        self.gradient_norm
+    }
+
+    /// Number of accepted optimization steps.
+    #[must_use]
+    pub const fn iterations(&self) -> usize {
+        self.iterations
+    }
+
+    /// Whether both the spread-change and gradient stopping criteria were met.
+    #[must_use]
+    pub const fn converged(&self) -> bool {
+        self.converged
+    }
 }
 
 impl SpreadDecomposition {
@@ -381,6 +505,353 @@ pub fn periodic_overlaps(
     Ok(all_samples)
 }
 
+fn append_orthonormal_row(
+    rows: &mut Vec<Vec<Complex64>>,
+    mut candidate: Vec<Complex64>,
+    tolerance: f64,
+) {
+    for row in rows.iter() {
+        let overlap = row
+            .iter()
+            .zip(&candidate)
+            .map(|(&left, &right)| left.conj() * right)
+            .sum::<Complex64>();
+        for (value, &basis) in candidate.iter_mut().zip(row) {
+            *value -= overlap * basis;
+        }
+    }
+    let norm = candidate
+        .iter()
+        .map(|value| value.norm_sqr())
+        .sum::<f64>()
+        .sqrt();
+    if norm > tolerance {
+        for value in &mut candidate {
+            *value /= norm;
+        }
+        rows.push(candidate);
+    }
+}
+
+fn append_projected_rows(
+    rows: &mut Vec<Vec<Complex64>>,
+    source: &ComplexMatrix,
+    projector: &DMatrix<Complex64>,
+    target_states: usize,
+) {
+    let basis_size = source.columns();
+    for row in 0..source.rows() {
+        let source_row = DMatrix::from_row_slice(
+            1,
+            basis_size,
+            &source.as_slice()[row * basis_size..(row + 1) * basis_size],
+        );
+        let projected = source_row * projector;
+        append_orthonormal_row(
+            rows,
+            projected.row(0).iter().copied().collect(),
+            SINGULAR_DIAGONAL_TOLERANCE,
+        );
+        if rows.len() == target_states {
+            break;
+        }
+    }
+}
+
+fn initial_subspace_frames(
+    candidates: &[ComplexMatrix],
+    frozen_counts: &[usize],
+    target_states: usize,
+    initial_frames: Option<&[ComplexMatrix]>,
+    trials: Option<&ComplexMatrix>,
+) -> Result<Vec<ComplexMatrix>, WannierError> {
+    let basis_size = candidates[0].columns();
+    let mut result = Vec::with_capacity(candidates.len());
+    for (sample_index, candidate) in candidates.iter().enumerate() {
+        let candidate_matrix = dmatrix(candidate);
+        let projector = candidate_matrix.adjoint() * &candidate_matrix;
+        let mut rows = Vec::<Vec<Complex64>>::with_capacity(target_states);
+        for frozen in 0..frozen_counts[sample_index] {
+            rows.push(
+                candidate.as_slice()[frozen * basis_size..(frozen + 1) * basis_size].to_vec(),
+            );
+        }
+        if let Some(initial) = initial_frames {
+            append_projected_rows(&mut rows, &initial[sample_index], &projector, target_states);
+        }
+        if rows.len() < target_states {
+            if let Some(trials) = trials {
+                append_projected_rows(&mut rows, trials, &projector, target_states);
+            }
+        }
+        if rows.len() < target_states {
+            append_projected_rows(&mut rows, candidate, &projector, target_states);
+        }
+        if rows.len() != target_states {
+            return Err(WannierError::SubspaceConstructionFailed);
+        }
+        result.push(
+            ComplexMatrix::new(
+                target_states,
+                basis_size,
+                rows.into_iter().flatten().collect(),
+            )
+            .map_err(|_| WannierError::SubspaceConstructionFailed)?,
+        );
+    }
+    Ok(result)
+}
+
+fn projectors(frames: &[ComplexMatrix]) -> Vec<DMatrix<Complex64>> {
+    frames
+        .iter()
+        .map(|frame| {
+            let frame = dmatrix(frame);
+            frame.adjoint() * frame
+        })
+        .collect()
+}
+
+fn shifted_projector(
+    projectors: &[DMatrix<Complex64>],
+    sample_index: usize,
+    mesh_shape: &[usize],
+    displacement: &[isize],
+    boundary_twists: &[Vec<Complex64>],
+) -> Result<DMatrix<Complex64>, WannierError> {
+    let coordinates = flat_coordinates(sample_index, mesh_shape);
+    let basis_size = projectors[0].nrows();
+    let mut shifted_coordinates = vec![0; mesh_shape.len()];
+    let mut total_twist = vec![Complex64::new(1.0, 0.0); basis_size];
+    for axis in 0..mesh_shape.len() {
+        let extent = isize::try_from(mesh_shape[axis]).map_err(|_| WannierError::InvalidMesh)?;
+        let shifted = isize::try_from(coordinates[axis]).map_err(|_| WannierError::InvalidMesh)?
+            + displacement[axis];
+        shifted_coordinates[axis] =
+            usize::try_from(shifted.rem_euclid(extent)).map_err(|_| WannierError::InvalidMesh)?;
+        let wrap_count = shifted.div_euclid(extent);
+        let exponent =
+            i32::try_from(wrap_count.unsigned_abs()).map_err(|_| WannierError::InvalidMesh)?;
+        if wrap_count > 0 {
+            for (total, &twist) in total_twist.iter_mut().zip(&boundary_twists[axis]) {
+                *total *= twist.powi(exponent);
+            }
+        } else if wrap_count < 0 {
+            for (total, &twist) in total_twist.iter_mut().zip(&boundary_twists[axis]) {
+                *total *= twist.conj().powi(exponent);
+            }
+        }
+    }
+    let source = &projectors[flat_index(&shifted_coordinates, mesh_shape)];
+    let mut transformed = source.clone();
+    for row in 0..basis_size {
+        for column in 0..basis_size {
+            transformed[(row, column)] *= total_twist[row].conj() * total_twist[column];
+        }
+    }
+    Ok(transformed)
+}
+
+fn invariant_spread_from_projectors(
+    projectors: &[DMatrix<Complex64>],
+    target_states: usize,
+    mesh_shape: &[usize],
+    displacements: &[Vec<isize>],
+    boundary_twists: &[Vec<Complex64>],
+    neighbor_weights: &[f64],
+) -> Result<f64, WannierError> {
+    let mut spread = 0.0;
+    for (sample_index, projector) in projectors.iter().enumerate() {
+        for (neighbor, displacement) in displacements.iter().enumerate() {
+            let shifted = shifted_projector(
+                projectors,
+                sample_index,
+                mesh_shape,
+                displacement,
+                boundary_twists,
+            )?;
+            spread += neighbor_weights[neighbor]
+                * (target_states as f64 - (projector * shifted).trace().re);
+        }
+    }
+    Ok(spread / projectors.len() as f64)
+}
+
+/// Selects a smooth fixed-rank subspace from larger sampled candidate spaces.
+///
+/// Candidate rows are orthonormal states.  The first `frozen_counts[k]` rows
+/// are preserved exactly at each mesh sample; remaining rows span the outer
+/// variational window.  The self-consistent update selects the leading
+/// eigenvectors of the neighbor-projector average, which minimizes the
+/// discrete gauge-invariant spread without referring to energies or a source
+/// package's window representation.
+#[allow(clippy::too_many_arguments)]
+pub fn disentangle_subspace(
+    mesh_shape: &[usize],
+    candidates: &[ComplexMatrix],
+    frozen_counts: &[usize],
+    target_states: usize,
+    initial_frames: Option<&[ComplexMatrix]>,
+    trials: Option<&ComplexMatrix>,
+    displacements: &[Vec<isize>],
+    boundary_twists: &[Vec<Complex64>],
+    neighbor_weights: &[f64],
+    max_iterations: usize,
+    tolerance: f64,
+    mixing: f64,
+) -> Result<SubspaceOptimization, WannierError> {
+    let sample_count = mesh_size(mesh_shape)?;
+    if candidates.len() != sample_count
+        || candidates.is_empty()
+        || frozen_counts.len() != sample_count
+        || target_states == 0
+        || !tolerance.is_finite()
+        || tolerance < 0.0
+        || !mixing.is_finite()
+        || !(0.0..=1.0).contains(&mixing)
+        || displacements.is_empty()
+        || displacements.len() != neighbor_weights.len()
+        || displacements
+            .iter()
+            .any(|displacement| displacement.len() != mesh_shape.len())
+        || neighbor_weights
+            .iter()
+            .any(|weight| !weight.is_finite() || *weight <= 0.0)
+    {
+        return Err(WannierError::InvalidSubspace);
+    }
+    let basis_size = candidates[0].columns();
+    if basis_size == 0
+        || candidates.iter().enumerate().any(|(sample, candidate)| {
+            candidate.columns() != basis_size
+                || candidate.rows() < target_states
+                || frozen_counts[sample] > target_states
+                || !rows_are_orthonormal(candidate)
+        })
+        || boundary_twists.len() != mesh_shape.len()
+        || boundary_twists.iter().any(|twist| {
+            twist.len() != basis_size
+                || twist
+                    .iter()
+                    .any(|value| (value.norm() - 1.0).abs() > UNITARY_TOLERANCE)
+        })
+        || initial_frames.is_some_and(|frames| {
+            frames.len() != sample_count
+                || frames.iter().any(|frame| {
+                    frame.shape() != (target_states, basis_size) || !rows_are_orthonormal(frame)
+                })
+        })
+        || trials.is_some_and(|trial| trial.rows() == 0 || trial.columns() != basis_size)
+    {
+        return Err(WannierError::InvalidSubspace);
+    }
+
+    let mut frames = initial_subspace_frames(
+        candidates,
+        frozen_counts,
+        target_states,
+        initial_frames,
+        trials,
+    )?;
+    let mut current_projectors = projectors(&frames);
+    let initial_spread = invariant_spread_from_projectors(
+        &current_projectors,
+        target_states,
+        mesh_shape,
+        displacements,
+        boundary_twists,
+        neighbor_weights,
+    )?;
+    let mut current_spread = initial_spread;
+    let mut iterations = 0;
+    let mut converged = false;
+
+    for _ in 0..max_iterations {
+        let mut next_frames = Vec::with_capacity(sample_count);
+        for (sample_index, candidate) in candidates.iter().enumerate() {
+            let mut averaged = DMatrix::<Complex64>::zeros(basis_size, basis_size);
+            for (neighbor, displacement) in displacements.iter().enumerate() {
+                averaged += shifted_projector(
+                    &current_projectors,
+                    sample_index,
+                    mesh_shape,
+                    displacement,
+                    boundary_twists,
+                )? * Complex64::new(neighbor_weights[neighbor], 0.0);
+            }
+
+            let frozen_count = frozen_counts[sample_index];
+            let remaining = target_states - frozen_count;
+            let candidate_matrix = dmatrix(candidate);
+            let variational = candidate_matrix
+                .rows(frozen_count, candidate.rows() - frozen_count)
+                .into_owned();
+            let mut selected_rows = (0..frozen_count)
+                .map(|row| {
+                    candidate_matrix
+                        .row(row)
+                        .iter()
+                        .copied()
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            if remaining > 0 {
+                if variational.nrows() < remaining {
+                    return Err(WannierError::SubspaceConstructionFailed);
+                }
+                let projected =
+                    variational.map(|value| value.conj()) * averaged * variational.transpose();
+                let hermitian = (&projected + projected.adjoint()) * Complex64::new(0.5, 0.0);
+                let eigensystem = hermitian_eigensystem(&complex_matrix(&hermitian), 1.0e-8)
+                    .map_err(|_| WannierError::EigensystemFailed)?;
+                let eigenvectors = dmatrix(eigensystem.eigenvectors());
+                for column in (eigenvectors.ncols() - remaining)..eigenvectors.ncols() {
+                    let state = eigenvectors.column(column).transpose() * &variational;
+                    selected_rows.push(state.row(0).iter().copied().collect());
+                }
+            }
+            next_frames.push(
+                ComplexMatrix::new(
+                    target_states,
+                    basis_size,
+                    selected_rows.into_iter().flatten().collect(),
+                )
+                .map_err(|_| WannierError::SubspaceConstructionFailed)?,
+            );
+        }
+
+        let next_projectors = projectors(&next_frames);
+        for (current, next) in current_projectors.iter_mut().zip(&next_projectors) {
+            *current = next * Complex64::new(mixing, 0.0)
+                + current.clone() * Complex64::new(1.0 - mixing, 0.0);
+        }
+        let next_spread = invariant_spread_from_projectors(
+            &current_projectors,
+            target_states,
+            mesh_shape,
+            displacements,
+            boundary_twists,
+            neighbor_weights,
+        )?;
+        let change = (next_spread - current_spread).abs();
+        frames = next_frames;
+        current_spread = next_spread;
+        iterations += 1;
+        if change <= tolerance {
+            converged = true;
+            break;
+        }
+    }
+
+    Ok(SubspaceOptimization {
+        frames,
+        initial_invariant_spread: initial_spread,
+        final_invariant_spread: current_spread,
+        iterations,
+        converged,
+    })
+}
+
 /// Evaluates the Marzari-Vanderbilt discrete quadratic-spread decomposition.
 pub fn spread_decomposition(
     overlaps: &[Vec<ComplexMatrix>],
@@ -472,6 +943,247 @@ pub fn spread_decomposition(
         invariant,
         diagonal,
         off_diagonal,
+    })
+}
+
+fn shifted_sample_index(
+    sample_index: usize,
+    mesh_shape: &[usize],
+    displacement: &[isize],
+) -> Result<usize, WannierError> {
+    let coordinates = flat_coordinates(sample_index, mesh_shape);
+    let shifted = coordinates
+        .iter()
+        .zip(mesh_shape)
+        .zip(displacement)
+        .map(|((&coordinate, &extent), &offset)| {
+            let extent = isize::try_from(extent).map_err(|_| WannierError::InvalidMesh)?;
+            let coordinate = isize::try_from(coordinate).map_err(|_| WannierError::InvalidMesh)?;
+            usize::try_from((coordinate + offset).rem_euclid(extent))
+                .map_err(|_| WannierError::InvalidMesh)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(flat_index(&shifted, mesh_shape))
+}
+
+fn gauge_spread(
+    overlaps: &[Vec<ComplexMatrix>],
+    neighbor_vectors: &[Vec<f64>],
+    neighbor_weights: &[f64],
+) -> Result<f64, WannierError> {
+    let decomposition = spread_decomposition(overlaps, neighbor_vectors, neighbor_weights)?;
+    Ok(decomposition.diagonal() + decomposition.off_diagonal())
+}
+
+fn localization_gradients(
+    overlaps: &[Vec<ComplexMatrix>],
+    neighbor_vectors: &[Vec<f64>],
+    neighbor_weights: &[f64],
+) -> Result<Vec<DMatrix<Complex64>>, WannierError> {
+    let sample_count = overlaps.len();
+    let state_count = overlaps[0][0].rows();
+    let dimension = neighbor_vectors[0].len();
+    let mut centers = vec![vec![0.0; dimension]; state_count];
+    for sample in overlaps {
+        for (neighbor, matrix) in sample.iter().enumerate() {
+            for (state, center) in centers.iter_mut().enumerate() {
+                let phase = matrix.as_slice()[state * state_count + state].arg();
+                for (component, value) in neighbor_vectors[neighbor].iter().enumerate() {
+                    center[component] -=
+                        neighbor_weights[neighbor] * phase * value / sample_count as f64;
+                }
+            }
+        }
+    }
+
+    let mut gradients = vec![DMatrix::<Complex64>::zeros(state_count, state_count); sample_count];
+    for (sample_index, sample) in overlaps.iter().enumerate() {
+        for (neighbor, matrix) in sample.iter().enumerate() {
+            let matrix = dmatrix(matrix);
+            let diagonal = (0..state_count)
+                .map(|state| matrix[(state, state)])
+                .collect::<Vec<_>>();
+            if diagonal
+                .iter()
+                .any(|value| value.norm() <= SINGULAR_DIAGONAL_TOLERANCE)
+            {
+                return Err(WannierError::SingularNeighborOverlap);
+            }
+            let phases = diagonal.iter().map(|value| value.arg()).collect::<Vec<_>>();
+            let q = centers
+                .iter()
+                .zip(&phases)
+                .map(|(center, &phase)| {
+                    phase
+                        + neighbor_vectors[neighbor]
+                            .iter()
+                            .zip(center)
+                            .map(|(vector, coordinate)| vector * coordinate)
+                            .sum::<f64>()
+                })
+                .collect::<Vec<_>>();
+            let weight = neighbor_weights[neighbor];
+            for row in 0..state_count {
+                for column in 0..state_count {
+                    let r = matrix[(row, column)] * diagonal[column].conj();
+                    let r_adjoint = matrix[(column, row)].conj() * diagonal[row];
+                    let antihermitian_r = (r - r_adjoint) * 0.5;
+
+                    let t = matrix[(row, column)] / diagonal[column] * q[column];
+                    let t_adjoint = (matrix[(column, row)] / diagonal[row] * q[row]).conj();
+                    let symmetric_t = (t + t_adjoint) / Complex64::new(0.0, 2.0);
+                    gradients[sample_index][(row, column)] +=
+                        (antihermitian_r - symmetric_t) * (4.0 * weight);
+                }
+            }
+        }
+    }
+    Ok(gradients)
+}
+
+fn gradient_norm(gradients: &[DMatrix<Complex64>]) -> f64 {
+    (gradients
+        .iter()
+        .flat_map(|gradient| gradient.iter())
+        .map(|value| value.norm_sqr())
+        .sum::<f64>()
+        / gradients.len() as f64)
+        .sqrt()
+}
+
+fn antihermitian_exponential(generator: &DMatrix<Complex64>, step: f64) -> DMatrix<Complex64> {
+    let antihermitian = (generator - generator.adjoint()) * Complex64::new(0.5 * step, 0.0);
+    let (vectors, triangular) = Schur::new(antihermitian).unpack();
+    let mut exponential = DMatrix::<Complex64>::zeros(generator.nrows(), generator.ncols());
+    for index in 0..generator.nrows() {
+        exponential[(index, index)] = triangular[(index, index)].exp();
+    }
+    &vectors * exponential * vectors.adjoint()
+}
+
+fn rotated_overlaps(
+    original: &[Vec<ComplexMatrix>],
+    rotations: &[DMatrix<Complex64>],
+    mesh_shape: &[usize],
+    displacements: &[Vec<isize>],
+) -> Result<Vec<Vec<ComplexMatrix>>, WannierError> {
+    let mut result = Vec::with_capacity(original.len());
+    for (sample_index, sample) in original.iter().enumerate() {
+        let mut neighbors = Vec::with_capacity(sample.len());
+        for (neighbor, matrix) in sample.iter().enumerate() {
+            let shifted = shifted_sample_index(sample_index, mesh_shape, &displacements[neighbor])?;
+            let transformed =
+                rotations[sample_index].adjoint() * dmatrix(matrix) * &rotations[shifted];
+            neighbors.push(complex_matrix(&transformed));
+        }
+        result.push(neighbors);
+    }
+    Ok(result)
+}
+
+/// Minimizes the gauge-dependent Marzari-Vanderbilt spread on a periodic mesh.
+///
+/// The optimizer computes the anti-Hermitian spread gradient from periodic
+/// neighbor overlaps, applies unitary exponential updates, and backtracks any
+/// step that would increase `Omega_D + Omega_OD`.  It acts only within the
+/// supplied subspace, so the gauge-invariant spread and projectors are
+/// preserved.  Mesh geometry and boundary twists are explicit inputs rather
+/// than source-package state.
+#[allow(clippy::too_many_arguments)]
+pub fn maximize_localization(
+    mesh_shape: &[usize],
+    frames: &[ComplexMatrix],
+    displacements: &[Vec<isize>],
+    boundary_twists: &[Vec<Complex64>],
+    neighbor_vectors: &[Vec<f64>],
+    neighbor_weights: &[f64],
+    step_scale: f64,
+    max_iterations: usize,
+    spread_tolerance: f64,
+    gradient_tolerance: f64,
+) -> Result<GaugeOptimization, WannierError> {
+    validate_sampled_matrices(mesh_shape, frames)?;
+    if !step_scale.is_finite()
+        || step_scale <= 0.0
+        || !spread_tolerance.is_finite()
+        || spread_tolerance < 0.0
+        || !gradient_tolerance.is_finite()
+        || gradient_tolerance < 0.0
+    {
+        return Err(WannierError::InvalidOptimization);
+    }
+    if displacements.is_empty()
+        || displacements.len() != neighbor_vectors.len()
+        || displacements.len() != neighbor_weights.len()
+    {
+        return Err(WannierError::InvalidNeighborGeometry);
+    }
+    let original = periodic_overlaps(mesh_shape, frames, displacements, boundary_twists)?;
+    let state_count = frames[0].rows();
+    let sample_count = frames.len();
+    let mut rotations =
+        vec![DMatrix::<Complex64>::identity(state_count, state_count); sample_count];
+    let mut overlaps = original.clone();
+    let initial_spread = gauge_spread(&overlaps, neighbor_vectors, neighbor_weights)?;
+    let mut current_spread = initial_spread;
+    let mut gradients = localization_gradients(&overlaps, neighbor_vectors, neighbor_weights)?;
+    let mut final_gradient_norm = gradient_norm(&gradients);
+    let weight_sum = neighbor_weights.iter().sum::<f64>();
+    if !weight_sum.is_finite() || weight_sum <= 0.0 {
+        return Err(WannierError::InvalidNeighborGeometry);
+    }
+
+    let mut iterations = 0;
+    let mut converged = final_gradient_norm <= gradient_tolerance;
+    for _ in 0..max_iterations {
+        if converged {
+            break;
+        }
+        let mut trial_step = step_scale / (4.0 * weight_sum);
+        let mut accepted = None;
+        for _ in 0..16 {
+            let candidate_rotations = rotations
+                .iter()
+                .zip(&gradients)
+                .map(|(rotation, gradient)| {
+                    rotation * antihermitian_exponential(gradient, trial_step)
+                })
+                .collect::<Vec<_>>();
+            let candidate_overlaps =
+                rotated_overlaps(&original, &candidate_rotations, mesh_shape, displacements)?;
+            let candidate_spread =
+                gauge_spread(&candidate_overlaps, neighbor_vectors, neighbor_weights)?;
+            if candidate_spread <= current_spread + 1.0e-13 {
+                accepted = Some((candidate_rotations, candidate_overlaps, candidate_spread));
+                break;
+            }
+            trial_step *= 0.5;
+        }
+        let Some((candidate_rotations, candidate_overlaps, candidate_spread)) = accepted else {
+            break;
+        };
+        let spread_change = (candidate_spread - current_spread).abs();
+        rotations = candidate_rotations;
+        overlaps = candidate_overlaps;
+        current_spread = candidate_spread;
+        iterations += 1;
+        gradients = localization_gradients(&overlaps, neighbor_vectors, neighbor_weights)?;
+        final_gradient_norm = gradient_norm(&gradients);
+        converged = spread_change <= spread_tolerance && final_gradient_norm <= gradient_tolerance;
+    }
+
+    let optimized_frames = frames
+        .iter()
+        .zip(&rotations)
+        .map(|(frame, rotation)| complex_matrix(&(rotation.transpose() * dmatrix(frame))))
+        .collect();
+    Ok(GaugeOptimization {
+        frames: optimized_frames,
+        initial_spread,
+        final_spread: current_spread,
+        gradient_norm: final_gradient_norm,
+        iterations,
+        converged,
     })
 }
 
@@ -727,5 +1439,85 @@ mod tests {
             interpolate_periodic_matrices(&[sample_count], &samples, &[vec![point]]).unwrap();
         assert!((interpolated[0].as_slice()[0].re + 2.0 * (TAU * point).cos()).abs() < 1.0e-12);
         assert!(interpolated[0].as_slice()[0].im.abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn maximal_localization_removes_a_periodic_single_band_gauge() {
+        let sample_count = 12;
+        let frames = (0..sample_count)
+            .map(|sample| {
+                let momentum = TAU * sample as f64 / sample_count as f64;
+                matrix(
+                    1,
+                    1,
+                    vec![Complex64::from_polar(1.0, 0.63 * momentum.sin())],
+                )
+            })
+            .collect::<Vec<_>>();
+        let reciprocal_step = TAU / sample_count as f64;
+        let neighbor_vectors = vec![vec![reciprocal_step], vec![-reciprocal_step]];
+        let neighbor_weights = vec![
+            1.0 / (2.0 * reciprocal_step.powi(2)),
+            1.0 / (2.0 * reciprocal_step.powi(2)),
+        ];
+        let report = maximize_localization(
+            &[sample_count],
+            &frames,
+            &[vec![1], vec![-1]],
+            &[vec![Complex64::new(1.0, 0.0)]],
+            &neighbor_vectors,
+            &neighbor_weights,
+            0.5,
+            200,
+            1.0e-12,
+            1.0e-10,
+        )
+        .unwrap();
+
+        assert!(report.iterations() > 0);
+        assert!(report.final_spread() < report.initial_spread() * 1.0e-6);
+        assert!(report
+            .frames()
+            .iter()
+            .all(|frame| (frame.as_slice()[0].norm() - 1.0).abs() < 1.0e-12));
+    }
+
+    #[test]
+    fn disentanglement_smooths_a_fixed_rank_subspace() {
+        let sample_count = 14;
+        let candidates = vec![ComplexMatrix::identity(2); sample_count];
+        let initial = (0..sample_count)
+            .map(|sample| {
+                let momentum = TAU * sample as f64 / sample_count as f64;
+                let angle = 0.71 * momentum.sin();
+                matrix(
+                    1,
+                    2,
+                    vec![
+                        Complex64::new(angle.cos(), 0.0),
+                        Complex64::new(angle.sin(), 0.0),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        let report = disentangle_subspace(
+            &[sample_count],
+            &candidates,
+            &vec![0; sample_count],
+            1,
+            Some(&initial),
+            None,
+            &[vec![1], vec![-1]],
+            &[vec![Complex64::new(1.0, 0.0); 2]],
+            &[1.0, 1.0],
+            200,
+            1.0e-12,
+            0.7,
+        )
+        .unwrap();
+
+        assert!(report.iterations() > 0);
+        assert!(report.final_invariant_spread() < report.initial_invariant_spread() * 1.0e-6);
+        assert!(report.frames().iter().all(rows_are_orthonormal));
     }
 }

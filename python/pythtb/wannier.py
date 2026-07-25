@@ -485,7 +485,7 @@ class Wannier:
         verbose=True,
     ):
         """Select a smooth fixed-rank subspace inside energy windows."""
-        del max_iter, tol, mix, tf_speedup, verbose
+        del tf_speedup
         if n_wfs is None:
             n_wfs = (
                 self.num_twfs
@@ -495,54 +495,104 @@ class Wannier:
         n_wfs = int(n_wfs)
         outer = self._window_mask(outer_window)
         frozen = self._window_mask(frozen_window)
-        source = self.bloch_states.psi_nk.reshape(
+        source = self.bloch_states.states(flatten_spin_axis=True).reshape(
             self.nks + (self.bloch_states.nstates, -1)
         )
-        result = np.empty(
-            self.nks + (n_wfs, source.shape[-1]),
-            dtype=complex,
-        )
-        trials = (
-            None
-            if self.trial_wfs is None
-            else self.trial_wfs.reshape(self.num_twfs, -1)
-        )
+        candidates = []
+        frozen_counts = []
         for index in np.ndindex(self.nks):
-            candidates = np.flatnonzero(outer[index])
+            outer_indices = np.flatnonzero(outer[index])
             fixed = np.flatnonzero(frozen[index])
             if n_wfs < 1:
                 raise ValueError("n_wfs must be positive.")
             if np.any(frozen[index] & ~outer[index]):
                 raise ValueError("The frozen window must lie inside the outer window.")
-            if len(candidates) < n_wfs or len(fixed) > n_wfs:
+            if len(outer_indices) < n_wfs or len(fixed) > n_wfs:
                 raise ValueError(
                     "Energy windows do not contain a valid fixed-rank subspace."
                 )
-            candidate_states = source[index][candidates]
-            chosen = [source[index][band] for band in fixed]
-            if trials is not None and len(chosen) < n_wfs:
-                projected = trials @ (
-                    candidate_states.conj().T @ candidate_states
-                )
-                chosen.extend(projected)
-            if len(chosen) < n_wfs:
-                chosen.extend(candidate_states)
-            orthonormal = []
-            for vector in chosen:
-                residual = vector.astype(complex, copy=True)
-                for basis in orthonormal:
-                    residual -= np.vdot(basis, residual) * basis
-                norm = np.linalg.norm(residual)
-                if norm > 1e-10:
-                    orthonormal.append(residual / norm)
-                if len(orthonormal) == n_wfs:
-                    break
-            if len(orthonormal) != n_wfs:
-                raise ValueError("Could not construct the requested Wannier subspace.")
-            result[index] = orthonormal
+            fixed_set = set(fixed.tolist())
+            ordered = list(fixed) + [
+                band for band in outer_indices if band not in fixed_set
+            ]
+            candidates.append(source[index][ordered].tolist())
+            frozen_counts.append(len(fixed))
+
+        initial = None
+        if (
+            self._tilde_states is not None
+            and self._tilde_states.nstates == n_wfs
+        ):
+            initial_states = self._tilde_states.states(
+                flatten_spin_axis=True
+            )
+            initial = initial_states.reshape(
+                -1,
+                initial_states.shape[-2],
+                initial_states.shape[-1],
+            ).tolist()
+        trials = (
+            None
+            if self.trial_wfs is None
+            else self.trial_wfs.reshape(self.num_twfs, -1).tolist()
+        )
+        vector_shells, shift_shells = self.lattice.nn_k_shell(
+            self.nks,
+            n_shell=1,
+        )
+        del vector_shells
+        weights = self.lattice.k_shell_weights(
+            self.nks,
+            n_shell=1,
+            return_shell=False,
+        )
+        displacements = np.asarray(shift_shells[0], dtype=int)
+        boundary_twists = [
+            self.bloch_states._basis_phase(mesh_axis)
+            for mesh_axis in self.mesh.k_axis_indices
+        ]
+        (
+            result,
+            initial_spread,
+            final_spread,
+            iterations,
+            converged,
+        ) = _core.wannier_disentangle_subspace(
+            list(self.nks),
+            candidates,
+            frozen_counts,
+            n_wfs,
+            initial,
+            trials,
+            displacements.tolist(),
+            [twist.tolist() for twist in boundary_twists],
+            np.full(
+                len(displacements),
+                weights[0],
+                dtype=float,
+            ).tolist(),
+            int(max_iter),
+            float(tol),
+            float(mix),
+        )
+        result = np.asarray(result, dtype=complex).reshape(
+            self.nks + (n_wfs, source.shape[-1])
+        )
+        self._disentanglement_report = {
+            "initial_spread": float(initial_spread),
+            "final_spread": float(final_spread),
+            "iterations": int(iterations),
+            "converged": bool(converged),
+        }
+        if verbose:
+            print(
+                "disentangle: "
+                f"{initial_spread:.9e} -> {final_spread:.9e}; "
+                f"iterations={iterations}; converged={converged}"
+            )
         self.set_tilde_states(
             result,
-            is_cell_periodic=False,
+            is_cell_periodic=True,
             is_spin_axis_flat=True,
         )
 
@@ -554,47 +604,65 @@ class Wannier:
         grad_min=1e-3,
         verbose=False,
     ):
-        """Smooth the frame by repeated polar parallel transport."""
-        del alpha, tol, grad_min, verbose
-        states = self.tilde_states.states(flatten_spin_axis=True).copy()
-        passes = min(max(1, int(max_iter)), 8)
-        for _ in range(passes):
-            previous = states.copy()
-            for axis in range(self.mesh.nk_axes):
-                moved = np.moveaxis(states, axis, 0)
-                transverse_shape = moved.shape[1:-2]
-                for transverse in np.ndindex(transverse_shape):
-                    line = moved[(slice(None),) + transverse]
-                    for point in range(1, len(line)):
-                        link = np.asarray(
-                            _core.transport_link(
-                                line[point - 1].tolist(),
-                                line[point].tolist(),
-                            )
-                        )
-                        line[point] = link.conj() @ line[point]
-                    boundary = line[0] * self.tilde_states._basis_phase(axis)
-                    closure = np.asarray(
-                        _core.transport_link(
-                            line[-1].tolist(),
-                            boundary.tolist(),
-                        )
-                    )
-                    root = np.asarray(
-                        _core.unitary_power(
-                            closure.tolist(),
-                            1.0 / len(line),
-                        ),
-                        dtype=complex,
-                    )
-                    rotation = np.eye(len(line[0]), dtype=complex)
-                    for point in range(len(line)):
-                        line[point] = rotation @ line[point]
-                        rotation = rotation @ root
-                    moved[(slice(None),) + transverse] = line
-                states = np.moveaxis(moved, 0, axis)
-            if np.linalg.norm(states - previous) < 1e-10:
-                break
+        """Minimize the gauge-dependent spread in the Rust core."""
+        states = self.tilde_states.states(flatten_spin_axis=True)
+        vector_shells, shift_shells = self.lattice.nn_k_shell(
+            self.nks,
+            n_shell=1,
+        )
+        weights = self.lattice.k_shell_weights(
+            self.nks,
+            n_shell=1,
+            return_shell=False,
+        )
+        neighbor_vectors = np.asarray(vector_shells[0], dtype=float)
+        displacements = np.asarray(shift_shells[0], dtype=int)
+        boundary_twists = [
+            self.tilde_states._basis_phase(mesh_axis)
+            for mesh_axis in self.mesh.k_axis_indices
+        ]
+        (
+            optimized,
+            initial_spread,
+            final_spread,
+            gradient_norm,
+            iterations,
+            converged,
+        ) = _core.wannier_maximize_localization(
+            list(self.nks),
+            states.reshape(
+                -1,
+                states.shape[-2],
+                states.shape[-1],
+            ).tolist(),
+            displacements.tolist(),
+            [twist.tolist() for twist in boundary_twists],
+            neighbor_vectors.tolist(),
+            np.full(
+                len(neighbor_vectors),
+                weights[0],
+                dtype=float,
+            ).tolist(),
+            float(alpha),
+            int(max_iter),
+            float(tol),
+            float(grad_min),
+        )
+        states = np.asarray(optimized, dtype=complex).reshape(states.shape)
+        self._localization_report = {
+            "initial_spread": float(initial_spread),
+            "final_spread": float(final_spread),
+            "gradient_norm": float(gradient_norm),
+            "iterations": int(iterations),
+            "converged": bool(converged),
+        }
+        if verbose:
+            print(
+                "maxloc: "
+                f"{initial_spread:.9e} -> {final_spread:.9e}; "
+                f"gradient={gradient_norm:.5e}; "
+                f"iterations={iterations}; converged={converged}"
+            )
         self.set_tilde_states(
             states,
             is_cell_periodic=True,

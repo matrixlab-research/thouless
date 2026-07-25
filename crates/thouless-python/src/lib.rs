@@ -63,8 +63,9 @@ use thouless::transport::{
     SurfaceGreenOptions,
 };
 use thouless::wannier::{
-    interpolate_periodic_matrices, inverse_bloch_transform, operators_in_frames, periodic_overlaps,
-    project_trials, spread_decomposition,
+    disentangle_subspace, interpolate_periodic_matrices, inverse_bloch_transform,
+    maximize_localization, operators_in_frames, periodic_overlaps, project_trials,
+    spread_decomposition,
 };
 use thouless::{Complex64, ComplexMatrix};
 
@@ -99,6 +100,8 @@ type MatrixRows = Vec<Vec<Complex64>>;
 type MatrixGrid = Vec<MatrixRows>;
 type NeighborMatrixGrid = Vec<Vec<MatrixRows>>;
 type WannierSpreadOutput = (Vec<Vec<f64>>, Vec<f64>, f64, f64, f64);
+type WannierOptimizationOutput = (MatrixGrid, f64, f64, f64, usize, bool);
+type WannierSubspaceOutput = (MatrixGrid, f64, f64, usize, bool);
 type ComplexTensor3 = Vec<Vec<Vec<Complex64>>>;
 type KpmReconstructionOutput = (Vec<f64>, ComplexTensor3, ComplexTensor3, ComplexTensor3);
 type PeriodicTermInput = (MatrixRows, Vec<i64>, bool);
@@ -2006,6 +2009,122 @@ fn wannier_spread_decomposition(
 }
 
 #[pyfunction]
+#[pyo3(signature = (
+    mesh_shape,
+    frames,
+    displacements,
+    boundary_twists,
+    neighbor_vectors,
+    neighbor_weights,
+    step_scale=0.5,
+    max_iterations=1000,
+    spread_tolerance=1.0e-5,
+    gradient_tolerance=1.0e-3
+))]
+#[allow(clippy::too_many_arguments)]
+fn wannier_maximize_localization(
+    mesh_shape: Vec<usize>,
+    frames: MatrixGrid,
+    displacements: Vec<Vec<isize>>,
+    boundary_twists: Vec<Vec<Complex64>>,
+    neighbor_vectors: Vec<Vec<f64>>,
+    neighbor_weights: Vec<f64>,
+    step_scale: f64,
+    max_iterations: usize,
+    spread_tolerance: f64,
+    gradient_tolerance: f64,
+) -> PyResult<WannierOptimizationOutput> {
+    let frames = matrices_from_rows(frames)?;
+    maximize_localization(
+        &mesh_shape,
+        &frames,
+        &displacements,
+        &boundary_twists,
+        &neighbor_vectors,
+        &neighbor_weights,
+        step_scale,
+        max_iterations,
+        spread_tolerance,
+        gradient_tolerance,
+    )
+    .map(|report| {
+        let initial_spread = report.initial_spread();
+        let final_spread = report.final_spread();
+        let gradient_norm = report.gradient_norm();
+        let iterations = report.iterations();
+        let converged = report.converged();
+        (
+            matrices_to_rows(report.frames()),
+            initial_spread,
+            final_spread,
+            gradient_norm,
+            iterations,
+            converged,
+        )
+    })
+    .map_err(value_error)
+}
+
+#[pyfunction]
+#[pyo3(signature = (
+    mesh_shape,
+    candidates,
+    frozen_counts,
+    target_states,
+    initial_frames,
+    trials,
+    displacements,
+    boundary_twists,
+    neighbor_weights,
+    max_iterations=1000,
+    tolerance=1.0e-10,
+    mixing=1.0
+))]
+#[allow(clippy::too_many_arguments)]
+fn wannier_disentangle_subspace(
+    mesh_shape: Vec<usize>,
+    candidates: MatrixGrid,
+    frozen_counts: Vec<usize>,
+    target_states: usize,
+    initial_frames: Option<MatrixGrid>,
+    trials: Option<MatrixRows>,
+    displacements: Vec<Vec<isize>>,
+    boundary_twists: Vec<Vec<Complex64>>,
+    neighbor_weights: Vec<f64>,
+    max_iterations: usize,
+    tolerance: f64,
+    mixing: f64,
+) -> PyResult<WannierSubspaceOutput> {
+    let candidates = matrices_from_rows(candidates)?;
+    let initial_frames = initial_frames.map(matrices_from_rows).transpose()?;
+    let trials = trials.map(matrix_from_rows).transpose()?;
+    disentangle_subspace(
+        &mesh_shape,
+        &candidates,
+        &frozen_counts,
+        target_states,
+        initial_frames.as_deref(),
+        trials.as_ref(),
+        &displacements,
+        &boundary_twists,
+        &neighbor_weights,
+        max_iterations,
+        tolerance,
+        mixing,
+    )
+    .map(|report| {
+        (
+            matrices_to_rows(report.frames()),
+            report.initial_invariant_spread(),
+            report.final_invariant_spread(),
+            report.iterations(),
+            report.converged(),
+        )
+    })
+    .map_err(value_error)
+}
+
+#[pyfunction]
 fn wannier_inverse_bloch_transform(
     mesh_shape: Vec<usize>,
     frames: MatrixGrid,
@@ -2605,6 +2724,8 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(wannier_operators_in_frames, module)?)?;
     module.add_function(wrap_pyfunction!(wannier_periodic_overlaps, module)?)?;
     module.add_function(wrap_pyfunction!(wannier_spread_decomposition, module)?)?;
+    module.add_function(wrap_pyfunction!(wannier_maximize_localization, module)?)?;
+    module.add_function(wrap_pyfunction!(wannier_disentangle_subspace, module)?)?;
     module.add_function(wrap_pyfunction!(wannier_inverse_bloch_transform, module)?)?;
     module.add_function(wrap_pyfunction!(wannier_interpolate_matrices, module)?)?;
     module.add_function(wrap_pyfunction!(diagonal_observable_matrix, module)?)?;

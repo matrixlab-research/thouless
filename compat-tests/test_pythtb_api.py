@@ -245,6 +245,10 @@ def test_wannier_projection_spread_and_interpolation_are_general() -> None:
     initial_spread = float(np.sum(wannier.spread))
     assert wannier.maxloc() is None
     assert float(np.sum(wannier.spread)) <= initial_spread + 1e-12
+    assert wannier._localization_report["final_spread"] <= (
+        wannier._localization_report["initial_spread"] + 1e-12
+    )
+    assert wannier._localization_report["iterations"] >= 0
 
     optimized = pythtb.Wannier(states)
     optimized.set_trial_wfs([[(0, 1.0)]])
@@ -260,6 +264,9 @@ def test_wannier_projection_spread_and_interpolation_are_general() -> None:
     )
     assert optimized.tilde_states.nstates == 1
     assert np.isfinite(optimized.Omega_I)
+    assert optimized._disentanglement_report["final_spread"] <= (
+        optimized._disentanglement_report["initial_spread"] + 1e-12
+    )
 
 
 def test_mesh_model_and_wannier_visualization_entry_points() -> None:

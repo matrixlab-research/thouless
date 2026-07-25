@@ -178,7 +178,7 @@ compat_entry = "python/pythtb/wannier.py"
 rust_capability = "geometry.wannier plus shared eigensystem and Hamiltonian evaluation"
 public_test = "compat-tests/test_pythtb_api.py SSH projection, normalization, center, spread decomposition, Fourier interpolation, and nonincreasing-localization contract"
 source_test = "no collected source tests"
-actual_result = "trial projection, periodic overlaps, real-space FFT, first-shell spread decomposition, frame rotation, and arbitrary-path matrix interpolation run in the Rust core; fixed-rank energy-window selection and parallel-transport gauge smoothing compose those capabilities; a 31-point SSH workflow matches the PythTB 2.0 center and spread decomposition, while full multidimensional iterative SMV optimization and realistic material-scale validation remain open"
+actual_result = "trial projection, self-consistent fixed-rank SMV disentanglement with outer and frozen energy windows, periodic overlaps, real-space FFT, first-shell spread decomposition, multidimensional Marzari-Vanderbilt maximal-localization gradients and unitary updates, frame rotation, and arbitrary-path matrix interpolation run in the Rust core; a 31-point SSH workflow matches the PythTB 2.0 center and spread decomposition, while broader differential fixtures and realistic material-scale validation remain open"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/4"
 

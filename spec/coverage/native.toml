@@ -93,9 +93,9 @@ status = "implemented"
 
 [[capability]]
 id = "geometry.wannier"
-description = "Gauge-covariant trial projection, periodic sampled-frame overlaps, Marzari-Vanderbilt spread decomposition, multidimensional Bloch transforms, frame-projected operators, and periodic matrix interpolation"
-native_api = "thouless::wannier::{project_trials,periodic_overlaps,spread_decomposition,inverse_bloch_transform,operators_in_frames,interpolate_periodic_matrices}"
-test = "tests/native_wannier.rs gauge independence, embedded atomic zero-spread invariant, and unseen two-dimensional off-mesh matrix interpolation plus PythTB SSH differential workflow"
+description = "Gauge-covariant trial projection, fixed-rank SMV subspace disentanglement with frozen manifolds, periodic sampled-frame overlaps, Marzari-Vanderbilt spread decomposition and maximal localization, multidimensional Bloch transforms, frame-projected operators, and periodic matrix interpolation"
+native_api = "thouless::wannier::{project_trials,disentangle_subspace,periodic_overlaps,spread_decomposition,maximize_localization,inverse_bloch_transform,operators_in_frames,interpolate_periodic_matrices}"
+test = "tests/native_wannier.rs gauge independence, frozen-manifold preservation, embedded atomic zero-spread invariant, two-dimensional composite-gauge localization, and unseen off-mesh matrix interpolation plus PythTB SSH differential workflow"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/2"
 

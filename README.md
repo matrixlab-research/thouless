@@ -21,11 +21,13 @@ ten Altland--Zirnbauer Gaussian and circular random-matrix ensembles through
 the native core, together with LLL lattice reduction, closest-vector search,
 Voronoi neighbors, gauge-covariant Wannier projection, sampled-frame overlaps,
 multidimensional FFTs, spread decomposition, and periodic matrix
-interpolation. The Python extension and partial PythTB 2.0 layer pass
+interpolation, including a native multidimensional maximal-localization
+optimizer and fixed-rank SMV disentanglement with frozen subspaces. The Python
+extension and partial PythTB 2.0 layer pass
 all 98 pinned upstream tests without changing their tolerances. Every public
 PythTB 2.0 module, class, function, and method is now represented, including
 Wannier and visualization entry points, but complete semantic parity,
-Rust-native Wannier optimization, realistic material-scale validation,
+broader Wannier differential fixtures, realistic material-scale validation,
 complete topology and response theory, complete open-system transport, and the
 complete Kwant compatibility surface remain open.
 
@@ -116,9 +118,8 @@ includes the complete selected plotting, Qsymm, and continuum modules without
 an expected skip; remaining Kwant inventory and backend gaps are tracked in
 issue #5. The strict PythTB runner executes all 98 collected source tests
 through the repository-built extension. Deeper PythTB semantic parity,
-Rust-native Wannier optimization, file-format differential fixtures, and
-scientific-scale validation remain tracked in issue #4. A skip without a linked
-issue is a CI error.
+Wannier and file-format differential fixtures, and scientific-scale validation
+remain tracked in issue #4. A skip without a linked issue is a CI error.
 
 ## Source baselines
 
