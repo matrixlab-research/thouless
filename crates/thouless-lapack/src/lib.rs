@@ -15,6 +15,88 @@ pub use schur::{
     GeneralizedComplexSchur,
 };
 
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    #[link_name = "zgesdd$NEWLAPACK"]
+    fn accelerate_zgesdd(
+        jobz: *const std::ffi::c_char,
+        rows: *const i32,
+        columns: *const i32,
+        matrix: *mut Complex64,
+        leading_dimension: *const i32,
+        singular_values: *mut f64,
+        left_vectors: *mut Complex64,
+        left_leading_dimension: *const i32,
+        right_vectors_adjoint: *mut Complex64,
+        right_leading_dimension: *const i32,
+        work: *mut Complex64,
+        work_length: *const i32,
+        real_work: *mut f64,
+        integer_work: *mut i32,
+        info: *mut i32,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn complex_gesdd(
+    jobz: u8,
+    rows: i32,
+    columns: i32,
+    matrix: &mut [Complex64],
+    leading_dimension: i32,
+    singular_values: &mut [f64],
+    left_vectors: &mut [Complex64],
+    left_leading_dimension: i32,
+    right_vectors_adjoint: &mut [Complex64],
+    right_leading_dimension: i32,
+    work: &mut [Complex64],
+    work_length: i32,
+    real_work: &mut [f64],
+    integer_work: &mut [i32],
+    info: &mut i32,
+) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        accelerate_zgesdd(
+            &(jobz as std::ffi::c_char),
+            &rows,
+            &columns,
+            matrix.as_mut_ptr(),
+            &leading_dimension,
+            singular_values.as_mut_ptr(),
+            left_vectors.as_mut_ptr(),
+            &left_leading_dimension,
+            right_vectors_adjoint.as_mut_ptr(),
+            &right_leading_dimension,
+            work.as_mut_ptr(),
+            &work_length,
+            real_work.as_mut_ptr(),
+            integer_work.as_mut_ptr(),
+            info,
+        );
+    }
+    #[cfg(not(target_os = "macos"))]
+    unsafe {
+        lapack::zgesdd(
+            jobz,
+            rows,
+            columns,
+            matrix,
+            leading_dimension,
+            singular_values,
+            left_vectors,
+            left_leading_dimension,
+            right_vectors_adjoint,
+            right_leading_dimension,
+            work,
+            work_length,
+            real_work,
+            integer_work,
+            info,
+        );
+    }
+}
+
 /// A column-major Hermitian eigensystem.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HermitianEigensystem {
@@ -382,11 +464,7 @@ pub fn complex_svd(dimension: usize, row_major_entries: &[Complex64]) -> Result<
         });
     }
     let lapack_dimension = i32::try_from(dimension).map_err(|_| Error::DimensionTooLarge)?;
-    let mut matrix = (0..dimension)
-        .flat_map(|column| {
-            (0..dimension).map(move |row| row_major_entries[row * dimension + column])
-        })
-        .collect::<Vec<_>>();
+    let mut matrix = vec![Complex64::new(0.0, 0.0); entry_count];
     let mut singular_values = vec![0.0; dimension];
     let mut left_vectors = vec![Complex64::new(0.0, 0.0); entry_count];
     let mut right_vectors_adjoint = vec![Complex64::new(0.0, 0.0); entry_count];
@@ -408,7 +486,7 @@ pub fn complex_svd(dimension: usize, row_major_entries: &[Complex64]) -> Result<
     // workspace-query ABI. The real and integer work arrays use the
     // documented divide-and-conquer bounds.
     unsafe {
-        lapack::zgesdd(
+        complex_gesdd(
             b'A',
             lapack_dimension,
             lapack_dimension,
@@ -430,8 +508,8 @@ pub fn complex_svd(dimension: usize, row_major_entries: &[Complex64]) -> Result<
     let work_length = workspace_length(work_query[0].re)?;
     let mut work = vec![Complex64::new(0.0, 0.0); work_length];
 
-    // zgesdd overwrites its input, so restore the column-major matrix after
-    // the workspace query before the actual decomposition.
+    // The query does not depend on matrix entries. Use a separate zero matrix
+    // so no backend can carry data-dependent query state into the actual SVD.
     matrix = (0..dimension)
         .flat_map(|column| {
             (0..dimension).map(move |row| row_major_entries[row * dimension + column])
@@ -440,7 +518,7 @@ pub fn complex_svd(dimension: usize, row_major_entries: &[Complex64]) -> Result<
     // SAFETY: zgesdd receives square column-major buffers and its queried
     // complex workspace plus documented real and integer work allocations.
     unsafe {
-        lapack::zgesdd(
+        complex_gesdd(
             b'A',
             lapack_dimension,
             lapack_dimension,
