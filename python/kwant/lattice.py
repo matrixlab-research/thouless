@@ -21,6 +21,7 @@ class Monatomic(SiteFamily):
         if np.linalg.matrix_rank(primitive) < primitive.shape[0]:
             raise ValueError("Primitive vectors must be linearly independent.")
         self.prim_vecs = primitive
+        self._prim_vecs = primitive
         self.lattice_dim = primitive.shape[0]
         self.space_dim = primitive.shape[1]
         self.offset = (
@@ -113,6 +114,7 @@ class Polyatomic:
         if basis.ndim != 2 or basis.shape[1] != primitive.shape[1]:
             raise ValueError("Basis positions have wrong dimensionality.")
         self.prim_vecs = primitive
+        self._prim_vecs = primitive
         self.lattice_dim = primitive.shape[0]
         self.space_dim = primitive.shape[1]
         if isinstance(name, str):
@@ -426,6 +428,10 @@ def general(prim_vecs, basis=None, name="", norbs=None):
         return Monatomic(primitive, name=name, norbs=norbs)
     basis = np.asarray(basis, dtype=float)
     if len(basis) == 1:
+        if norbs is not None and not np.isscalar(norbs):
+            if len(norbs) != 1:
+                raise ValueError("norbs must match the number of basis sites")
+            norbs = norbs[0]
         return Monatomic(primitive, basis[0], name=name, norbs=norbs)
     return Polyatomic(primitive, basis, name=name, norbs=norbs)
 

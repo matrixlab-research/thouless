@@ -48,6 +48,13 @@ test = "src/periodic.rs, tests/native_periodic.rs, repository cosine-chain bound
 status = "implemented"
 
 [[capability]]
+id = "visualization.regular_field"
+description = "Compact-support scalar-density and oriented bond-current interpolation on regular Cartesian fields"
+native_api = "thouless::interpolation::{interpolate_density,interpolate_current,SmoothingOptions,RegularField}"
+test = "src/interpolation.rs linearity, compact support, padded-border, and current-orientation properties plus complete pinned Kwant plotter and two-dimensional band-plot tests"
+status = "implemented"
+
+[[capability]]
 id = "geometry.reciprocal_sampling"
 description = "Metric-aware reciprocal paths and meshes"
 native_api = "thouless::geometry::ReciprocalPath"
@@ -89,9 +96,9 @@ issue = "https://github.com/matrixlab-research/thouless/issues/3"
 
 [[capability]]
 id = "transport.propagating_modes"
-description = "Current-normalized propagating Bloch modes and stable regular or generalized translation pencils for square nearest-cell leads, including singular-hopping bases, complete orthogonal conservation-law subspaces, symmetry-related blocks, and discrete-symmetry-adapted gauges"
+description = "Current-normalized propagating Bloch modes, decaying evanescent modes, and stable regular or generalized translation pencils for square nearest-cell leads, including singular-hopping bases, complete orthogonal conservation-law subspaces, symmetry-related blocks, and discrete-symmetry-adapted gauges"
 native_api = "thouless::lead_modes::{setup_lead_linear_system,reexpress_modes_in_singular_hopping_basis,propagating_modes,propagating_modes_in_subspaces,propagating_modes_in_declared_symmetric_subspaces,propagating_modes_with_symmetries,LeadLinearSystem,LeadLinearSystemOptions,PropagatingLeadModes,ProjectedLeadModes}"
-test = "src/lead_modes.rs analytic scalar-chain, stable-pencil dtype and extraction-basis, singular-basis invariance, degenerate-current, rescaling, complex-projector, symmetry-related-block, time-reversal, and particle-hole properties plus compatibility boundary with the SciPy eigensolver disabled"
+test = "src/lead_modes.rs analytic propagating and gapped scalar-chain, stable-pencil dtype and extraction-basis, singular-basis invariance, degenerate-current, rescaling, complex-projector, symmetry-related-block, time-reversal, and particle-hole properties plus compatibility boundary with the SciPy eigensolver disabled"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/3"
 

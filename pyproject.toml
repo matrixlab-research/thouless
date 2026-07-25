@@ -9,6 +9,17 @@ description = "Rust-native tight-binding, topology, and steady-state quantum tra
 requires-python = ">=3.12"
 dependencies = ["numpy>=2.0", "scipy>=1.10", "tinyarray>=1.2"]
 
+[project.optional-dependencies]
+plot = ["matplotlib>=3.8,<3.9", "plotly>=6,<7"]
+qsymm = ["qsymm>=1.4,<2", "sympy>=1.14,<2"]
+compat-test = [
+  "matplotlib>=3.8,<3.9",
+  "plotly>=6,<7",
+  "pytest>=8.3,<9",
+  "qsymm>=1.4,<2",
+  "sympy>=1.14,<2",
+]
+
 [tool.maturin]
 manifest-path = "crates/thouless-python/Cargo.toml"
 python-source = "python"

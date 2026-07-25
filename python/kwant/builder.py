@@ -696,10 +696,10 @@ class Builder:
             del self[item]
 
     def sites(self):
-        return iter(self._sites)
+        return self._sites.keys()
 
     def hoppings(self):
-        return iter(self._hoppings)
+        return self._hoppings.keys()
 
     def site_value_pairs(self):
         return iter(self._sites.items())

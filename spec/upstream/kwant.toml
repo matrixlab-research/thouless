@@ -11,9 +11,9 @@ test_modules = 24
 static_test_functions = 241
 collection_status = "blocked"
 collection_blocker = "The source test suite imports compiled Cython extensions before collection."
-strict_tests = 258
-strict_passes = 257
-strict_skips = 1
+strict_tests = 289
+strict_passes = 289
+strict_skips = 0
 strict_test_nodes = [
   "kwant/tests/test_lattice.py::test_closest",
   "kwant/tests/test_lattice.py::test_general",
@@ -117,10 +117,7 @@ strict_test_nodes = [
   "kwant/linalg/tests/test_linalg.py",
   "kwant/tests/test_kpm.py",
   "kwant/tests/test_wraparound.py",
+  "kwant/tests/test_plotter.py",
+  "kwant/tests/test_qsymm.py",
 ]
 gap_issue = "https://github.com/matrixlab-research/thouless/issues/5"
-
-[[expected_skip]]
-node = "kwant/tests/test_wraparound.py::test_plot_2d_bands"
-reason = "The optional plotting backend and plot_2d_bands entry point are not implemented."
-issue = "https://github.com/matrixlab-research/thouless/issues/5"

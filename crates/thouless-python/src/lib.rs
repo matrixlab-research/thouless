@@ -18,6 +18,9 @@ use thouless::geometry::ReciprocalPath;
 use thouless::graph::{
     CompressedGraph, CompressionOptions, DirectedEdge, DirectedGraphBuilder, GraphError, NodeId,
 };
+use thouless::interpolation::{
+    interpolate_current, interpolate_density, RegularField, SmoothingOptions,
+};
 use thouless::kpm::{
     apply_kernel, apply_operator_to_chebyshev, chebyshev_nodes, chebyshev_vectors,
     correlation_integral_factor, correlation_moments, correlation_response,
@@ -87,6 +90,7 @@ type KpmReconstructionOutput = (Vec<f64>, ComplexTensor3, ComplexTensor3, Comple
 type PeriodicTermInput = (MatrixRows, Vec<i64>, bool);
 type LatticeReductionOutput = (Vec<Vec<f64>>, Vec<Vec<i64>>);
 type GaugeQuadratureOutput = (Vec<Vec<f64>>, Vec<Vec<f64>>);
+type RegularFieldOutput = (Vec<f64>, Vec<usize>, usize, Vec<(f64, f64)>);
 type SchurOutput = (MatrixRows, MatrixRows, Vec<Complex64>);
 type GeneralizedSchurOutput = (
     MatrixRows,
@@ -2167,6 +2171,72 @@ fn gauge_peierls_phases(
     peierls_phases_from_fluxes(node_count, &undirected_edges, &cycle_fluxes).map_err(value_error)
 }
 
+fn regular_field_output(field: RegularField) -> RegularFieldOutput {
+    (
+        field.values().to_vec(),
+        field.shape().to_vec(),
+        field.components(),
+        field.bounds().to_vec(),
+    )
+}
+
+#[pyfunction(signature = (
+    points,
+    values,
+    reference_edges,
+    absolute_width=None,
+    relative_width=None,
+    samples_per_width=9
+))]
+fn interpolate_density_field(
+    points: Vec<Vec<f64>>,
+    values: Vec<f64>,
+    reference_edges: Vec<(Vec<f64>, Vec<f64>)>,
+    absolute_width: Option<f64>,
+    relative_width: Option<f64>,
+    samples_per_width: usize,
+) -> PyResult<RegularFieldOutput> {
+    interpolate_density(
+        &points,
+        &values,
+        &reference_edges,
+        SmoothingOptions {
+            absolute_width,
+            relative_width,
+            samples_per_width,
+        },
+    )
+    .map(regular_field_output)
+    .map_err(value_error)
+}
+
+#[pyfunction(signature = (
+    edges,
+    currents,
+    absolute_width=None,
+    relative_width=None,
+    samples_per_width=9
+))]
+fn interpolate_current_field(
+    edges: Vec<(Vec<f64>, Vec<f64>)>,
+    currents: Vec<f64>,
+    absolute_width: Option<f64>,
+    relative_width: Option<f64>,
+    samples_per_width: usize,
+) -> PyResult<RegularFieldOutput> {
+    interpolate_current(
+        &edges,
+        &currents,
+        SmoothingOptions {
+            absolute_width,
+            relative_width,
+            samples_per_width,
+        },
+    )
+    .map(regular_field_output)
+    .map_err(value_error)
+}
+
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add(
@@ -2271,5 +2341,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(gauge_interfaces_are_acyclic, module)?)?;
     module.add_function(wrap_pyfunction!(gauge_fundamental_cycles, module)?)?;
     module.add_function(wrap_pyfunction!(gauge_peierls_phases, module)?)?;
+    module.add_function(wrap_pyfunction!(interpolate_density_field, module)?)?;
+    module.add_function(wrap_pyfunction!(interpolate_current_field, module)?)?;
     Ok(())
 }

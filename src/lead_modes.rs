@@ -686,16 +686,22 @@ pub fn propagating_modes(
         raw_modes_from_linear_system(&linear_system)?
     };
 
+    let propagating_raw_modes = raw_modes
+        .iter()
+        .filter(|(bloch_factor, _)| (bloch_factor.norm() - 1.0).abs() <= UNIT_CIRCLE_TOLERANCE)
+        .cloned()
+        .collect::<Vec<_>>();
     let mut candidates = Vec::new();
-    let mut assigned = vec![false; raw_modes.len()];
-    for seed in 0..raw_modes.len() {
+    let mut assigned = vec![false; propagating_raw_modes.len()];
+    for seed in 0..propagating_raw_modes.len() {
         if assigned[seed] {
             continue;
         }
-        let group = (0..raw_modes.len())
+        let group = (0..propagating_raw_modes.len())
             .filter(|&mode| {
                 !assigned[mode]
-                    && (raw_modes[mode].0 - raw_modes[seed].0).norm() <= UNIT_CIRCLE_TOLERANCE
+                    && (propagating_raw_modes[mode].0 - propagating_raw_modes[seed].0).norm()
+                        <= UNIT_CIRCLE_TOLERANCE
             })
             .collect::<Vec<_>>();
         for &mode in &group {
@@ -704,13 +710,13 @@ pub fn propagating_modes(
         let basis = orthonormalize_columns(
             &group
                 .iter()
-                .map(|&mode| raw_modes[mode].1.clone())
+                .map(|&mode| propagating_raw_modes[mode].1.clone())
                 .collect::<Vec<_>>(),
         );
         if basis.is_empty() {
             continue;
         }
-        let bloch_factor = raw_modes[seed].0 / raw_modes[seed].0.norm();
+        let bloch_factor = propagating_raw_modes[seed].0 / propagating_raw_modes[seed].0.norm();
         let velocity_images = basis
             .iter()
             .map(|wave| {
@@ -823,6 +829,15 @@ pub fn propagating_modes(
         .iter()
         .filter(|(velocity, _, _, _)| *velocity < 0.0)
         .count();
+    let mut evanescent_modes = raw_modes
+        .into_iter()
+        .filter(|(bloch_factor, _)| bloch_factor.norm() < 1.0 - UNIT_CIRCLE_TOLERANCE)
+        .collect::<Vec<_>>();
+    evanescent_modes.sort_by(|left, right| {
+        right.0.norm().total_cmp(&left.0.norm()).then_with(|| {
+            canonical_momentum(left.0.arg()).total_cmp(&canonical_momentum(right.0.arg()))
+        })
+    });
     let mode_count = candidates.len();
     let wave_functions = ComplexMatrix::new(
         dimension,
@@ -832,19 +847,28 @@ pub fn propagating_modes(
             .collect(),
     )?;
     let hopping_scale = hopping_norm.sqrt();
+    let stabilized_modes = candidates
+        .iter()
+        .map(|(_, _, bloch_factor, wave)| (*bloch_factor, wave.as_slice()))
+        .chain(
+            evanescent_modes
+                .iter()
+                .map(|(bloch_factor, wave)| (*bloch_factor, wave.as_slice())),
+        )
+        .collect::<Vec<_>>();
     let stabilized_vectors = ComplexMatrix::new(
         dimension,
-        mode_count,
+        stabilized_modes.len(),
         (0..dimension)
             .flat_map(|row| {
-                candidates.iter().map(move |(_, _, bloch_factor, wave)| {
+                stabilized_modes.iter().map(move |(bloch_factor, wave)| {
                     (0..dimension)
                         .map(|column| {
                             inter_cell_hopping.as_slice()[column * dimension + row].conj()
                                 * wave[column]
                         })
                         .sum::<Complex64>()
-                        * bloch_factor
+                        * *bloch_factor
                         / hopping_scale
                 })
             })
@@ -852,12 +876,12 @@ pub fn propagating_modes(
     )?;
     let stabilized_vectors_lambda_inverse = ComplexMatrix::new(
         dimension,
-        mode_count,
+        stabilized_modes.len(),
         (0..dimension)
             .flat_map(|row| {
-                candidates
+                stabilized_modes
                     .iter()
-                    .map(move |(_, _, _, wave)| wave[row] * hopping_scale)
+                    .map(move |(_, wave)| wave[row] * hopping_scale)
             })
             .collect(),
     )?;
@@ -1888,10 +1912,7 @@ where
             continue;
         }
         let eigenvalue = decomposition.alpha()[mode] / beta;
-        if !eigenvalue.re.is_finite()
-            || !eigenvalue.im.is_finite()
-            || (eigenvalue.norm() - 1.0).abs() > UNIT_CIRCLE_TOLERANCE
-        {
+        if !eigenvalue.re.is_finite() || !eigenvalue.im.is_finite() {
             continue;
         }
         let mut wave = extract_wave(mode, eigenvalue, right_vectors)?;
@@ -2015,6 +2036,25 @@ mod tests {
         assert!(
             (modes.square_root_hopping().get(0, 0).unwrap().re - 0.7_f64.sqrt()).abs() < 1.0e-12
         );
+    }
+
+    #[test]
+    fn gapped_scalar_chain_retains_the_decaying_stabilized_mode() {
+        let cell = ComplexMatrix::scalar(Complex64::new(3.0, 0.0));
+        let hopping = ComplexMatrix::scalar(Complex64::new(1.0, 0.0));
+        let modes = propagating_modes(&cell, &hopping).unwrap();
+        assert!(modes.velocities().is_empty());
+        assert!(modes.momenta().is_empty());
+        assert_eq!(modes.incoming_count(), 0);
+        assert_eq!(modes.stabilized_vectors().shape(), (1, 1));
+        assert_eq!(modes.stabilized_vectors_lambda_inverse().shape(), (1, 1));
+
+        let bloch_factor = modes.stabilized_vectors().get(0, 0).unwrap()
+            / modes.stabilized_vectors_lambda_inverse().get(0, 0).unwrap();
+        assert!(bloch_factor.norm() < 1.0);
+        let residual =
+            Complex64::new(3.0, 0.0) + bloch_factor + Complex64::new(1.0, 0.0) / bloch_factor;
+        assert!(residual.norm() < 1.0e-10);
     }
 
     #[test]

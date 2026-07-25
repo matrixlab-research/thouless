@@ -57,10 +57,15 @@ jobs:
       - name: Install extension builder and test dependencies
         run: >-
           .venv/bin/python -m pip install
+          matplotlib==3.8.4
           maturin==1.14.1
-          numpy==2.5.1
+          numpy==2.2.6
+          plotly==6.9.0
           pytest==8.3.5
-          scipy==1.17.1
+          qsymm==1.4.0
+          scipy==1.13.1
+          setuptools==83.0.0
+          sympy==1.14.0
           tinyarray==1.2.5
       - name: Build the repository compatibility extension
         run: .venv/bin/maturin develop
@@ -92,6 +97,8 @@ jobs:
           /tmp/kwant-upstream
       - name: Run the strict Kwant 1.5 source-test slice
         env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
           PYTHONPATH: ${{ github.workspace }}/python
           PYTHONDONTWRITEBYTECODE: "1"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: .venv/bin/python tools/run_upstream_kwant.py /tmp/kwant-upstream

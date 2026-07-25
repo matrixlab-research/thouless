@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import itertools
 import warnings
 from collections import OrderedDict, defaultdict
 
@@ -10,7 +11,7 @@ import numpy as np
 
 from thouless import _core
 
-from .builder import Builder, HermConjOfFunc, NoSymmetry
+from .builder import Builder, FiniteSystem, HermConjOfFunc, InfiniteSystem, NoSymmetry
 from .lattice import TranslationalSymmetry
 from ._common import get_parameters
 
@@ -389,12 +390,96 @@ def wraparound(builder, keep=None, *, coordinate_names="xyz"):
     return result
 
 
-def plot_2d_bands(*args, **kwargs):
-    """Plotting remains tracked separately from periodic model folding."""
-    del args, kwargs
-    raise NotImplementedError(
-        "plot_2d_bands is not implemented; see "
-        "https://github.com/matrixlab-research/thouless/issues/5"
+def plot_2d_bands(
+    syst,
+    k_x=31,
+    k_y=31,
+    params=None,
+    mask_brillouin_zone=False,
+    extend_bbox=0,
+    file=None,
+    show=True,
+    dpi=None,
+    fig_size=None,
+    ax=None,
+):
+    """Plot a fully wrapped two-dimensional model in Cartesian momentum."""
+    from scipy import spatial
+
+    from . import plotter
+
+    if not hasattr(syst, "_wrapped_symmetry"):
+        raise TypeError("expected a system produced by wraparound")
+    if isinstance(syst, InfiniteSystem):
+        raise TypeError("all translational directions must be wrapped")
+    if isinstance(syst, Builder):
+        raise TypeError("the wrapped system must be finalized")
+    if not isinstance(syst, FiniteSystem):
+        raise TypeError("expected a finalized finite wrapped system")
+    periods = np.asarray(syst._wrapped_symmetry.periods, dtype=float)
+    if periods.ndim != 2 or periods.shape[0] != 2:
+        raise ValueError("expected a two-dimensional translational symmetry")
+    if periods.shape[1] != 2:
+        raise ValueError("lattice and real-space dimensions must agree")
+    if not np.isfinite(extend_bbox) or extend_bbox < 0:
+        raise ValueError("extend_bbox must be finite and nonnegative")
+
+    # Columns of ``reciprocal`` span Cartesian reciprocal space without the
+    # conventional factor of 2π. A small surrounding integer lattice is
+    # sufficient to construct the origin's Wigner-Seitz cell in 2D.
+    reciprocal = np.linalg.pinv(periods.T).T
+    lattice_indices = np.asarray(
+        list(itertools.product(range(-2, 3), repeat=2)),
+        dtype=float,
+    )
+    reciprocal_points = 2 * np.pi * lattice_indices @ reciprocal.T
+    origin = int(np.flatnonzero(np.all(lattice_indices == 0, axis=1))[0])
+    voronoi = spatial.Voronoi(reciprocal_points)
+    region = voronoi.regions[voronoi.point_region[origin]]
+    if not region or any(vertex < 0 for vertex in region):
+        raise RuntimeError("failed to construct the first Brillouin zone")
+    vertices = voronoi.vertices[region]
+    maximum = np.max(np.abs(vertices), axis=0) * (1 + float(extend_bbox))
+
+    grids = []
+    for specification, bound in zip((k_x, k_y), maximum, strict=True):
+        specification = np.asarray(specification)
+        if specification.ndim == 0:
+            count = int(specification)
+            if count < 2:
+                raise ValueError("momentum grids require at least two points")
+            grids.append(np.linspace(-bound, bound, count))
+        elif specification.ndim == 1:
+            grids.append(np.asarray(specification, dtype=float))
+        else:
+            raise ValueError("momentum grids must be counts or one-dimensional arrays")
+
+    def hamiltonian(k_x, k_y, **fixed):
+        lattice_momentum = np.linalg.lstsq(
+            reciprocal,
+            np.asarray([k_x, k_y], dtype=float),
+            rcond=None,
+        )[0]
+        arguments = dict(fixed)
+        arguments.update(zip(syst._momentum_names, lattice_momentum, strict=True))
+        return syst.hamiltonian_submatrix(params=arguments, sparse=False)
+
+    def outside_brillouin_zone(k_x, k_y):
+        point = np.asarray([k_x, k_y], dtype=float)
+        distances = np.linalg.norm(reciprocal_points - point, axis=1)
+        return int(np.argmin(distances)) != origin
+
+    return plotter.spectrum(
+        hamiltonian,
+        ("k_x", grids[0]),
+        ("k_y", grids[1]),
+        params=params or {},
+        mask=outside_brillouin_zone if mask_brillouin_zone else None,
+        file=file,
+        show=show,
+        dpi=dpi,
+        fig_size=fig_size,
+        ax=ax,
     )
 
 

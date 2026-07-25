@@ -74,7 +74,7 @@ compat_entry = "python/kwant/physics"
 rust_capability = "transport.propagating_modes, transport.lead_self_energy, transport.steady_state, and symmetry.particle_hole_basis"
 public_test = "pinned low-level lead protocol and sparse-solver workflow plus regular-chain mode, stable linear-system, and rectangular or singular self-energy boundaries with Python eigensolvers disabled"
 source_test = "low-level modes/self-energy lead replacement, sparse-solver modes, self-energy, singular-lead, and precalculation workflows, plus 24 pinned lead-module tests including all explicit stabilization selections across discrete-symmetry classes, the bearded graphene boundary, stabilized-linear-system dtype selection, randomized and degenerate TRIM particle-hole bases, all single-block discrete symmetry classes, chiral modes, identical and symmetry-related blocks, and square, singular, rectangular, rotated, complex, and unequal-size conservation blocks; complete physics lead module not yet selected"
-actual_result = "scale-invariant regular and degenerate propagating modes, stable regular or generalized lead pencils with Rust-owned wave-function extraction, explicit singular-basis stabilization with the source backend gauge, correctly oriented polyatomic hopping shells and the bearded graphene interface, general square, rectangular, and rank-deficient retarded self-energies, particle-hole-, time-reversal-, and chiral-adapted mode gauges, independent Rust-native conservation-law blocks, and exact construction of symmetry-related blocks now work; 24 lead-module, 1 low-level lead-protocol, and 16 sparse-solver source tests passed; stabilized evanescent modes and the remainder of the physics lead module remain missing"
+actual_result = "scale-invariant propagating and decaying modes, stable regular or generalized lead pencils with Rust-owned wave-function extraction, explicit singular-basis stabilization with the source backend gauge, correctly oriented polyatomic hopping shells and the bearded graphene interface, general square, rectangular, and rank-deficient retarded self-energies, particle-hole-, time-reversal-, and chiral-adapted mode gauges, independent Rust-native conservation-law blocks, and exact construction of symmetry-related blocks now work; 24 lead-module, 1 low-level lead-protocol, and 16 sparse-solver source tests passed; the remainder of the physics lead module is not yet selected"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
@@ -214,12 +214,16 @@ issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
 [[interface]]
 name = "periodic boundary folding"
-source_entries = ["wraparound.wraparound", "wraparound.WrappedBuilder"]
+source_entries = [
+  "wraparound.wraparound",
+  "wraparound.WrappedBuilder",
+  "wraparound.plot_2d_bands",
+]
 compat_entry = "python/kwant/wraparound"
-rust_capability = "geometry.periodic_folding"
-public_test = "repository scalar-chain reciprocal-periodicity contract"
-source_test = "periodic folding with all directions or one retained direction, oblique and mismatched fundamental domains, opposite hoppings, scalar and matrix values, callable parameter signatures, symmetries, and args/params equivalence"
-actual_result = "7 source tests passed through Rust-native Bloch phases and adjoint folding"
+rust_capability = "geometry.periodic_folding and visualization.regular_field"
+public_test = "repository scalar-chain reciprocal-periodicity contract and Rust regular-field interpolation invariants"
+source_test = "periodic folding with all directions or one retained direction, oblique and mismatched fundamental domains, opposite hoppings, scalar and matrix values, callable parameter signatures, symmetries, args/params equivalence, and two-dimensional Brillouin-zone plotting"
+actual_result = "8 source tests passed through Rust-native Bloch phases and adjoint folding, including reciprocal-cell construction and two-dimensional band plotting"
 status = "implemented"
 
 [[interface]]
@@ -237,13 +241,57 @@ actual_result = "52 source tests passed through Rust-native Horton cycle bases, 
 status = "implemented"
 
 [[interface]]
-name = "remaining optional scientific modules"
-source_entries = ["continuum", "plotter", "wraparound.plot_2d_bands"]
-compat_entry = "python/kwant"
-rust_capability = "compatibility utility layer; native migration pending"
+name = "plotting and regular-field interpolation"
+source_entries = [
+  "plotter.plot",
+  "plotter.map",
+  "plotter.bands",
+  "plotter.spectrum",
+  "plotter.mask_interpolate",
+  "plotter.density",
+  "plotter.current",
+  "plotter.scalarplot",
+  "plotter.streamplot",
+]
+compat_entry = "python/kwant/plotter"
+rust_capability = "visualization.regular_field"
+public_test = "Rust linearity, compact-support, orientation, and padded-border invariants"
+source_test = "complete pinned plotter module with backend discovery, Matplotlib and Plotly rendering, site and hopping styles, map, bands, spectrum, masks, scalar and vector interpolation, density, and current"
+actual_result = "20 source tests passed; density and current fields are evaluated by the Rust compact-support interpolation core and rendered by optional Python backends"
+status = "implemented"
+
+[[interface]]
+name = "Qsymm model interoperability"
+source_entries = [
+  "qsymm.builder_to_model",
+  "qsymm.model_to_builder",
+  "qsymm.find_builder_symmetries",
+]
+compat_entry = "python/kwant/qsymm"
+rust_capability = "model.structure and symmetry.discrete"
+public_test = "pinned bidirectional model, basis-ordering, and symmetry-discovery contracts"
+source_test = "complete pinned qsymm adapter module across honeycomb and higher-dimensional models, real-space and wraparound conventions, bidirectional conversion, declared symmetries, discovered discrete symmetries and conservation laws, and orbital basis ordering"
+actual_result = "11 source tests passed through thin conversion into the optional qsymm algebra and the Rust-backed Kwant builder"
+status = "implemented"
+
+[[interface]]
+name = "continuum symbolic models and discretization"
+source_entries = [
+  "continuum.sympify",
+  "continuum.lambdify",
+  "continuum.discretize_symbolic",
+  "continuum.build_discretized",
+  "continuum.discretize",
+  "continuum.to_landau_basis",
+  "continuum.discretize_landau",
+  "continuum.LandauLattice",
+]
+compat_entry = "python/kwant/continuum"
+rust_capability = "symbolic continuum discretization not yet implemented"
 public_test = "not implemented"
-actual_result = "plot_2d_bands remains a visible issue-linked skip; continuum and plotter are not selected"
-status = "partial"
+source_test = "pinned continuum common, discretizer, and Landau-level modules"
+actual_result = "not selected"
+status = "missing"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
 [[interface]]
