@@ -65,14 +65,15 @@ source_entries = [
   "modes",
   "selfenergy",
   "square_selfenergy",
+  "phs_symmetrization",
   "PropagatingModes",
   "StabilizedModes",
 ]
 compat_entry = "python/kwant/physics"
-rust_capability = "transport.propagating_modes, transport.lead_self_energy, and transport.steady_state"
+rust_capability = "transport.propagating_modes, transport.lead_self_energy, transport.steady_state, and symmetry.particle_hole_basis"
 public_test = "pinned low-level lead protocol and sparse-solver workflow plus regular-chain mode and rectangular or singular self-energy boundaries with Python eigensolvers disabled"
-source_test = "low-level modes/self-energy lead replacement, sparse-solver modes, self-energy, singular-lead, and precalculation workflows, plus 11 pinned lead-module tests; complete physics lead module not yet selected"
-actual_result = "scale-invariant regular and degenerate propagating modes plus general square, rectangular, and rank-deficient retarded self-energies now use Rust; 11 lead-module, 1 low-level lead-protocol, and 16 sparse-solver source tests passed; stabilized evanescent modes, fully general singular-mode reduction, symmetry blocks, and the remainder of the physics lead module remain missing"
+source_test = "low-level modes/self-energy lead replacement, sparse-solver modes, self-energy, singular-lead, and precalculation workflows, plus 12 pinned lead-module tests including randomized TRIM particle-hole bases; complete physics lead module not yet selected"
+actual_result = "scale-invariant regular and degenerate propagating modes, general square, rectangular, and rank-deficient retarded self-energies, and particle-hole-adapted TRIM bases now use Rust; 12 lead-module, 1 low-level lead-protocol, and 16 sparse-solver source tests passed; stabilized evanescent modes, fully general singular-mode reduction, conservation-law mode blocks, and the remainder of the physics lead module remain missing"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 

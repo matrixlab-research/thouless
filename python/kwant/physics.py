@@ -194,6 +194,24 @@ def two_terminal_shotnoise(scattering_matrix):
     return _core.reflection_shot_noise(np.asarray(block, dtype=complex).tolist())
 
 
+def phs_symmetrization(wave_functions, particle_hole):
+    """Return a particle-hole-adapted orthonormal basis at a TRIM."""
+    wave_functions = np.asarray(wave_functions, dtype=complex)
+    particle_hole = (
+        particle_hole.toarray()
+        if scipy_sparse.issparse(particle_hole)
+        else np.asarray(particle_hole, dtype=complex)
+    )
+    adapted, ordering = _core.particle_hole_basis(
+        wave_functions.tolist(),
+        particle_hole.tolist(),
+    )
+    return (
+        np.asarray(adapted, dtype=complex),
+        np.asarray(ordering, dtype=int),
+    )
+
+
 def modes(h_cell, h_hop, tol=1e6, stabilization=None, *, discrete_symmetry=None):
     """Solve Bloch modes of a nearest-cell periodic lead."""
     del tol, stabilization, discrete_symmetry

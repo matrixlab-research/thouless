@@ -229,6 +229,41 @@ def test_discrete_symmetry_generalizes_to_three_conservation_blocks() -> None:
     ) == ["Conservation law"]
 
 
+def test_particle_hole_basis_executes_without_python_factorizations(monkeypatch) -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    import scipy.linalg
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Python factorizations must not construct symmetry bases")
+
+    monkeypatch.setattr(scipy.linalg, "schur", forbidden)
+    monkeypatch.setattr(scipy.linalg, "qr", forbidden)
+
+    mixed = np.asarray(
+        [
+            [1 / np.sqrt(2), 1j / np.sqrt(2)],
+            [1j / np.sqrt(2), 1 / np.sqrt(2)],
+        ],
+        dtype=complex,
+    )
+    adapted, ordering = kwant.physics.phs_symmetrization(mixed, np.eye(2))
+    np.testing.assert_allclose(adapted, adapted.conj(), atol=1e-8)
+    np.testing.assert_allclose(adapted.conj().T @ adapted, np.eye(2), atol=1e-8)
+    np.testing.assert_array_equal(ordering, [0, 0])
+
+    particle_hole = np.asarray([[0, 1], [-1, 0]], dtype=complex)
+    adapted, ordering = kwant.physics.phs_symmetrization(
+        np.eye(2),
+        particle_hole,
+    )
+    np.testing.assert_allclose(
+        adapted[:, 1],
+        particle_hole @ adapted[:, 0].conj(),
+        atol=1e-8,
+    )
+    np.testing.assert_array_equal(ordering, [0, 1])
+
+
 def test_lattice_reduction_exposes_voronoi_geometry() -> None:
     kwant = require_compat_module("kwant", ISSUE_URL)
     lll = kwant.linalg.lll

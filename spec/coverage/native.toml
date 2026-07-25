@@ -110,6 +110,13 @@ test = "src/symmetry.rs unit tests and complete pinned Kwant discrete-symmetry m
 status = "implemented"
 
 [[capability]]
+id = "symmetry.particle_hole_basis"
+description = "Orthonormal wave-function bases adapted to antiunitary particle-hole symmetries with square plus or minus one"
+native_api = "thouless::symmetry::{particle_hole_symmetric_basis,ParticleHoleBasis}"
+test = "src/symmetry.rs square-plus-one invariance and square-minus-one adjacent-pair properties plus pinned Kwant TRIM randomized test"
+status = "implemented"
+
+[[capability]]
 id = "ensembles.random_matrix"
 description = "Gaussian Hamiltonian and circular scattering ensembles in all ten Altland-Zirnbauer classes"
 native_api = "thouless::random_matrix::{gaussian_from_components,circular_from_components,SymmetryClass}"

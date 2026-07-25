@@ -1,9 +1,11 @@
 //! Discrete symmetries and conservation-law subspaces.
 
+use std::f64::consts::PI;
 use std::fmt;
 
 use nalgebra::DMatrix;
 
+use crate::decomposition::schur;
 use crate::{Complex64, ComplexMatrix};
 
 const UNITARY_TOLERANCE: f64 = 1.0e-10;
@@ -37,12 +39,16 @@ impl SymmetryViolation {
 #[non_exhaustive]
 pub enum SymmetryError {
     EmptyProjectors,
+    EmptyWaveFunctionBasis,
     InconsistentDimensions,
     ProjectorsNotComplete,
     ProductNotIdentity,
     OperatorNotUnitary { name: &'static str },
     InvalidOperatorSquare { name: &'static str },
     NonCanonicalProjectors { name: &'static str },
+    WaveFunctionBasisNotClosed,
+    OddParticleHoleSubspace,
+    BasisConstructionFailed,
     ValidationMatrixTooWide,
     MatrixConstruction(String),
 }
@@ -51,6 +57,9 @@ impl fmt::Display for SymmetryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyProjectors => write!(formatter, "projector list cannot be empty"),
+            Self::EmptyWaveFunctionBasis => {
+                write!(formatter, "wave-function basis cannot be empty")
+            }
             Self::InconsistentDimensions => {
                 write!(
                     formatter,
@@ -78,6 +87,20 @@ impl fmt::Display for SymmetryError {
                     "{name} symmetry is not canonical in the projector basis"
                 )
             }
+            Self::WaveFunctionBasisNotClosed => write!(
+                formatter,
+                "wave functions are not orthonormal or not closed under particle-hole symmetry"
+            ),
+            Self::OddParticleHoleSubspace => write!(
+                formatter,
+                "a particle-hole subspace with square -1 must have even dimension"
+            ),
+            Self::BasisConstructionFailed => {
+                write!(
+                    formatter,
+                    "particle-hole-symmetric basis construction failed"
+                )
+            }
             Self::ValidationMatrixTooWide => {
                 write!(formatter, "a validation matrix cannot be wider than square")
             }
@@ -87,6 +110,182 @@ impl fmt::Display for SymmetryError {
 }
 
 impl std::error::Error for SymmetryError {}
+
+/// A particle-hole-adapted orthonormal basis and its stable partner ordering.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParticleHoleBasis {
+    wave_functions: ComplexMatrix,
+    ordering: Vec<usize>,
+}
+
+impl ParticleHoleBasis {
+    /// Wave functions stored as orthonormal columns.
+    #[must_use]
+    pub const fn wave_functions(&self) -> &ComplexMatrix {
+        &self.wave_functions
+    }
+
+    /// Sorting keys that keep square-minus-one particle-hole partners adjacent.
+    #[must_use]
+    pub fn ordering(&self) -> &[usize] {
+        &self.ordering
+    }
+}
+
+/// Construct an orthonormal basis adapted to an antiunitary particle-hole
+/// symmetry inside a closed wave-function subspace.
+///
+/// For `P² = +1`, every returned column is invariant under `P`. For
+/// `P² = -1`, returned columns form adjacent pairs `[ψ, Pψ]`.
+pub fn particle_hole_symmetric_basis(
+    wave_functions: &ComplexMatrix,
+    particle_hole: &ComplexMatrix,
+) -> Result<ParticleHoleBasis, SymmetryError> {
+    let ambient_dimension = wave_functions.rows();
+    let subspace_dimension = wave_functions.columns();
+    if subspace_dimension == 0 {
+        return Err(SymmetryError::EmptyWaveFunctionBasis);
+    }
+    if particle_hole.shape() != (ambient_dimension, ambient_dimension) {
+        return Err(SymmetryError::InconsistentDimensions);
+    }
+
+    let wave_functions = to_dense(wave_functions);
+    let particle_hole = to_dense(particle_hole);
+    let restricted = wave_functions.adjoint() * &particle_hole * conjugate(&wave_functions);
+    if !almost_identity_with_tolerance(
+        &(&restricted * restricted.adjoint()),
+        1.0,
+        VALIDATION_TOLERANCE,
+    ) {
+        return Err(SymmetryError::WaveFunctionBasisNotClosed);
+    }
+
+    let square = &restricted * conjugate(&restricted);
+    let square_sign = if almost_identity_with_tolerance(&square, 1.0, VALIDATION_TOLERANCE) {
+        1
+    } else if almost_identity_with_tolerance(&square, -1.0, VALIDATION_TOLERANCE) {
+        -1
+    } else {
+        return Err(SymmetryError::InvalidOperatorSquare {
+            name: "Particle-hole",
+        });
+    };
+
+    let (adapted, ordering) = if square_sign == 1 {
+        if maximum_entry_norm(&(&restricted - restricted.transpose())) > VALIDATION_TOLERANCE {
+            return Err(SymmetryError::InvalidOperatorSquare {
+                name: "Particle-hole",
+            });
+        }
+        let restricted_matrix = matrix_from_dense(restricted)?;
+        let decomposition =
+            schur(&restricted_matrix).map_err(|_| SymmetryError::BasisConstructionFailed)?;
+        let mut phases = decomposition
+            .eigenvalues()
+            .iter()
+            .map(|value| value.arg())
+            .collect::<Vec<_>>();
+        phases.sort_by(f64::total_cmp);
+        let (gap_index, gap_size) = phases
+            .iter()
+            .enumerate()
+            .map(|(index, &phase)| {
+                let next = if index + 1 < phases.len() {
+                    phases[index + 1]
+                } else {
+                    phases[0] + 2.0 * PI
+                };
+                (index, next - phase)
+            })
+            .max_by(|left, right| left.1.total_cmp(&right.1))
+            .ok_or(SymmetryError::BasisConstructionFailed)?;
+        let shift = -PI - (phases[gap_index] + gap_size / 2.0);
+        let phase_shift = Complex64::from_polar(1.0, shift);
+        let root_unshift = Complex64::from_polar(1.0, -shift / 2.0);
+        let roots = decomposition
+            .eigenvalues()
+            .iter()
+            .map(|&value| (value * phase_shift).sqrt() * root_unshift)
+            .collect::<Vec<_>>();
+        let vectors = to_dense(decomposition.vectors());
+        let root_diagonal = DMatrix::from_diagonal(&nalgebra::DVector::from_vec(roots));
+        let square_root = &vectors * root_diagonal * vectors.adjoint();
+        (&wave_functions * square_root, vec![0; subspace_dimension])
+    } else {
+        if subspace_dimension % 2 != 0 {
+            return Err(SymmetryError::OddParticleHoleSubspace);
+        }
+        let mut basis = Vec::<Vec<Complex64>>::with_capacity(subspace_dimension);
+        while basis.len() < subspace_dimension {
+            let candidate = (0..subspace_dimension)
+                .map(|column| {
+                    let source = wave_functions.column(column);
+                    let mut residual = source.iter().copied().collect::<Vec<_>>();
+                    orthogonalize(&mut residual, &basis);
+                    let norm = vector_norm(&residual);
+                    (residual, norm)
+                })
+                .max_by(|left, right| left.1.total_cmp(&right.1))
+                .ok_or(SymmetryError::BasisConstructionFailed)?;
+            if candidate.1 <= VALIDATION_TOLERANCE {
+                return Err(SymmetryError::BasisConstructionFailed);
+            }
+            let wave_function = normalized(candidate.0, candidate.1);
+            let conjugated = DMatrix::from_column_slice(
+                ambient_dimension,
+                1,
+                &wave_function
+                    .iter()
+                    .map(|value| value.conj())
+                    .collect::<Vec<_>>(),
+            );
+            let partner_matrix = &particle_hole * conjugated;
+            let partner = partner_matrix.column(0).iter().copied().collect::<Vec<_>>();
+            if basis
+                .iter()
+                .chain(std::iter::once(&wave_function))
+                .any(|existing| inner_product(existing, &partner).norm() > VALIDATION_TOLERANCE)
+            {
+                return Err(SymmetryError::BasisConstructionFailed);
+            }
+            let partner_norm = vector_norm(&partner);
+            if (partner_norm - 1.0).abs() > VALIDATION_TOLERANCE {
+                return Err(SymmetryError::BasisConstructionFailed);
+            }
+            basis.push(wave_function);
+            basis.push(normalized(partner, partner_norm));
+        }
+        let adapted = DMatrix::from_fn(ambient_dimension, subspace_dimension, |row, column| {
+            basis[column][row]
+        });
+        (adapted, (0..subspace_dimension).collect())
+    };
+
+    let gram = adapted.adjoint() * &adapted;
+    if !almost_identity_with_tolerance(&gram, 1.0, VALIDATION_TOLERANCE) {
+        return Err(SymmetryError::BasisConstructionFailed);
+    }
+    let transformed = &particle_hole * conjugate(&adapted);
+    let relation_is_valid = if square_sign == 1 {
+        maximum_entry_norm(&(&adapted - transformed)) <= VALIDATION_TOLERANCE
+    } else {
+        (0..subspace_dimension).step_by(2).all(|column| {
+            (0..ambient_dimension).all(|row| {
+                (adapted[(row, column + 1)] - transformed[(row, column)]).norm()
+                    <= VALIDATION_TOLERANCE
+            })
+        })
+    };
+    if !relation_is_valid {
+        return Err(SymmetryError::BasisConstructionFailed);
+    }
+
+    Ok(ParticleHoleBasis {
+        wave_functions: matrix_from_dense(adapted)?,
+        ordering,
+    })
+}
 
 /// A validated collection of conservation-law projectors and symmetries.
 #[derive(Clone, Debug, PartialEq)]
@@ -380,15 +579,50 @@ fn conjugate(matrix: &DMatrix<Complex64>) -> DMatrix<Complex64> {
 }
 
 fn almost_identity(matrix: &DMatrix<Complex64>, sign: f64) -> bool {
+    almost_identity_with_tolerance(matrix, sign, UNITARY_TOLERANCE)
+}
+
+fn almost_identity_with_tolerance(matrix: &DMatrix<Complex64>, sign: f64, tolerance: f64) -> bool {
     if matrix.nrows() != matrix.ncols() {
         return false;
     }
     (0..matrix.nrows()).all(|row| {
         (0..matrix.ncols()).all(|column| {
             let expected = if row == column { sign } else { 0.0 };
-            (matrix[(row, column)] - Complex64::new(expected, 0.0)).norm() < UNITARY_TOLERANCE
+            (matrix[(row, column)] - Complex64::new(expected, 0.0)).norm() < tolerance
         })
     })
+}
+
+fn inner_product(left: &[Complex64], right: &[Complex64]) -> Complex64 {
+    left.iter()
+        .zip(right)
+        .map(|(&left, &right)| left.conj() * right)
+        .sum()
+}
+
+fn orthogonalize(vector: &mut [Complex64], basis: &[Vec<Complex64>]) {
+    for existing in basis {
+        let overlap = inner_product(existing, vector);
+        for (value, &basis_value) in vector.iter_mut().zip(existing) {
+            *value -= basis_value * overlap;
+        }
+    }
+}
+
+fn vector_norm(vector: &[Complex64]) -> f64 {
+    vector
+        .iter()
+        .map(|value| value.norm_sqr())
+        .sum::<f64>()
+        .sqrt()
+}
+
+fn normalized(mut vector: Vec<Complex64>, norm: f64) -> Vec<Complex64> {
+    for value in &mut vector {
+        *value /= norm;
+    }
+    vector
 }
 
 fn frobenius_norm(matrix: &DMatrix<Complex64>) -> f64 {
@@ -447,5 +681,60 @@ mod tests {
         let symmetry =
             DiscreteSymmetry::new(None, Some(identity), Some(particle.clone()), None).unwrap();
         assert_eq!(symmetry.chiral(), Some(&particle));
+    }
+
+    #[test]
+    fn square_plus_one_basis_is_particle_hole_invariant() {
+        let inverse_sqrt_two = 2.0_f64.sqrt().recip();
+        let wave_functions = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(inverse_sqrt_two, 0.0),
+                Complex64::new(0.0, inverse_sqrt_two),
+                Complex64::new(0.0, inverse_sqrt_two),
+                Complex64::new(inverse_sqrt_two, 0.0),
+            ],
+        )
+        .unwrap();
+        let basis =
+            particle_hole_symmetric_basis(&wave_functions, &ComplexMatrix::identity(2)).unwrap();
+        assert_eq!(basis.ordering(), &[0, 0]);
+        let adapted = to_dense(basis.wave_functions());
+        assert!(almost_identity_with_tolerance(
+            &(adapted.adjoint() * &adapted),
+            1.0,
+            VALIDATION_TOLERANCE,
+        ));
+        assert!(maximum_entry_norm(&(&adapted - conjugate(&adapted))) <= VALIDATION_TOLERANCE);
+    }
+
+    #[test]
+    fn square_minus_one_basis_forms_adjacent_kramers_pairs() {
+        let particle_hole = matrix(
+            4,
+            4,
+            &[
+                0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0,
+            ],
+        );
+        let basis =
+            particle_hole_symmetric_basis(&ComplexMatrix::identity(4), &particle_hole).unwrap();
+        assert_eq!(basis.ordering(), &[0, 1, 2, 3]);
+        let adapted = to_dense(basis.wave_functions());
+        let transformed = to_dense(&particle_hole) * conjugate(&adapted);
+        for column in (0..4).step_by(2) {
+            for row in 0..4 {
+                assert!(
+                    (adapted[(row, column + 1)] - transformed[(row, column)]).norm()
+                        <= VALIDATION_TOLERANCE
+                );
+            }
+        }
+        assert!(almost_identity_with_tolerance(
+            &(adapted.adjoint() * adapted),
+            1.0,
+            VALIDATION_TOLERANCE,
+        ));
     }
 }

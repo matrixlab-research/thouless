@@ -30,7 +30,9 @@ use thouless::observables::{pauli_coefficients, project_diagonal_observable};
 use thouless::periodic::{fold_terms, PeriodicTerm};
 use thouless::random_matrix::{circular_from_components, gaussian_from_components, SymmetryClass};
 use thouless::spectrum::hermitian_eigensystem;
-use thouless::symmetry::DiscreteSymmetry as NativeDiscreteSymmetry;
+use thouless::symmetry::{
+    particle_hole_symmetric_basis, DiscreteSymmetry as NativeDiscreteSymmetry,
+};
 use thouless::topology::{
     chern_numbers_on_uniform_grid, connection_from_link, parallel_transport_link, plaquette_flux,
     second_chern_from_hamiltonian_derivatives, wilson_line_phase, wilson_loop_eigenphases,
@@ -1534,6 +1536,22 @@ fn discrete_symmetry_validate(
 }
 
 #[pyfunction]
+fn particle_hole_basis(
+    wave_functions: MatrixRows,
+    particle_hole: MatrixRows,
+) -> PyResult<(MatrixRows, Vec<usize>)> {
+    let basis = particle_hole_symmetric_basis(
+        &matrix_from_rows(wave_functions)?,
+        &matrix_from_rows(particle_hole)?,
+    )
+    .map_err(value_error)?;
+    Ok((
+        matrix_to_rows(basis.wave_functions()),
+        basis.ordering().to_vec(),
+    ))
+}
+
+#[pyfunction]
 fn lattice_gs_coefficient(vector: Vec<f64>, reference: Vec<f64>) -> PyResult<f64> {
     gram_schmidt_coefficient(&vector, &reference).map_err(value_error)
 }
@@ -1680,6 +1698,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(rmt_circular, module)?)?;
     module.add_function(wrap_pyfunction!(discrete_symmetry_normalize, module)?)?;
     module.add_function(wrap_pyfunction!(discrete_symmetry_validate, module)?)?;
+    module.add_function(wrap_pyfunction!(particle_hole_basis, module)?)?;
     module.add_function(wrap_pyfunction!(lattice_gs_coefficient, module)?)?;
     module.add_function(wrap_pyfunction!(lattice_gram_schmidt, module)?)?;
     module.add_function(wrap_pyfunction!(lattice_is_c_reduced, module)?)?;
