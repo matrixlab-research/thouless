@@ -23,7 +23,7 @@ compat_entry = "python/kwant"
 rust_capability = "model.structure"
 public_test = "compat-tests/test_kwant_api.py"
 source_test = "complete pinned builder module: construction, key validation, symmetry operators, finalization, Hamiltonian, parameter binding and renaming, low-level and automatically attached leads, lead padding, Peierls phase insertion, sparse-submatrix, pickling, fill, dangling, and hopping-kind behavior"
-actual_result = "32 source tests passed"
+actual_result = "33 source tests passed"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
