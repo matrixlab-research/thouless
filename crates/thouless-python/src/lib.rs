@@ -27,7 +27,8 @@ use thouless::topology::{
 };
 use thouless::transform::{change_nonperiodic_vector, make_supercell, remove_orbitals};
 use thouless::transport::{
-    partition_shot_noise, solve_open_system, LeadContact, SurfaceGreenOptions,
+    partition_shot_noise, regularize_retarded_self_energy, retarded_lead_self_energy,
+    solve_open_system, square_lattice_self_energy, LeadContact, SurfaceGreenOptions,
 };
 use thouless::{Complex64, ComplexMatrix};
 
@@ -75,7 +76,15 @@ type BandOutput = (
     Option<Vec<f64>>,
     Option<MatrixRows>,
 );
-type LeadModeOutput = (MatrixRows, Vec<f64>, Vec<f64>, usize);
+type LeadModeOutput = (
+    MatrixRows,
+    Vec<f64>,
+    Vec<f64>,
+    usize,
+    MatrixRows,
+    MatrixRows,
+    MatrixRows,
+);
 type DiscreteSymmetryOutput = (
     Option<Vec<MatrixRows>>,
     Option<MatrixRows>,
@@ -441,9 +450,48 @@ fn lead_propagating_modes(
             modes.velocities().to_vec(),
             modes.momenta().to_vec(),
             modes.incoming_count(),
+            matrix_to_rows(modes.stabilized_vectors()),
+            matrix_to_rows(modes.stabilized_vectors_lambda_inverse()),
+            matrix_to_rows(modes.square_root_hopping()),
         )
     })
     .map_err(value_error)
+}
+
+#[pyfunction(signature = (
+    cell_hamiltonian,
+    inter_cell_hopping,
+    energy=0.0,
+    broadening=None,
+    maximum_rank=None
+))]
+fn lead_retarded_self_energy(
+    cell_hamiltonian: MatrixRows,
+    inter_cell_hopping: MatrixRows,
+    energy: f64,
+    broadening: Option<f64>,
+    maximum_rank: Option<usize>,
+) -> PyResult<MatrixRows> {
+    let mut options = SurfaceGreenOptions::default();
+    if let Some(broadening) = broadening {
+        options.broadening = broadening;
+    }
+    let self_energy = retarded_lead_self_energy(
+        &matrix_from_rows(cell_hamiltonian)?,
+        &matrix_from_rows(inter_cell_hopping)?,
+        energy,
+        options,
+    )
+    .and_then(|self_energy| regularize_retarded_self_energy(&self_energy, maximum_rank))
+    .map_err(value_error)?;
+    Ok(matrix_to_rows(&self_energy))
+}
+
+#[pyfunction]
+fn square_strip_self_energy(width: usize, hopping: f64, fermi_energy: f64) -> PyResult<MatrixRows> {
+    square_lattice_self_energy(width, hopping, fermi_energy)
+        .map(|self_energy| matrix_to_rows(&self_energy))
+        .map_err(value_error)
 }
 
 #[pyfunction]
@@ -1316,6 +1364,8 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(lead_band_evaluation, module)?)?;
     module.add_function(wrap_pyfunction!(reflection_shot_noise, module)?)?;
     module.add_function(wrap_pyfunction!(lead_propagating_modes, module)?)?;
+    module.add_function(wrap_pyfunction!(lead_retarded_self_energy, module)?)?;
+    module.add_function(wrap_pyfunction!(square_strip_self_energy, module)?)?;
     module.add_function(wrap_pyfunction!(dense_schur, module)?)?;
     module.add_function(wrap_pyfunction!(dense_reorder_schur, module)?)?;
     module.add_function(wrap_pyfunction!(dense_schur_eigenvectors, module)?)?;

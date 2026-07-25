@@ -1,5 +1,7 @@
 """Kwant 1.5 compatibility layer backed by the Thouless Rust core."""
 
+import sys
+
 from . import builder, digest, graph, lattice, linalg, operator, physics, rmt, solvers
 from .builder import Builder, HoppingKind, Site, SiteFamily, UserCodeError
 from .lattice import TranslationalSymmetry
@@ -13,6 +15,12 @@ from .solvers import (
 )
 
 __version__ = "1.5.0+thouless"
+
+# Kwant exposes the lead routines as ``kwant.physics.leads``. The compatibility
+# module is intentionally a single thin boundary, so the package-style name
+# resolves to the same object.
+physics.leads = physics
+sys.modules[f"{__name__}.physics.leads"] = physics
 
 __all__ = [
     "Builder",

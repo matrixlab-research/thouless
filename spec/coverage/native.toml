@@ -81,6 +81,13 @@ status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/3"
 
 [[capability]]
+id = "transport.lead_self_energy"
+description = "Retarded self-energies for semi-infinite periodic leads with square, rectangular, or rank-deficient interfaces"
+native_api = "thouless::transport::{retarded_lead_self_energy,regularize_retarded_self_energy,square_lattice_self_energy}"
+test = "tests/native_transport.rs analytic scalar chain, rectangular interface, causal projection, square-strip differential check, and pinned Kwant lead self-energy workflows"
+status = "implemented"
+
+[[capability]]
 id = "symmetry.discrete"
 description = "Validated unitary, antiunitary, and chiral symmetries with conservation-law projectors"
 native_api = "thouless::symmetry::{DiscreteSymmetry,SymmetryViolation}"

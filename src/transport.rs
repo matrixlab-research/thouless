@@ -2,6 +2,7 @@
 
 use nalgebra::DMatrix;
 
+use crate::spectrum::hermitian_eigensystem;
 use crate::{Complex64, ComplexMatrix, MatrixError};
 
 const HERMITIAN_TOLERANCE: f64 = 1.0e-12;
@@ -147,6 +148,8 @@ pub enum TransportError {
     InvalidOptions,
     /// A required matrix inverse does not exist.
     SingularGreenFunction,
+    /// A Hermitian broadening eigendecomposition failed.
+    DecompositionFailure,
     /// Surface decimation did not reach the requested tolerance.
     SurfaceNotConverged,
     /// A lead index is outside the attached-lead list.
@@ -169,6 +172,9 @@ impl std::fmt::Display for TransportError {
             Self::NonHermitianLead => write!(formatter, "lead cell Hamiltonian is not Hermitian"),
             Self::InvalidOptions => write!(formatter, "surface Green options are invalid"),
             Self::SingularGreenFunction => write!(formatter, "retarded Green matrix is singular"),
+            Self::DecompositionFailure => {
+                write!(formatter, "lead broadening eigendecomposition failed")
+            }
             Self::SurfaceNotConverged => {
                 write!(formatter, "surface Green decimation did not converge")
             }
@@ -285,6 +291,181 @@ pub fn surface_green_function(
         .try_inverse()
         .ok_or(TransportError::SingularGreenFunction)?;
     from_backend(&surface)
+}
+
+/// Computes the retarded self-energy of a semi-infinite periodic lead.
+///
+/// `inter_cell_hopping` has shape `(N, M)`: its rows span the lead cell and
+/// its columns span the interface on which the returned `(M, M)` self-energy
+/// acts. Rectangular and rank-deficient interfaces are supported. The two
+/// finite-broadening surface Green functions are linearly extrapolated to
+/// zero broadening.
+pub fn retarded_lead_self_energy(
+    cell_hamiltonian: &ComplexMatrix,
+    inter_cell_hopping: &ComplexMatrix,
+    energy: f64,
+    options: SurfaceGreenOptions,
+) -> Result<ComplexMatrix, TransportError> {
+    let cell_dimension = cell_hamiltonian.rows();
+    let interface_dimension = inter_cell_hopping.columns();
+    if cell_dimension == 0
+        || cell_hamiltonian.columns() != cell_dimension
+        || inter_cell_hopping.rows() != cell_dimension
+        || interface_dimension > cell_dimension
+    {
+        return Err(TransportError::InvalidLeadShape);
+    }
+
+    let mut periodic_hopping = DMatrix::<Complex64>::zeros(cell_dimension, cell_dimension);
+    for row in 0..cell_dimension {
+        for column in 0..interface_dimension {
+            periodic_hopping[(row, column)] =
+                inter_cell_hopping.as_slice()[row * interface_dimension + column];
+        }
+    }
+    let periodic_hopping = from_backend(&periodic_hopping.adjoint())?;
+    let narrow = self_energy_at_broadening(
+        cell_hamiltonian,
+        &periodic_hopping,
+        inter_cell_hopping,
+        energy,
+        options,
+    )?;
+    let mut wider_options = options;
+    wider_options.broadening *= 2.0;
+    let wider = self_energy_at_broadening(
+        cell_hamiltonian,
+        &periodic_hopping,
+        inter_cell_hopping,
+        energy,
+        wider_options,
+    )?;
+
+    ComplexMatrix::new(
+        interface_dimension,
+        interface_dimension,
+        narrow
+            .as_slice()
+            .iter()
+            .zip(wider.as_slice())
+            .map(|(narrow, wider)| 2.0 * narrow - wider)
+            .collect(),
+    )
+    .map_err(Into::into)
+}
+
+/// Enforces the causal structure of a numerically evaluated retarded
+/// self-energy.
+///
+/// The Hermitian part is preserved and the broadening
+/// `i (Σ - Σᴴ)` is projected onto the positive semidefinite cone. When
+/// `maximum_rank` is provided, only its largest eigenchannels are retained.
+pub fn regularize_retarded_self_energy(
+    self_energy: &ComplexMatrix,
+    maximum_rank: Option<usize>,
+) -> Result<ComplexMatrix, TransportError> {
+    let dimension = self_energy.rows();
+    if self_energy.columns() != dimension {
+        return Err(TransportError::InvalidLeadShape);
+    }
+    if dimension == 0 {
+        return Ok(self_energy.clone());
+    }
+
+    let sigma = to_backend(self_energy);
+    let adjoint = sigma.adjoint();
+    let hermitian_part = (&sigma + &adjoint) * Complex64::new(0.5, 0.0);
+    let broadening = (&sigma - &adjoint) * Complex64::new(0.0, 1.0);
+    let broadening = from_backend(&broadening)?;
+    let decomposition = hermitian_eigensystem(&broadening, 1.0e-9)
+        .map_err(|_| TransportError::DecompositionFailure)?;
+    let vectors = to_backend(decomposition.eigenvectors());
+    let keep_from = maximum_rank
+        .map(|rank| dimension.saturating_sub(rank.min(dimension)))
+        .unwrap_or(0);
+    let mut positive = DMatrix::<Complex64>::zeros(dimension, dimension);
+    for column in keep_from..dimension {
+        let weight = decomposition.eigenvalues()[column].max(0.0);
+        if weight == 0.0 {
+            continue;
+        }
+        for row in 0..dimension {
+            for other in 0..dimension {
+                positive[(row, other)] +=
+                    vectors[(row, column)] * weight * vectors[(other, column)].conj();
+            }
+        }
+    }
+    from_backend(&(hermitian_part - positive * Complex64::new(0.0, 0.5)))
+}
+
+/// Closed-form retarded self-energy of a nearest-neighbor square-lattice
+/// strip with hard-wall transverse boundaries.
+pub fn square_lattice_self_energy(
+    width: usize,
+    hopping: f64,
+    fermi_energy: f64,
+) -> Result<ComplexMatrix, TransportError> {
+    if width == 0 || !hopping.is_finite() || hopping == 0.0 || !fermi_energy.is_finite() {
+        return Err(TransportError::InvalidOptions);
+    }
+
+    let angle_step = std::f64::consts::PI / (width + 1) as f64;
+    let normalization = (2.0 / (width + 1) as f64).sqrt();
+    let transverse = (0..width)
+        .map(|mode| {
+            (0..width)
+                .map(|site| {
+                    normalization * (angle_step * (mode + 1) as f64 * (site + 1) as f64).sin()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let longitudinal = (0..width)
+        .map(|mode| {
+            let transverse_energy = 2.0 * hopping * (1.0 - (angle_step * (mode + 1) as f64).cos());
+            let q = (fermi_energy - transverse_energy) / hopping - 2.0;
+            if q.abs() <= 2.0 {
+                Complex64::new(q / 2.0, -(1.0 - (q / 2.0).powi(2)).sqrt())
+            } else {
+                Complex64::new(q / 2.0 - ((q / 2.0).powi(2) - 1.0).sqrt().copysign(q), 0.0)
+            }
+        })
+        .collect::<Vec<_>>();
+    ComplexMatrix::new(
+        width,
+        width,
+        (0..width)
+            .flat_map(|row| {
+                let transverse = &transverse;
+                let longitudinal = &longitudinal;
+                (0..width).map(move |column| {
+                    hopping
+                        * (0..width)
+                            .map(|mode| {
+                                transverse[mode][row]
+                                    * transverse[mode][column]
+                                    * longitudinal[mode]
+                            })
+                            .sum::<Complex64>()
+                })
+            })
+            .collect(),
+    )
+    .map_err(Into::into)
+}
+
+fn self_energy_at_broadening(
+    cell_hamiltonian: &ComplexMatrix,
+    periodic_hopping: &ComplexMatrix,
+    interface_hopping: &ComplexMatrix,
+    energy: f64,
+    options: SurfaceGreenOptions,
+) -> Result<ComplexMatrix, TransportError> {
+    let surface = surface_green_function(cell_hamiltonian, periodic_hopping, energy, options)?;
+    let coupling = to_backend(interface_hopping).adjoint();
+    let self_energy = &coupling * to_backend(&surface) * coupling.adjoint();
+    from_backend(&self_energy)
 }
 
 /// Solves the retarded Green function of a finite device with periodic leads.

@@ -1403,82 +1403,29 @@ class InfiniteSystem:
 
         cell = self.cell_hamiltonian(args=args, params=params)
         hopping = self.inter_cell_hopping(args=args, params=params)
-        square_hopping = np.zeros_like(cell)
-        square_hopping[:, : hopping.shape[1]] = hopping
         shifted = cell - float(energy) * np.eye(cell.shape[0])
-        propagating, stabilized = physics.modes(shifted, square_hopping)
-        stabilized._selfenergy = self._surface_selfenergy(
-            energy,
-            args,
-            params,
-            len(propagating.momenta) // 2,
-        )
-        return propagating, stabilized
+        return physics.modes(shifted, hopping)
 
     def _surface_selfenergy(self, energy, args, params, mode_count):
         cell = self.cell_hamiltonian(args=args, params=params)
         inter_cell = self.inter_cell_hopping(args=args, params=params)
-        cell_dimension, interface_dimension = inter_cell.shape
-        cell_to_previous = np.zeros(
-            (cell_dimension, cell_dimension), dtype=complex
-        )
-        cell_to_previous[:, :interface_dimension] = inter_cell
-        lead_hopping = cell_to_previous.conj().T
-        coupling = inter_cell.conj().T
-        probe_scale = (
-            1.0
-            + np.linalg.norm(cell, np.inf)
-            + np.linalg.norm(coupling, np.inf) ** 2
-        )
-        dummy_device = (
-            float(energy) + probe_scale
-        ) * np.eye(interface_dimension, dtype=complex)
-        lead_data = [
-            (
+        return np.asarray(
+            _core.lead_retarded_self_energy(
                 cell.tolist(),
-                lead_hopping.tolist(),
-                coupling.tolist(),
-            )
-        ]
-        _, narrow, _, _ = _core.open_system_solution(
-            dummy_device.tolist(), lead_data, float(energy)
+                inter_cell.tolist(),
+                energy=float(energy),
+                maximum_rank=int(mode_count),
+            ),
+            dtype=complex,
         )
-        _, wide, _, _ = _core.open_system_solution(
-            dummy_device.tolist(), lead_data, float(energy), 2.0e-6
-        )
-        sigma = (
-            2 * np.asarray(narrow[0], dtype=complex)
-            - np.asarray(wide[0], dtype=complex)
-        )
-        gamma = 1j * (sigma - sigma.conj().T)
-        eigenvalues, eigenvectors = np.linalg.eigh(
-            0.5 * (gamma + gamma.conj().T)
-        )
-        order = np.argsort(eigenvalues)[::-1][:mode_count]
-        if len(order):
-            vectors = eigenvectors[:, order]
-            gamma = (
-                vectors * np.maximum(eigenvalues[order], 0.0)
-            ) @ vectors.conj().T
-        else:
-            gamma = np.zeros_like(sigma)
-        return 0.5 * (sigma + sigma.conj().T) - 0.5j * gamma
 
     def selfenergy(self, energy=0, args=(), *, params=None):
         from . import physics
 
         cell = self.cell_hamiltonian(args=args, params=params)
         hopping = self.inter_cell_hopping(args=args, params=params)
-        square_hopping = np.zeros_like(cell)
-        square_hopping[:, : hopping.shape[1]] = hopping
         shifted = cell - float(energy) * np.eye(cell.shape[0])
-        propagating, _ = physics.modes(shifted, square_hopping)
-        return self._surface_selfenergy(
-            energy,
-            args,
-            params,
-            len(propagating.momenta) // 2,
-        )
+        return physics.selfenergy(shifted, hopping)
 
     def reversed(self):
         return self._builder.reversed().finalized()

@@ -202,13 +202,23 @@ def modes(h_cell, h_hop, tol=1e6, stabilization=None, *, discrete_symmetry=None)
     if h_cell.ndim != 2 or h_cell.shape[0] != h_cell.shape[1]:
         raise ValueError("Cell Hamiltonian must be square")
     size = h_cell.shape[0]
-    if h_hop.shape != (size, size):
-        raise ValueError("Inter-cell hopping must be square")
+    if h_hop.ndim != 2 or h_hop.shape[0] != size or h_hop.shape[1] > size:
+        raise ValueError("Inter-cell hopping has an incompatible shape")
+    square_hopping = np.zeros_like(h_cell)
+    square_hopping[:, : h_hop.shape[1]] = h_hop
 
-    wave_functions, velocities, momenta, incoming_count = (
+    (
+        wave_functions,
+        velocities,
+        momenta,
+        incoming_count,
+        stabilized_vectors,
+        stabilized_vectors_lambda_inverse,
+        square_root_hopping,
+    ) = (
         _core.lead_propagating_modes(
             h_cell.tolist(),
-            h_hop.tolist(),
+            square_hopping.tolist(),
         )
     )
     wave_functions = np.asarray(wave_functions, dtype=complex).reshape(
@@ -220,12 +230,63 @@ def modes(h_cell, h_hop, tol=1e6, stabilization=None, *, discrete_symmetry=None)
         velocities,
         momenta,
     )
+    interface_size = h_hop.shape[1]
+    stabilized_vectors = np.asarray(stabilized_vectors, dtype=complex)[
+        :interface_size
+    ]
+    stabilized_vectors_lambda_inverse = np.asarray(
+        stabilized_vectors_lambda_inverse,
+        dtype=complex,
+    )[:interface_size]
+    square_root_hopping = np.asarray(square_root_hopping, dtype=complex)[
+        :interface_size
+    ]
     stabilized = StabilizedModes(
-        wave_functions,
-        wave_functions,
+        stabilized_vectors,
+        stabilized_vectors_lambda_inverse,
         incoming_count,
+        sqrt_hop=square_root_hopping,
+        selfenergy=_core.lead_retarded_self_energy(
+            h_cell.tolist(),
+            h_hop.tolist(),
+            maximum_rank=incoming_count,
+        ),
     )
     return propagating, stabilized
+
+
+def selfenergy(h_cell, h_hop, tol=1e6):
+    """Return the retarded self-energy of a semi-infinite periodic lead."""
+    del tol
+    h_cell = np.asarray(h_cell, dtype=complex)
+    h_hop = np.asarray(h_hop, dtype=complex)
+    if h_cell.ndim != 2 or h_cell.shape[0] != h_cell.shape[1]:
+        raise ValueError("Cell Hamiltonian must be square")
+    if (
+        h_hop.ndim != 2
+        or h_hop.shape[0] != h_cell.shape[0]
+        or h_hop.shape[1] > h_cell.shape[0]
+    ):
+        raise ValueError("Inter-cell hopping has an incompatible shape")
+    return np.asarray(
+        _core.lead_retarded_self_energy(
+            h_cell.tolist(),
+            h_hop.tolist(),
+        ),
+        dtype=complex,
+    )
+
+
+def square_selfenergy(width, hopping, fermi_energy):
+    """Return the analytic self-energy of a hard-wall square-lattice strip."""
+    return np.asarray(
+        _core.square_strip_self_energy(
+            int(width),
+            float(hopping),
+            float(fermi_energy),
+        ),
+        dtype=complex,
+    )
 
 
 __all__ = [
@@ -234,5 +295,7 @@ __all__ = [
     "PropagatingModes",
     "StabilizedModes",
     "modes",
+    "selfenergy",
+    "square_selfenergy",
     "two_terminal_shotnoise",
 ]

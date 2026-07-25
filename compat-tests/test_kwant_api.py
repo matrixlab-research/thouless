@@ -391,3 +391,29 @@ def test_propagating_modes_execute_without_scipy_eigensolvers(monkeypatch) -> No
     np.testing.assert_allclose(propagating.velocities, [-velocity, velocity])
     np.testing.assert_allclose(propagating.momenta, [momentum, -momentum])
     assert stabilized.nmodes == 1
+
+
+def test_lead_selfenergy_executes_without_python_eigensolvers(monkeypatch) -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+
+    def forbidden(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("Python eigensolver must not implement self-energy")
+
+    monkeypatch.setattr(np.linalg, "eigh", forbidden)
+    onsite = np.array([[0.3]])
+    hopping = np.array([[0.7]])
+    expected = -0.15 - 0.5j * np.sqrt(1.87)
+    np.testing.assert_allclose(
+        kwant.physics.selfenergy(onsite, hopping),
+        [[expected]],
+        atol=1e-9,
+    )
+
+    width, amplitude, energy = 5, 0.78, 1.3
+    cell = (4 * amplitude - energy) * np.eye(width)
+    cell += np.diag(np.full(width - 1, -amplitude), 1)
+    cell += np.diag(np.full(width - 1, -amplitude), -1)
+    analytic = kwant.physics.square_selfenergy(width, amplitude, energy)
+    numerical = kwant.physics.selfenergy(cell, -amplitude * np.eye(width))
+    np.testing.assert_allclose(analytic, numerical, atol=1e-9)

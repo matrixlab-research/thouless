@@ -17,6 +17,9 @@ pub struct PropagatingLeadModes {
     velocities: Vec<f64>,
     momenta: Vec<f64>,
     incoming_count: usize,
+    stabilized_vectors: ComplexMatrix,
+    stabilized_vectors_lambda_inverse: ComplexMatrix,
+    square_root_hopping: ComplexMatrix,
 }
 
 impl PropagatingLeadModes {
@@ -42,6 +45,24 @@ impl PropagatingLeadModes {
     #[must_use]
     pub const fn incoming_count(&self) -> usize {
         self.incoming_count
+    }
+
+    /// First half of the stabilized translation eigenvectors.
+    #[must_use]
+    pub const fn stabilized_vectors(&self) -> &ComplexMatrix {
+        &self.stabilized_vectors
+    }
+
+    /// Second half of the stabilized translation eigenvectors.
+    #[must_use]
+    pub const fn stabilized_vectors_lambda_inverse(&self) -> &ComplexMatrix {
+        &self.stabilized_vectors_lambda_inverse
+    }
+
+    /// Square-root hopping factor defining the stabilized basis.
+    #[must_use]
+    pub const fn square_root_hopping(&self) -> &ComplexMatrix {
+        &self.square_root_hopping
     }
 }
 
@@ -117,6 +138,26 @@ pub fn propagating_modes(
             velocities: Vec::new(),
             momenta: Vec::new(),
             incoming_count: 0,
+            stabilized_vectors: ComplexMatrix::zeros(0, 0),
+            stabilized_vectors_lambda_inverse: ComplexMatrix::zeros(0, 0),
+            square_root_hopping: ComplexMatrix::zeros(0, 0),
+        });
+    }
+    let hopping_norm = inter_cell_hopping
+        .as_slice()
+        .iter()
+        .map(Complex64::norm_sqr)
+        .sum::<f64>()
+        .sqrt();
+    if hopping_norm == 0.0 {
+        return Ok(PropagatingLeadModes {
+            wave_functions: ComplexMatrix::zeros(dimension, 0),
+            velocities: Vec::new(),
+            momenta: Vec::new(),
+            incoming_count: 0,
+            stabilized_vectors: ComplexMatrix::zeros(dimension, 0),
+            stabilized_vectors_lambda_inverse: ComplexMatrix::zeros(dimension, 0),
+            square_root_hopping: ComplexMatrix::zeros(dimension, 0),
         });
     }
 
@@ -212,7 +253,7 @@ pub fn propagating_modes(
         for value in &mut wave {
             *value /= scale;
         }
-        candidates.push((velocity, bloch_factor.arg(), wave));
+        candidates.push((velocity, bloch_factor.arg(), bloch_factor, wave));
     }
 
     candidates.sort_by(|left, right| {
@@ -222,28 +263,65 @@ pub fn propagating_modes(
     });
     let incoming_count = candidates
         .iter()
-        .filter(|(velocity, _, _)| *velocity < 0.0)
+        .filter(|(velocity, _, _, _)| *velocity < 0.0)
         .count();
     let mode_count = candidates.len();
     let wave_functions = ComplexMatrix::new(
         dimension,
         mode_count,
         (0..dimension)
-            .flat_map(|row| candidates.iter().map(move |(_, _, wave)| wave[row]))
+            .flat_map(|row| candidates.iter().map(move |(_, _, _, wave)| wave[row]))
             .collect(),
     )?;
+    let hopping_scale = hopping_norm.sqrt();
+    let stabilized_vectors = ComplexMatrix::new(
+        dimension,
+        mode_count,
+        (0..dimension)
+            .flat_map(|row| {
+                candidates.iter().map(move |(_, _, bloch_factor, wave)| {
+                    (0..dimension)
+                        .map(|column| {
+                            inter_cell_hopping.as_slice()[column * dimension + row].conj()
+                                * wave[column]
+                        })
+                        .sum::<Complex64>()
+                        * bloch_factor
+                        / hopping_scale
+                })
+            })
+            .collect(),
+    )?;
+    let stabilized_vectors_lambda_inverse = ComplexMatrix::new(
+        dimension,
+        mode_count,
+        (0..dimension)
+            .flat_map(|row| {
+                candidates
+                    .iter()
+                    .map(move |(_, _, _, wave)| wave[row] * hopping_scale)
+            })
+            .collect(),
+    )?;
+    let mut square_root_hopping = ComplexMatrix::zeros(dimension, dimension);
+    for index in 0..dimension {
+        square_root_hopping.set(index, index, Complex64::new(hopping_scale, 0.0))?;
+    }
 
     Ok(PropagatingLeadModes {
         wave_functions,
         velocities: candidates
             .iter()
-            .map(|(velocity, _, _)| *velocity)
+            .map(|(velocity, _, _, _)| *velocity)
             .collect(),
         momenta: candidates
             .iter()
-            .map(|(_, momentum, _)| *momentum)
+            .map(|(_, momentum, _, _)| *momentum)
             .collect(),
         incoming_count,
+        stabilized_vectors,
+        stabilized_vectors_lambda_inverse,
+        square_root_hopping,
     })
 }
 
@@ -266,5 +344,18 @@ mod tests {
         assert!((modes.velocities()[1] - velocity).abs() < 1.0e-10);
         assert!((modes.momenta()[0] - momentum).abs() < 1.0e-10);
         assert!((modes.momenta()[1] + momentum).abs() < 1.0e-10);
+        let vectors = modes.stabilized_vectors();
+        let inverse = modes.stabilized_vectors_lambda_inverse();
+        for mode in 0..2 {
+            let current = Complex64::new(0.0, 1.0)
+                * vectors.get(0, mode).unwrap().conj()
+                * inverse.get(0, mode).unwrap();
+            let current = current + current.conj();
+            let expected = if mode == 0 { 1.0 } else { -1.0 };
+            assert!((current.re - expected).abs() < 1.0e-10);
+        }
+        assert!(
+            (modes.square_root_hopping().get(0, 0).unwrap().re - 0.7_f64.sqrt()).abs() < 1.0e-12
+        );
     }
 }
