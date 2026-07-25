@@ -13,6 +13,7 @@ pub mod decomposition;
 pub mod differentiation;
 pub mod digest;
 mod error;
+pub mod gauge;
 pub mod geometry;
 pub mod graph;
 pub mod kpm;

@@ -6,6 +6,7 @@ from . import (
     _plotter,
     builder,
     digest,
+    gauge,
     graph,
     kpm,
     lattice,
@@ -35,6 +36,9 @@ __version__ = "1.5.0+thouless"
 # resolves to the same object.
 physics.leads = physics
 sys.modules[f"{__name__}.physics.leads"] = physics
+physics.gauge = gauge
+physics.magnetic_gauge = gauge.magnetic_gauge
+sys.modules[f"{__name__}.physics.gauge"] = gauge
 
 __all__ = [
     "Builder",
@@ -47,6 +51,7 @@ __all__ = [
     "UserCodeError",
     "builder",
     "digest",
+    "gauge",
     "graph",
     "kpm",
     "lattice",

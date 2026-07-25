@@ -11,8 +11,8 @@ test_modules = 24
 static_test_functions = 241
 collection_status = "blocked"
 collection_blocker = "The source test suite imports compiled Cython extensions before collection."
-strict_tests = 206
-strict_passes = 205
+strict_tests = 258
+strict_passes = 257
 strict_skips = 1
 strict_test_nodes = [
   "kwant/tests/test_lattice.py::test_closest",
@@ -110,6 +110,7 @@ strict_test_nodes = [
   "kwant/physics/tests/test_dispersion.py",
   "kwant/physics/tests/test_noise.py",
   "kwant/physics/tests/test_symmetry.py",
+  "kwant/physics/tests/test_gauge.py",
   "kwant/tests/test_rmt.py",
   "kwant/linalg/tests/test_lll.py",
   "kwant/graph/tests/test_core.py",

@@ -223,12 +223,26 @@ actual_result = "7 source tests passed through Rust-native Bloch phases and adjo
 status = "implemented"
 
 [[interface]]
+name = "magnetic gauge geometry and Peierls phases"
+source_entries = [
+  "physics.magnetic_gauge",
+  "physics.gauge._loops_in_finite",
+  "physics.gauge._surface_integral",
+]
+compat_entry = "python/kwant/gauge"
+rust_capability = "geometry.minimum_cycle_basis, geometry.oriented_surface_quadrature, and geometry.poincare_gauge"
+public_test = "Rust plaquette-cycle, oriented-area, uniform and nonuniform line-integral, periodic-axis, and interface-constraint contracts"
+source_test = "complete pinned magnetic-gauge module: finite and periodic systems, composite and overlapping interfaces, disconnected and overconstrained leads, two- and three-dimensional fluxes, nonuniform fields, reflectionless scattering, and Hall-current orientation"
+actual_result = "52 source tests passed through Rust-native Horton cycle bases, oriented quadrature, global Poincare and lead-axis gauges, and graph-topology validation"
+status = "implemented"
+
+[[interface]]
 name = "remaining optional scientific modules"
-source_entries = ["continuum", "plotter", "gauge", "wraparound.plot_2d_bands"]
+source_entries = ["continuum", "plotter", "wraparound.plot_2d_bands"]
 compat_entry = "python/kwant"
 rust_capability = "compatibility utility layer; native migration pending"
 public_test = "not implemented"
-actual_result = "plot_2d_bands remains a visible issue-linked skip; the other modules are not selected"
+actual_result = "plot_2d_bands remains a visible issue-linked skip; continuum and plotter are not selected"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 

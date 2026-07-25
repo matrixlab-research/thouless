@@ -8,6 +8,12 @@ use thouless::decomposition::{
 };
 use thouless::differentiation::{finite_difference_uniform, DifferenceScheme};
 use thouless::digest::{gaussian as digest_gaussian_value, uniform_pair};
+use thouless::gauge::{
+    axial_line_phase_quadrature, fundamental_cycles, graph_is_connected, integrate_surface_samples,
+    interface_constraints_are_acyclic, line_phase_quadrature, minimum_cycle_basis,
+    peierls_phases_from_fluxes, phase_from_flux, surface_quadrature,
+    uniform_axial_field_peierls_phase, uniform_field_peierls_phase,
+};
 use thouless::geometry::ReciprocalPath;
 use thouless::graph::{
     CompressedGraph, CompressionOptions, DirectedEdge, DirectedGraphBuilder, GraphError, NodeId,
@@ -80,6 +86,7 @@ type ComplexTensor3 = Vec<Vec<Vec<Complex64>>>;
 type KpmReconstructionOutput = (Vec<f64>, ComplexTensor3, ComplexTensor3, ComplexTensor3);
 type PeriodicTermInput = (MatrixRows, Vec<i64>, bool);
 type LatticeReductionOutput = (Vec<Vec<f64>>, Vec<Vec<i64>>);
+type GaugeQuadratureOutput = (Vec<Vec<f64>>, Vec<Vec<f64>>);
 type SchurOutput = (MatrixRows, MatrixRows, Vec<Complex64>);
 type GeneralizedSchurOutput = (
     MatrixRows,
@@ -2048,6 +2055,118 @@ fn lattice_voronoi(
     voronoi_neighbors(&basis, reduced, relative_tolerance).map_err(value_error)
 }
 
+#[pyfunction]
+fn gauge_surface_quadrature(loop_points: Vec<Vec<f64>>) -> PyResult<GaugeQuadratureOutput> {
+    surface_quadrature(&loop_points)
+        .map(|quadrature| {
+            (
+                quadrature.points().to_vec(),
+                quadrature.oriented_weights().to_vec(),
+            )
+        })
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn gauge_line_quadrature(first: Vec<f64>, second: Vec<f64>) -> PyResult<GaugeQuadratureOutput> {
+    line_phase_quadrature(&first, &second)
+        .map(|quadrature| {
+            (
+                quadrature.points().to_vec(),
+                quadrature.oriented_weights().to_vec(),
+            )
+        })
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn gauge_axial_line_quadrature(
+    first: Vec<f64>,
+    second: Vec<f64>,
+    axis: Vec<f64>,
+) -> PyResult<GaugeQuadratureOutput> {
+    axial_line_phase_quadrature(&first, &second, &axis)
+        .map(|quadrature| {
+            (
+                quadrature.points().to_vec(),
+                quadrature.oriented_weights().to_vec(),
+            )
+        })
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn gauge_surface_integral(
+    oriented_weights: Vec<Vec<f64>>,
+    samples: Vec<Vec<f64>>,
+) -> PyResult<f64> {
+    integrate_surface_samples(&oriented_weights, &samples).map_err(value_error)
+}
+
+#[pyfunction]
+fn gauge_uniform_field_phase(
+    first: Vec<f64>,
+    second: Vec<f64>,
+    field: Vec<f64>,
+) -> PyResult<Complex64> {
+    uniform_field_peierls_phase(&first, &second, &field).map_err(value_error)
+}
+
+#[pyfunction]
+fn gauge_uniform_axial_field_phase(
+    first: Vec<f64>,
+    second: Vec<f64>,
+    axis: Vec<f64>,
+    field: f64,
+) -> PyResult<Complex64> {
+    uniform_axial_field_peierls_phase(&first, &second, &axis, field).map_err(value_error)
+}
+
+#[pyfunction]
+fn gauge_phase_from_flux(flux: f64) -> PyResult<Complex64> {
+    phase_from_flux(flux).map_err(value_error)
+}
+
+#[pyfunction]
+fn gauge_minimum_cycle_basis(
+    node_count: usize,
+    undirected_edges: Vec<(usize, usize)>,
+) -> PyResult<Vec<Vec<usize>>> {
+    minimum_cycle_basis(node_count, &undirected_edges).map_err(value_error)
+}
+
+#[pyfunction]
+fn gauge_graph_is_connected(
+    node_count: usize,
+    undirected_edges: Vec<(usize, usize)>,
+) -> PyResult<bool> {
+    graph_is_connected(node_count, &undirected_edges).map_err(value_error)
+}
+
+#[pyfunction]
+fn gauge_interfaces_are_acyclic(node_count: usize, interfaces: Vec<Vec<usize>>) -> PyResult<bool> {
+    interface_constraints_are_acyclic(node_count, &interfaces).map_err(value_error)
+}
+
+#[pyfunction]
+fn gauge_fundamental_cycles(
+    node_count: usize,
+    undirected_edges: Vec<(usize, usize)>,
+) -> PyResult<Vec<Vec<usize>>> {
+    fundamental_cycles(node_count, &undirected_edges).map_err(value_error)
+}
+
+type EdgePhase = (usize, usize, Complex64);
+
+#[pyfunction]
+fn gauge_peierls_phases(
+    node_count: usize,
+    undirected_edges: Vec<(usize, usize)>,
+    cycle_fluxes: Vec<f64>,
+) -> PyResult<Vec<EdgePhase>> {
+    peierls_phases_from_fluxes(node_count, &undirected_edges, &cycle_fluxes).map_err(value_error)
+}
+
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add(
@@ -2140,5 +2259,17 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(lattice_lll, module)?)?;
     module.add_function(wrap_pyfunction!(lattice_cvp, module)?)?;
     module.add_function(wrap_pyfunction!(lattice_voronoi, module)?)?;
+    module.add_function(wrap_pyfunction!(gauge_surface_quadrature, module)?)?;
+    module.add_function(wrap_pyfunction!(gauge_line_quadrature, module)?)?;
+    module.add_function(wrap_pyfunction!(gauge_axial_line_quadrature, module)?)?;
+    module.add_function(wrap_pyfunction!(gauge_surface_integral, module)?)?;
+    module.add_function(wrap_pyfunction!(gauge_uniform_field_phase, module)?)?;
+    module.add_function(wrap_pyfunction!(gauge_uniform_axial_field_phase, module)?)?;
+    module.add_function(wrap_pyfunction!(gauge_phase_from_flux, module)?)?;
+    module.add_function(wrap_pyfunction!(gauge_minimum_cycle_basis, module)?)?;
+    module.add_function(wrap_pyfunction!(gauge_graph_is_connected, module)?)?;
+    module.add_function(wrap_pyfunction!(gauge_interfaces_are_acyclic, module)?)?;
+    module.add_function(wrap_pyfunction!(gauge_fundamental_cycles, module)?)?;
+    module.add_function(wrap_pyfunction!(gauge_peierls_phases, module)?)?;
     Ok(())
 }

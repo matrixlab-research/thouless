@@ -272,7 +272,11 @@ class Site(tuple):
 
     __slots__ = ()
 
-    def __new__(cls, family, tag):
+    def __new__(cls, family, tag, _already_normalized=False):
+        # Kwant's internal fast path passes a third truthy argument when a tag
+        # is already normalized. Re-normalizing is inexpensive here and keeps
+        # the compatibility representation immutable and hashable.
+        del _already_normalized
         return tuple.__new__(cls, (family, family.normalize_tag(tag)))
 
     @property

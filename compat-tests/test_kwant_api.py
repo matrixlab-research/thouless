@@ -31,6 +31,32 @@ def test_builder_and_finalized_system_contract() -> None:
     np.testing.assert_allclose(sparse_hamiltonian.toarray(), hamiltonian)
 
 
+def test_magnetic_gauge_flux_and_normalized_site_constructor() -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    lattice = kwant.lattice.square(norbs=1)
+    sites = [
+        kwant.builder.Site(lattice, np.asarray(tag), True)
+        for tag in ((0, 0), (1, 0), (1, 1), (0, 1))
+    ]
+    system = kwant.Builder()
+    system[sites] = 0.0
+    for first, second in zip(sites, [*sites[1:], sites[0]], strict=True):
+        system[first, second] = -1.0
+
+    phase = kwant.physics.magnetic_gauge(system.finalized())(0.2)
+    loop_phase = np.prod(
+        [
+            phase(first, second)
+            for first, second in zip(
+                sites,
+                [*sites[1:], sites[0]],
+                strict=True,
+            )
+        ]
+    )
+    assert loop_phase == pytest.approx(np.exp(0.2j * np.pi))
+
+
 def test_ballistic_chain_scattering_contract() -> None:
     kwant = require_compat_module("kwant", ISSUE_URL)
     lattice = kwant.lattice.chain(norbs=1)
