@@ -27,8 +27,8 @@ use thouless::lattice_reduction::{
 use thouless::lead_modes::{
     propagating_modes, propagating_modes_in_declared_symmetric_subspaces,
     propagating_modes_in_subspaces, propagating_modes_with_symmetries,
-    reexpress_modes_in_singular_hopping_basis, setup_lead_linear_system, LeadLinearSystem,
-    LeadLinearSystemOptions,
+    reexpress_modes_in_singular_hopping_basis_from_svd, setup_lead_linear_system,
+    setup_lead_linear_system_from_svd, LeadLinearSystem, LeadLinearSystemOptions,
 };
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
 use thouless::observables::{pauli_coefficients, project_diagonal_observable};
@@ -433,6 +433,162 @@ fn matrix_to_rows(matrix: &ComplexMatrix) -> Vec<Vec<Complex64>> {
         .collect()
 }
 
+type ScipyZgesdd = unsafe extern "C" fn(
+    *mut std::ffi::c_char,
+    *mut std::ffi::c_int,
+    *mut std::ffi::c_int,
+    *mut Complex64,
+    *mut std::ffi::c_int,
+    *mut f64,
+    *mut Complex64,
+    *mut std::ffi::c_int,
+    *mut Complex64,
+    *mut std::ffi::c_int,
+    *mut Complex64,
+    *mut std::ffi::c_int,
+    *mut f64,
+    *mut std::ffi::c_int,
+    *mut std::ffi::c_int,
+);
+
+fn scipy_complex_svd(
+    py: Python<'_>,
+    matrix: &ComplexMatrix,
+) -> PyResult<(ComplexMatrix, Vec<f64>, ComplexMatrix)> {
+    let dimension = matrix.rows();
+    if matrix.columns() != dimension {
+        return Err(PyValueError::new_err("SVD input must be square"));
+    }
+    if dimension == 0 {
+        return Ok((
+            ComplexMatrix::zeros(0, 0),
+            Vec::new(),
+            ComplexMatrix::zeros(0, 0),
+        ));
+    }
+    let lapack_dimension = std::ffi::c_int::try_from(dimension)
+        .map_err(|_| PyValueError::new_err("SVD dimension is too large"))?;
+    let lapack = py.import("scipy.linalg.cython_lapack")?;
+    let capsule = lapack.getattr("__pyx_capi__")?.get_item("zgesdd")?;
+    // SAFETY: SciPy publishes this function pointer through its Cython
+    // LAPACK capsule. Passing the capsule's own name back to CPython verifies
+    // that the requested pointer has the declared zgesdd ABI.
+    let function = unsafe {
+        let name = pyo3::ffi::PyCapsule_GetName(capsule.as_ptr());
+        if name.is_null() {
+            return Err(PyErr::fetch(py));
+        }
+        let pointer = pyo3::ffi::PyCapsule_GetPointer(capsule.as_ptr(), name);
+        if pointer.is_null() {
+            return Err(PyErr::fetch(py));
+        }
+        std::mem::transmute::<*mut std::ffi::c_void, ScipyZgesdd>(pointer)
+    };
+
+    let entry_count = dimension
+        .checked_mul(dimension)
+        .ok_or_else(|| PyValueError::new_err("SVD dimension is too large"))?;
+    let mut column_major = vec![Complex64::new(0.0, 0.0); entry_count];
+    let mut singular_values = vec![0.0; dimension];
+    let mut left_vectors = vec![Complex64::new(0.0, 0.0); entry_count];
+    let mut right_vectors_adjoint = vec![Complex64::new(0.0, 0.0); entry_count];
+    let mut work_query = [Complex64::new(0.0, 0.0)];
+    let real_work_length = 5usize
+        .checked_mul(entry_count)
+        .and_then(|value| value.checked_add(7 * dimension))
+        .ok_or_else(|| PyValueError::new_err("SVD dimension is too large"))?;
+    let mut real_work = vec![0.0; real_work_length.max(1)];
+    let mut integer_work = vec![
+        0;
+        8usize.checked_mul(dimension).ok_or_else(|| {
+            PyValueError::new_err("SVD dimension is too large")
+        })?
+    ];
+    let mut job = b'A' as std::ffi::c_char;
+    let mut rows = lapack_dimension;
+    let mut columns = lapack_dimension;
+    let mut leading_dimension = lapack_dimension;
+    let mut left_leading_dimension = lapack_dimension;
+    let mut right_leading_dimension = lapack_dimension;
+    let mut work_length = -1;
+    let mut info = 0;
+    // SAFETY: every buffer has the documented square zgesdd size, and the
+    // first call is a workspace query.
+    unsafe {
+        function(
+            &mut job,
+            &mut rows,
+            &mut columns,
+            column_major.as_mut_ptr(),
+            &mut leading_dimension,
+            singular_values.as_mut_ptr(),
+            left_vectors.as_mut_ptr(),
+            &mut left_leading_dimension,
+            right_vectors_adjoint.as_mut_ptr(),
+            &mut right_leading_dimension,
+            work_query.as_mut_ptr(),
+            &mut work_length,
+            real_work.as_mut_ptr(),
+            integer_work.as_mut_ptr(),
+            &mut info,
+        );
+    }
+    if info != 0 || !work_query[0].re.is_finite() || work_query[0].re < 1.0 {
+        return Err(PyRuntimeError::new_err(format!(
+            "SciPy zgesdd workspace query failed with info={info}"
+        )));
+    }
+    let queried_work_length = work_query[0].re as usize;
+    work_length = std::ffi::c_int::try_from(queried_work_length)
+        .map_err(|_| PyValueError::new_err("SVD workspace is too large"))?;
+    let mut work = vec![Complex64::new(0.0, 0.0); queried_work_length];
+    for column in 0..dimension {
+        for row in 0..dimension {
+            column_major[row + column * dimension] = matrix.as_slice()[row * dimension + column];
+        }
+    }
+    // SAFETY: this is the same checked capsule and buffer layout as the
+    // workspace query, now with the queried complex workspace.
+    unsafe {
+        function(
+            &mut job,
+            &mut rows,
+            &mut columns,
+            column_major.as_mut_ptr(),
+            &mut leading_dimension,
+            singular_values.as_mut_ptr(),
+            left_vectors.as_mut_ptr(),
+            &mut left_leading_dimension,
+            right_vectors_adjoint.as_mut_ptr(),
+            &mut right_leading_dimension,
+            work.as_mut_ptr(),
+            &mut work_length,
+            real_work.as_mut_ptr(),
+            integer_work.as_mut_ptr(),
+            &mut info,
+        );
+    }
+    if info != 0 {
+        return Err(PyRuntimeError::new_err(format!(
+            "SciPy zgesdd failed with info={info}"
+        )));
+    }
+    let row_major = |column_major: Vec<Complex64>| {
+        (0..dimension)
+            .flat_map(|row| {
+                let column_major = &column_major;
+                (0..dimension).map(move |column| column_major[row + column * dimension])
+            })
+            .collect()
+    };
+    Ok((
+        ComplexMatrix::new(dimension, dimension, row_major(left_vectors)).map_err(value_error)?,
+        singular_values,
+        ComplexMatrix::new(dimension, dimension, row_major(right_vectors_adjoint))
+            .map_err(value_error)?,
+    ))
+}
+
 fn schur_output(decomposition: thouless::decomposition::SchurDecomposition) -> SchurOutput {
     (
         matrix_to_rows(decomposition.form()),
@@ -779,6 +935,7 @@ fn lead_propagating_modes(
     regularize_pencil=None
 ))]
 fn lead_setup_linear_system(
+    py: Python<'_>,
     cell_hamiltonian: MatrixRows,
     inter_cell_hopping: MatrixRows,
     tolerance_multiplier: f64,
@@ -795,13 +952,25 @@ fn lead_setup_linear_system(
     } else {
         LeadLinearSystemOptions::automatic(tolerance_multiplier)
     };
-    setup_lead_linear_system(
-        &matrix_from_rows(cell_hamiltonian)?,
-        &matrix_from_rows(inter_cell_hopping)?,
-        options,
-    )
-    .map(|inner| PyLeadLinearSystem { inner })
-    .map_err(value_error)
+    let cell_hamiltonian = matrix_from_rows(cell_hamiltonian)?;
+    let inter_cell_hopping = matrix_from_rows(inter_cell_hopping)?;
+    let result = if singular_hopping_basis {
+        let (left_vectors, singular_values, right_vectors_adjoint) =
+            scipy_complex_svd(py, &inter_cell_hopping)?;
+        setup_lead_linear_system_from_svd(
+            &cell_hamiltonian,
+            &inter_cell_hopping,
+            &left_vectors,
+            &singular_values,
+            &right_vectors_adjoint,
+            options,
+        )
+    } else {
+        setup_lead_linear_system(&cell_hamiltonian, &inter_cell_hopping, options)
+    };
+    result
+        .map(|inner| PyLeadLinearSystem { inner })
+        .map_err(value_error)
 }
 
 #[pyfunction]
@@ -882,6 +1051,7 @@ fn lead_symmetric_modes(
     chiral=None
 ))]
 fn lead_singular_basis_modes(
+    py: Python<'_>,
     cell_hamiltonian: MatrixRows,
     inter_cell_hopping: MatrixRows,
     relative_singular_tolerance: f64,
@@ -906,9 +1076,14 @@ fn lead_singular_basis_modes(
         propagating_modes(&cell_hamiltonian, &inter_cell_hopping)
     }
     .and_then(|modes| {
-        reexpress_modes_in_singular_hopping_basis(
+        let (_, singular_values, right_vectors_adjoint) =
+            scipy_complex_svd(py, &inter_cell_hopping)
+                .map_err(|_| thouless::lead_modes::LeadModeError::DecompositionFailure)?;
+        reexpress_modes_in_singular_hopping_basis_from_svd(
             &modes,
             &inter_cell_hopping,
+            &singular_values,
+            &right_vectors_adjoint,
             relative_singular_tolerance,
         )
     })

@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use nalgebra::DMatrix;
+use nalgebra::{DMatrix, DVector};
 
 use crate::decomposition::{
     eigenvectors_from_generalized_schur, generalized_schur, DecompositionError,
@@ -304,6 +304,72 @@ impl From<DecompositionError> for LeadModeError {
     }
 }
 
+fn valid_singular_values(singular_values: &[f64]) -> bool {
+    singular_values
+        .iter()
+        .all(|value| value.is_finite() && *value >= 0.0)
+        && singular_values.windows(2).all(|pair| pair[0] >= pair[1])
+}
+
+fn validate_right_hopping_svd(
+    inter_cell_hopping: &ComplexMatrix,
+    singular_values: &[f64],
+    right_vectors_adjoint: &ComplexMatrix,
+) -> Result<(), LeadModeError> {
+    if !valid_singular_values(singular_values) {
+        return Err(LeadModeError::DecompositionFailure);
+    }
+    let dimension = inter_cell_hopping.rows();
+    let hopping = backend(inter_cell_hopping);
+    let right_adjoint = backend(right_vectors_adjoint);
+    let right = right_adjoint.adjoint();
+    let singular_values_squared = DMatrix::<Complex64>::from_diagonal(&DVector::from_iterator(
+        singular_values.len(),
+        singular_values
+            .iter()
+            .map(|value| Complex64::new(value * value, 0.0)),
+    ));
+    let expected_gram = &right * singular_values_squared * &right_adjoint;
+    let actual_gram = hopping.adjoint() * &hopping;
+    let scale = actual_gram.norm().max(1.0);
+    let tolerance = 1.0e-8 * (dimension.max(1) as f64) * scale;
+    let identity = DMatrix::<Complex64>::identity(dimension, dimension);
+    if (actual_gram - expected_gram).norm() > tolerance
+        || (&right_adjoint * &right - identity).norm() > tolerance / scale
+    {
+        return Err(LeadModeError::DecompositionFailure);
+    }
+    Ok(())
+}
+
+fn validate_hopping_svd(
+    inter_cell_hopping: &ComplexMatrix,
+    left_vectors: &ComplexMatrix,
+    singular_values: &[f64],
+    right_vectors_adjoint: &ComplexMatrix,
+) -> Result<(), LeadModeError> {
+    validate_right_hopping_svd(inter_cell_hopping, singular_values, right_vectors_adjoint)?;
+    let dimension = inter_cell_hopping.rows();
+    let left = backend(left_vectors);
+    let right_adjoint = backend(right_vectors_adjoint);
+    let singular = DMatrix::<Complex64>::from_diagonal(&DVector::from_iterator(
+        singular_values.len(),
+        singular_values
+            .iter()
+            .map(|value| Complex64::new(*value, 0.0)),
+    ));
+    let hopping = backend(inter_cell_hopping);
+    let scale = hopping.norm().max(1.0);
+    let tolerance = 1.0e-8 * (dimension.max(1) as f64) * scale;
+    let identity = DMatrix::<Complex64>::identity(dimension, dimension);
+    if (&left * left.adjoint() - identity).norm() > tolerance / scale
+        || (left * singular * right_adjoint - hopping).norm() > tolerance
+    {
+        return Err(LeadModeError::DecompositionFailure);
+    }
+    Ok(())
+}
+
 /// Construct a stable regular or generalized translation eigenproblem.
 pub fn setup_lead_linear_system(
     cell_hamiltonian: &ComplexMatrix,
@@ -316,6 +382,57 @@ pub fn setup_lead_linear_system(
     {
         return Err(LeadModeError::InvalidShape);
     }
+    let decomposition = complex_svd(dimension, inter_cell_hopping.as_slice())
+        .map_err(|_| LeadModeError::DecompositionFailure)?;
+    let left_vectors = ComplexMatrix::new(
+        dimension,
+        dimension,
+        decomposition.left_vectors_row_major().to_vec(),
+    )?;
+    let right_vectors_adjoint = ComplexMatrix::new(
+        dimension,
+        dimension,
+        decomposition.right_vectors_adjoint_row_major().to_vec(),
+    )?;
+    setup_lead_linear_system_from_svd(
+        cell_hamiltonian,
+        inter_cell_hopping,
+        &left_vectors,
+        decomposition.singular_values(),
+        &right_vectors_adjoint,
+        options,
+    )
+}
+
+/// Construct a stable translation eigenproblem from a supplied hopping SVD.
+///
+/// Compatibility frontends may use this entry point to share the numerical
+/// backend of their source runtime. The factorization is checked against the
+/// hopping before it is used, so backend-specific gauges cannot change the
+/// physical matrix represented by the factors.
+pub fn setup_lead_linear_system_from_svd(
+    cell_hamiltonian: &ComplexMatrix,
+    inter_cell_hopping: &ComplexMatrix,
+    left_vectors: &ComplexMatrix,
+    singular_values: &[f64],
+    right_vectors_adjoint: &ComplexMatrix,
+    options: LeadLinearSystemOptions,
+) -> Result<LeadLinearSystem, LeadModeError> {
+    let dimension = cell_hamiltonian.rows();
+    if cell_hamiltonian.columns() != dimension
+        || inter_cell_hopping.shape() != (dimension, dimension)
+        || left_vectors.shape() != (dimension, dimension)
+        || right_vectors_adjoint.shape() != (dimension, dimension)
+        || singular_values.len() != dimension
+    {
+        return Err(LeadModeError::InvalidShape);
+    }
+    validate_hopping_svd(
+        inter_cell_hopping,
+        left_vectors,
+        singular_values,
+        right_vectors_adjoint,
+    )?;
     if !options.tolerance_multiplier.is_finite() || options.tolerance_multiplier < 0.0 {
         return Err(LeadModeError::InvalidTolerance);
     }
@@ -329,9 +446,6 @@ pub fn setup_lead_linear_system(
         return Err(LeadModeError::ZeroHopping);
     }
     let relative_tolerance = f64::EPSILON * options.tolerance_multiplier;
-    let decomposition = complex_svd(dimension, inter_cell_hopping.as_slice())
-        .map_err(|_| LeadModeError::DecompositionFailure)?;
-    let singular_values = decomposition.singular_values();
     let rank = singular_values
         .iter()
         .filter(|&&value| value > relative_tolerance * singular_values[0])
@@ -368,16 +482,8 @@ pub fn setup_lead_linear_system(
         });
     }
 
-    let left_vectors = DMatrix::<Complex64>::from_row_slice(
-        dimension,
-        dimension,
-        decomposition.left_vectors_row_major(),
-    );
-    let right_adjoint = DMatrix::<Complex64>::from_row_slice(
-        dimension,
-        dimension,
-        decomposition.right_vectors_adjoint_row_major(),
-    );
+    let left_vectors = backend(left_vectors);
+    let right_adjoint = backend(right_vectors_adjoint);
     let right_vectors = right_adjoint.adjoint();
     let mut left_factor = DMatrix::<Complex64>::zeros(dimension, rank);
     let mut right_factor = DMatrix::<Complex64>::zeros(dimension, rank);
@@ -812,7 +918,56 @@ pub fn reexpress_modes_in_singular_hopping_basis(
     }
     let decomposition = complex_svd(dimension, inter_cell_hopping.as_slice())
         .map_err(|_| LeadModeError::DecompositionFailure)?;
-    let singular_values = decomposition.singular_values();
+    let right_vectors_adjoint = ComplexMatrix::new(
+        dimension,
+        dimension,
+        decomposition.right_vectors_adjoint_row_major().to_vec(),
+    )?;
+    reexpress_modes_in_singular_hopping_basis_from_svd(
+        modes,
+        inter_cell_hopping,
+        decomposition.singular_values(),
+        &right_vectors_adjoint,
+        relative_singular_tolerance,
+    )
+}
+
+/// Re-express solved modes using a supplied right-singular-vector gauge.
+///
+/// The supplied right singular vectors and values are checked against
+/// `TᴴT`. This permits a compatibility frontend to preserve the source
+/// runtime's basis inside exactly degenerate singular subspaces without
+/// moving the mode transformation out of Rust.
+pub fn reexpress_modes_in_singular_hopping_basis_from_svd(
+    modes: &PropagatingLeadModes,
+    inter_cell_hopping: &ComplexMatrix,
+    singular_values: &[f64],
+    right_vectors_adjoint: &ComplexMatrix,
+    relative_singular_tolerance: f64,
+) -> Result<PropagatingLeadModes, LeadModeError> {
+    let dimension = inter_cell_hopping.rows();
+    if inter_cell_hopping.columns() != dimension
+        || modes.wave_functions.rows() != dimension
+        || right_vectors_adjoint.shape() != (dimension, dimension)
+        || singular_values.len() != dimension
+        || !relative_singular_tolerance.is_finite()
+        || relative_singular_tolerance < 0.0
+    {
+        return Err(LeadModeError::InvalidShape);
+    }
+    if dimension == 0 {
+        return Ok(modes.clone());
+    }
+    validate_right_hopping_svd(inter_cell_hopping, singular_values, right_vectors_adjoint)?;
+    let hopping_norm = inter_cell_hopping
+        .as_slice()
+        .iter()
+        .map(Complex64::norm_sqr)
+        .sum::<f64>()
+        .sqrt();
+    if hopping_norm == 0.0 {
+        return Ok(modes.clone());
+    }
     let threshold = singular_values[0] * relative_singular_tolerance;
     let rank = singular_values
         .iter()
@@ -822,11 +977,7 @@ pub fn reexpress_modes_in_singular_hopping_basis(
         return Err(LeadModeError::DecompositionFailure);
     }
 
-    let right_adjoint = DMatrix::<Complex64>::from_row_slice(
-        dimension,
-        dimension,
-        decomposition.right_vectors_adjoint_row_major(),
-    );
+    let right_adjoint = backend(right_vectors_adjoint);
     let right_vectors = right_adjoint.adjoint();
     let mut square_root_hopping = DMatrix::<Complex64>::zeros(dimension, rank);
     for column in 0..rank {
@@ -1919,6 +2070,62 @@ mod tests {
         )
         .unwrap();
         assert!(!stabilized.uses_real_arithmetic());
+    }
+
+    #[test]
+    fn supplied_degenerate_svd_gauge_is_preserved() {
+        let cell = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(0.2, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(-0.3, 0.0),
+            ],
+        )
+        .unwrap();
+        let hopping = ComplexMatrix::identity(2);
+        let inverse_sqrt_two = 2.0_f64.sqrt().recip();
+        let rotation = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(inverse_sqrt_two, 0.0),
+                Complex64::new(-inverse_sqrt_two, 0.0),
+                Complex64::new(inverse_sqrt_two, 0.0),
+                Complex64::new(inverse_sqrt_two, 0.0),
+            ],
+        )
+        .unwrap();
+        let rotation_adjoint = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(inverse_sqrt_two, 0.0),
+                Complex64::new(inverse_sqrt_two, 0.0),
+                Complex64::new(-inverse_sqrt_two, 0.0),
+                Complex64::new(inverse_sqrt_two, 0.0),
+            ],
+        )
+        .unwrap();
+        let linear_system = setup_lead_linear_system_from_svd(
+            &cell,
+            &hopping,
+            &rotation,
+            &[1.0, 1.0],
+            &rotation_adjoint,
+            LeadLinearSystemOptions::singular_hopping_basis(1.0e6, false, Some(true)),
+        )
+        .unwrap();
+        for (actual, expected) in linear_system
+            .square_root_hopping()
+            .as_slice()
+            .iter()
+            .zip(rotation.as_slice())
+        {
+            assert!((*actual - *expected).norm() < 1.0e-12);
+        }
     }
 
     #[test]
