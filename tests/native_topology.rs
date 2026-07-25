@@ -1,6 +1,7 @@
 use thouless::model::{Lattice, ModelBuilder};
 use thouless::topology::{
-    chern_numbers_on_uniform_grid, connection_from_link, parallel_transport_link, plaquette_flux,
+    chern_numbers_on_uniform_grid, connection_from_link, local_chern_marker_from_hamiltonian,
+    local_chern_marker_from_projector, parallel_transport_link, plaquette_flux,
     quantum_geometric_tensor_from_hamiltonian_derivatives,
     second_chern_from_hamiltonian_derivatives, wilson_line_phase, wilson_loop_eigenphases,
 };
@@ -168,6 +169,65 @@ fn massive_dirac_quantum_geometry_matches_the_kubo_tensor() {
             .norm()
             < 1.0e-12
     );
+}
+
+#[test]
+fn local_chern_marker_uses_the_occupied_projector_not_an_eigenvector_gauge() {
+    let dimension = 4;
+    let uniform = vec![Complex64::new(0.5, 0.0); dimension];
+    let mut second = vec![
+        Complex64::new(1.0, 0.0),
+        Complex64::new(0.0, 2.0),
+        Complex64::new(-1.0, 1.0),
+        Complex64::new(0.3, -0.7),
+    ];
+    let overlap = uniform
+        .iter()
+        .zip(&second)
+        .map(|(left, right)| left.conj() * right)
+        .sum::<Complex64>();
+    for (value, uniform_value) in second.iter_mut().zip(&uniform) {
+        *value -= uniform_value * overlap;
+    }
+    let norm = second.iter().map(Complex64::norm_sqr).sum::<f64>().sqrt();
+    for value in &mut second {
+        *value /= norm;
+    }
+
+    let projector_values = (0..dimension)
+        .flat_map(|row| {
+            let uniform = &uniform;
+            let second = &second;
+            (0..dimension).map(move |column| {
+                uniform[row] * uniform[column].conj() + second[row] * second[column].conj()
+            })
+        })
+        .collect::<Vec<_>>();
+    let projector = ComplexMatrix::new(dimension, dimension, projector_values).unwrap();
+    let hamiltonian_values = (0..dimension)
+        .flat_map(|row| {
+            let projector = &projector;
+            (0..dimension).map(move |column| {
+                let identity = if row == column {
+                    Complex64::new(1.0, 0.0)
+                } else {
+                    Complex64::new(0.0, 0.0)
+                };
+                identity - 2.0 * projector.get(row, column).unwrap()
+            })
+        })
+        .collect();
+    let hamiltonian = ComplexMatrix::new(dimension, dimension, hamiltonian_values).unwrap();
+    let positions = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+
+    let direct = local_chern_marker_from_projector(&projector, &positions, 1.0).unwrap();
+    let spectral =
+        local_chern_marker_from_hamiltonian(&hamiltonian, &positions, &[0, 1], 1.0).unwrap();
+    for (left, right) in direct.iter().zip(&spectral) {
+        assert!((left - right).abs() < 1.0e-10);
+    }
+    assert!(direct.iter().any(|marker| marker.abs() > 1.0e-3));
+    assert!(direct.iter().sum::<f64>().abs() < 1.0e-12);
 }
 
 #[test]

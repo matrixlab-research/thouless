@@ -51,8 +51,8 @@ use thouless::symmetry::{
     particle_hole_symmetric_basis, DiscreteSymmetry as NativeDiscreteSymmetry,
 };
 use thouless::topology::{
-    chern_numbers_on_uniform_grid, connection_from_link, parallel_transport_link, plaquette_flux,
-    quantum_geometric_tensor_from_hamiltonian_derivatives,
+    chern_numbers_on_uniform_grid, connection_from_link, local_chern_marker_from_hamiltonian,
+    parallel_transport_link, plaquette_flux, quantum_geometric_tensor_from_hamiltonian_derivatives,
     second_chern_from_hamiltonian_derivatives, wilson_line_phase, wilson_loop_eigenphases,
 };
 use thouless::transform::{change_nonperiodic_vector, make_supercell, remove_orbitals};
@@ -1674,6 +1674,29 @@ fn quantum_geometric_tensor_kubo(
 }
 
 #[pyfunction]
+fn local_chern_marker_kubo(
+    hamiltonian: Vec<Vec<Complex64>>,
+    positions: Vec<Vec<f64>>,
+    occupied_states: Vec<usize>,
+    cell_area: f64,
+) -> PyResult<Vec<f64>> {
+    let hamiltonian = matrix_from_rows(hamiltonian)?;
+    let positions = positions
+        .into_iter()
+        .map(|position| {
+            if position.len() != 2 {
+                return Err(PyValueError::new_err(
+                    "local Chern marker positions must have two coordinates",
+                ));
+            }
+            Ok([position[0], position[1]])
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    local_chern_marker_from_hamiltonian(&hamiltonian, &positions, &occupied_states, cell_area)
+        .map_err(value_error)
+}
+
+#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn momentum_derivatives(
     primitive_vectors: Vec<Vec<f64>>,
@@ -2449,6 +2472,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(uniform_grid_chern, module)?)?;
     module.add_function(wrap_pyfunction!(second_chern_kubo, module)?)?;
     module.add_function(wrap_pyfunction!(quantum_geometric_tensor_kubo, module)?)?;
+    module.add_function(wrap_pyfunction!(local_chern_marker_kubo, module)?)?;
     module.add_function(wrap_pyfunction!(momentum_derivatives, module)?)?;
     module.add_function(wrap_pyfunction!(finite_difference, module)?)?;
     module.add_function(wrap_pyfunction!(open_system_transmissions, module)?)?;

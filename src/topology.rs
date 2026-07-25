@@ -102,7 +102,8 @@ impl std::error::Error for QuantumGeometricError {}
 /// For occupied states `m,n` and empty states `l`, this evaluates
 /// `Q[μ,ν]ₘₙ = Σₗ <m|∂μH|l><l|∂νH|n> /
 /// ((Eₘ-Eₗ)(Eₙ-Eₗ))`. The result is invariant under basis changes within the
-/// occupied and empty subspaces and is independent of any sampled-state gauge.
+/// degenerate occupied or empty subspaces and is independent of any
+/// sampled-state phase convention.
 pub fn quantum_geometric_tensor_from_hamiltonian_derivatives(
     hamiltonian: &ComplexMatrix,
     derivatives: &[ComplexMatrix],
@@ -189,6 +190,154 @@ pub fn quantum_geometric_tensor_from_hamiltonian_derivatives(
         occupied_count,
         components,
     })
+}
+
+/// Errors raised while evaluating a real-space local Chern marker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LocalChernMarkerError {
+    /// The input matrix is not a finite, nonempty Hermitian square matrix.
+    InvalidMatrix,
+    /// The supplied matrix does not represent a projector.
+    InvalidProjector,
+    /// Occupied indices must be unique, valid, and nonempty.
+    InvalidOccupiedStates,
+    /// Every basis state needs one finite two-dimensional position.
+    InvalidPositions,
+    /// The primitive-cell area must be finite and positive.
+    InvalidCellArea,
+    /// Diagonalization of a validated Hamiltonian failed.
+    EigensystemFailure,
+}
+
+impl std::fmt::Display for LocalChernMarkerError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidMatrix => write!(
+                formatter,
+                "the local Chern marker requires a finite, nonempty Hermitian square matrix"
+            ),
+            Self::InvalidProjector => write!(
+                formatter,
+                "the local Chern marker requires an idempotent occupied-state projector"
+            ),
+            Self::InvalidOccupiedStates => write!(
+                formatter,
+                "occupied states must be a nonempty set of unique valid indices"
+            ),
+            Self::InvalidPositions => write!(
+                formatter,
+                "the local Chern marker requires one finite two-dimensional position per state"
+            ),
+            Self::InvalidCellArea => write!(
+                formatter,
+                "the local Chern marker requires a finite positive primitive-cell area"
+            ),
+            Self::EigensystemFailure => {
+                write!(
+                    formatter,
+                    "failed to diagonalize the local-marker Hamiltonian"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for LocalChernMarkerError {}
+
+fn local_chern_marker_for_projector(
+    projector: &DMatrix<Complex64>,
+    positions: &[[f64; 2]],
+    cell_area: f64,
+) -> Result<Vec<f64>, LocalChernMarkerError> {
+    let dimension = projector.nrows();
+    if positions.len() != dimension
+        || positions
+            .iter()
+            .flatten()
+            .any(|coordinate| !coordinate.is_finite())
+    {
+        return Err(LocalChernMarkerError::InvalidPositions);
+    }
+    if !cell_area.is_finite() || cell_area <= 0.0 {
+        return Err(LocalChernMarkerError::InvalidCellArea);
+    }
+
+    let x_commutator = DMatrix::from_fn(dimension, dimension, |row, column| {
+        projector[(row, column)] * (positions[row][0] - positions[column][0])
+    });
+    let y_commutator = DMatrix::from_fn(dimension, dimension, |row, column| {
+        projector[(row, column)] * (positions[row][1] - positions[column][1])
+    });
+    let product = projector * x_commutator * y_commutator;
+    let normalization = 4.0 * std::f64::consts::PI / cell_area;
+    Ok((0..dimension)
+        .map(|state| normalization * product[(state, state)].im)
+        .collect())
+}
+
+/// Evaluates the Bianco-Resta local Chern marker from an occupied projector.
+///
+/// `positions[state]` is the Cartesian position of the corresponding basis
+/// state. The result has one marker per basis state and uses the primitive-cell
+/// area for the standard intensive normalization.
+pub fn local_chern_marker_from_projector(
+    projector: &ComplexMatrix,
+    positions: &[[f64; 2]],
+    cell_area: f64,
+) -> Result<Vec<f64>, LocalChernMarkerError> {
+    let dimension = projector.rows();
+    if dimension == 0
+        || projector.shape() != (dimension, dimension)
+        || !projector.is_hermitian(1.0e-8).unwrap_or(false)
+    {
+        return Err(LocalChernMarkerError::InvalidMatrix);
+    }
+    let projector = dmatrix(projector);
+    let idempotence_error = (&projector * &projector - &projector).norm();
+    if idempotence_error > 1.0e-8 * dimension as f64 {
+        return Err(LocalChernMarkerError::InvalidProjector);
+    }
+    local_chern_marker_for_projector(&projector, positions, cell_area)
+}
+
+/// Diagonalizes a finite Hamiltonian and evaluates its local Chern marker.
+///
+/// Occupied indices refer to eigenvalues in ascending order. The Hamiltonian
+/// can describe arbitrary disorder, boundaries, and multiorbital structure;
+/// only the two-dimensional Cartesian embedding is required.
+pub fn local_chern_marker_from_hamiltonian(
+    hamiltonian: &ComplexMatrix,
+    positions: &[[f64; 2]],
+    occupied_states: &[usize],
+    cell_area: f64,
+) -> Result<Vec<f64>, LocalChernMarkerError> {
+    let dimension = hamiltonian.rows();
+    if dimension == 0
+        || hamiltonian.shape() != (dimension, dimension)
+        || !hamiltonian.is_hermitian(1.0e-8).unwrap_or(false)
+    {
+        return Err(LocalChernMarkerError::InvalidMatrix);
+    }
+    let mut occupied_mask = vec![false; dimension];
+    for &state in occupied_states {
+        if state >= dimension || occupied_mask[state] {
+            return Err(LocalChernMarkerError::InvalidOccupiedStates);
+        }
+        occupied_mask[state] = true;
+    }
+    if occupied_states.is_empty() {
+        return Err(LocalChernMarkerError::InvalidOccupiedStates);
+    }
+
+    let eigensystem = hermitian_eigensystem(hamiltonian, 1.0e-8)
+        .map_err(|_| LocalChernMarkerError::EigensystemFailure)?;
+    let eigenvectors = dmatrix(eigensystem.eigenvectors());
+    let occupied = DMatrix::from_fn(dimension, occupied_states.len(), |row, occupied_column| {
+        eigenvectors[(row, occupied_states[occupied_column])]
+    });
+    let projector = &occupied * occupied.adjoint();
+    local_chern_marker_for_projector(&projector, positions, cell_area)
 }
 
 /// Second-Chern density integrated over three coordinates of a four-torus.

@@ -252,3 +252,65 @@ def test_wannier90_and_qe_text_import_builds_a_general_model(tmp_path) -> None:
     np.testing.assert_allclose(qe_k, [[0, 0, 0], [0.5, 0, 0]])
     np.testing.assert_allclose(qe_energies, [[-1.5], [2.5]])
     assert metadata == {"nbnd": 1, "nks": 2}
+
+
+def test_model_mutation_neighbor_shells_and_parameter_copies_are_general() -> None:
+    pythtb = require_compat_module("pythtb", ISSUE_URL)
+    lattice = pythtb.Lattice(
+        [[1.0, 0.0], [0.5, np.sqrt(3.0) / 2.0]],
+        [[1.0 / 3.0, 1.0 / 3.0], [2.0 / 3.0, 2.0 / 3.0]],
+        periodic_dirs=[0, 1],
+    )
+    model = pythtb.TBModel(lattice)
+    summaries, bonds = model.nn_bonds(2)
+    assert [summary["degeneracy_total"] for summary in summaries] == [6, 12]
+    assert [len(shell) for shell in bonds] == [3, 6]
+    model.set_shell_hops({1: -1.0})
+    np.testing.assert_allclose(
+        model.solve_ham([[0.0, 0.0], [1.0 / 3.0, 2.0 / 3.0]]),
+        [[-3.0, 3.0], [0.0, 0.0]],
+        atol=1e-12,
+    )
+
+    parameterized = pythtb.TBModel(
+        pythtb.Lattice([[1.0]], [[0.0], [0.5]], periodic_dirs=[0])
+    )
+    parameterized.set_hop("v", 0, 1, [0])
+    parameterized.set_hop("w", 1, 0, [1])
+    resolved = parameterized.with_parameters(v=1.0, w=2.0)
+    assert len(parameterized.parameters) == 2
+    assert resolved.parameters == []
+    np.testing.assert_allclose(
+        resolved.solve_ham([[0.0], [0.5]]),
+        [[-3.0, 3.0], [-1.0, 1.0]],
+        atol=1e-12,
+    )
+
+    reset = resolved.copy()
+    reset.clear_hoppings()
+    reset.clear_onsite()
+    reset.add_orb([0.25])
+    assert reset.nhops == 0
+    assert reset.norb == 3
+    np.testing.assert_allclose(reset.onsite, 0.0)
+
+
+def test_finite_haldane_local_chern_marker_uses_rust_projector_core() -> None:
+    require_compat_module("pythtb", ISSUE_URL)
+    from pythtb import models
+
+    finite = models.haldane(0.0, -1.0, 0.15).make_finite(
+        periodic_dirs=[0, 1],
+        num_cells=[5, 5],
+    )
+    marker, bulk = finite.local_chern_marker(
+        return_bulk_avg=True,
+        trim_cells=1,
+    )
+
+    assert finite.dim_k == 0
+    assert finite.norb == 50
+    assert finite.lattice.nsuper == [5, 5]
+    assert marker.shape == (50,)
+    assert bulk == pytest.approx(-0.9426725430769424, abs=1e-10)
+    assert np.sum(marker) == pytest.approx(0.0, abs=1e-10)

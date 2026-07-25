@@ -85,6 +85,13 @@ test = "tests/native_topology.rs massive Dirac analytic tensor plus PythTB compa
 status = "implemented"
 
 [[capability]]
+id = "geometry.local_chern_marker"
+description = "Bianco-Resta local Chern marker from either an occupied projector or a finite Hamiltonian and occupied eigenstate indices"
+native_api = "thouless::topology::{local_chern_marker_from_projector,local_chern_marker_from_hamiltonian}"
+test = "tests/native_topology.rs projector-gauge equivalence and compat-tests/test_pythtb_api.py finite Haldane bulk marker"
+status = "implemented"
+
+[[capability]]
 id = "response.intrinsic"
 description = "Linear Kubo and intrinsic nonlinear Hall response"
 native_api = "not designed"

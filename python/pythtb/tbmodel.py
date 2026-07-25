@@ -151,6 +151,86 @@ class TBModel:
             raise ValueError("assume_position_operator_diagonal must be a boolean.")
         self._assume_position_operator_diagonal = value
 
+    def display(self):
+        """Deprecated report printer retained for source compatibility."""
+        warnings.warn(
+            "display() is deprecated; use info(show=True)",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return self.info(show=True)
+
+    def info(self, show=True, short=False):
+        """Return or print a compact, deterministic model report."""
+        lines = [
+            "----------------------------------------",
+            "       Tight-binding model report",
+            "----------------------------------------",
+            f"real-space dimension       = {self.dim_r}",
+            f"reciprocal-space dimension = {self.dim_k}",
+            f"periodic directions        = {self.periodic_dirs}",
+            f"number of orbitals         = {self.norb}",
+            f"spinful                     = {self.spinful}",
+            f"number of electronic states = {self.nstate}",
+        ]
+        if not short:
+            lines.append("Site energies:")
+            for index, energy in enumerate(self._site_energies):
+                lines.append(f"  <{index}| H |{index}> = {energy}")
+            lines.append("Hoppings:")
+            for hopping in self.hoppings:
+                lines.append(
+                    "  "
+                    f"<{hopping['from_orbital']}| H |"
+                    f"{hopping['to_orbital']}> = {hopping['amplitude']}"
+                )
+        report = "\n".join(lines)
+        if show:
+            print(report)
+            return None
+        return report
+
+    def clear_hoppings(self):
+        """Remove all numeric and parameter-dependent hopping terms."""
+        self._hoppings.clear()
+        self._hopping_providers.clear()
+
+    def clear_onsite(self):
+        """Reset all onsite terms to zero."""
+        self._site_energies.fill(0)
+        self._onsite_providers.clear()
+
+    def get_num_orbitals(self):
+        """Deprecated alias for :attr:`norb`."""
+        warnings.warn(
+            "get_num_orbitals() is deprecated; use norb",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return self.norb
+
+    def get_orb(self):
+        """Deprecated alias for :meth:`get_orb_vecs`."""
+        warnings.warn(
+            "get_orb() is deprecated; use get_orb_vecs()",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return self.get_orb_vecs()
+
+    def nn_bonds(self, n_shells, report=False):
+        """Return real-space nearest-neighbor shell summaries and bonds."""
+        return self._lattice.nn_bonds(n_shells, report=report)
+
+    def get_lat(self):
+        """Deprecated alias for :meth:`get_lat_vecs`."""
+        warnings.warn(
+            "get_lat() is deprecated; use get_lat_vecs()",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return self.get_lat_vecs()
+
     def get_lat_vecs(self):
         return self.lat_vecs
 
@@ -306,6 +386,33 @@ class TBModel:
         )
         self._hopping_providers.pop(key, None)
 
+    def set_shell_hops(self, shell_hops, mode="set"):
+        """Assign one hopping value to every bond in selected radial shells."""
+        if not isinstance(shell_hops, dict):
+            raise TypeError(
+                "shell_hops must be a dictionary mapping shell index to hopping amplitude."
+            )
+        if not shell_hops:
+            raise ValueError("shell_hops must have at least one element.")
+        if any(
+            not isinstance(shell, (int, np.integer)) or int(shell) < 1
+            for shell in shell_hops
+        ):
+            raise ValueError("Each shell index must be a positive integer.")
+        _, bonds_by_shell = self.nn_bonds(max(int(shell) for shell in shell_hops))
+        for shell_index, bonds in enumerate(bonds_by_shell, start=1):
+            if shell_index not in shell_hops:
+                continue
+            for source, target, offset in bonds:
+                self.set_hop(
+                    shell_hops[shell_index],
+                    source,
+                    target,
+                    offset,
+                    mode=mode,
+                    allow_conjugate_pair=True,
+                )
+
     def set_parameters(self, parameters=None, **kwargs):
         values = {} if parameters is None else dict(parameters)
         values.update(kwargs)
@@ -321,6 +428,15 @@ class TBModel:
                 self._store_hopping(block, target, source, offset)
                 del self._hopping_providers[key]
         return self
+
+    def with_parameters(self, params=None, /, **kwargs):
+        """Return an independent model with supplied parameters resolved."""
+        values = {} if params is None else dict(params)
+        values.update(kwargs)
+        result = self.copy()
+        if values:
+            result.set_parameters(values)
+        return result
 
     def _resolved_terms(self, parameters):
         onsite = self._site_energies.astype(complex, copy=True)
@@ -1057,6 +1173,93 @@ class TBModel:
             params,
         )
 
+    def local_chern_marker(
+        self,
+        occ_idxs=None,
+        return_bulk_avg=False,
+        trim_cells=4,
+        **params,
+    ):
+        """Evaluate the Bianco-Resta marker for a finite two-dimensional model."""
+        if self.dim_k != 0:
+            raise ValueError(
+                "Local Chern marker is only defined for real-space models (dim_k=0)."
+            )
+        if self.dim_r != 2:
+            raise NotImplementedError(
+                "Local Chern marker is only defined for 2D models (dim_r=2)."
+            )
+        occupied = (
+            np.arange(self.nstate // 2, dtype=int)
+            if occ_idxs is None
+            else np.atleast_1d(occ_idxs).astype(int)
+        )
+        if (
+            len(occupied) == 0
+            or len(np.unique(occupied)) != len(occupied)
+            or np.any(occupied < 0)
+            or np.any(occupied >= self.nstate)
+        ):
+            raise ValueError("occ_idxs must contain unique valid state indices")
+        hamiltonian = np.asarray(
+            self.hamiltonian(flatten_spin_axis=True, **params),
+            dtype=complex,
+        )
+        orbital_positions = self.get_orb_vecs(cartesian=True)
+        state_positions = np.repeat(
+            orbital_positions,
+            self.nspin,
+            axis=0,
+        )
+        state_marker = np.asarray(
+            _core.local_chern_marker_kubo(
+                hamiltonian.tolist(),
+                state_positions.tolist(),
+                occupied.tolist(),
+                float(self.cell_volume),
+            ),
+            dtype=float,
+        )
+        local_marker = state_marker.reshape(self.norb, self.nspin).sum(axis=1)
+        if not return_bulk_avg:
+            return local_marker
+
+        if isinstance(trim_cells, (int, np.integer)):
+            trim = (int(trim_cells), int(trim_cells))
+        else:
+            trim = tuple(int(value) for value in trim_cells)
+            if len(trim) != 2:
+                raise ValueError("trim_cells must be an integer or a pair")
+        if any(value < 0 for value in trim):
+            raise ValueError("trim_cells must be nonnegative")
+        reduced = self.get_orb_vecs(cartesian=False)
+        cell_indices = np.floor(reduced + 1.0e-9).astype(int)
+        per_cell = {}
+        for cell, marker in zip(
+            map(tuple, cell_indices),
+            local_marker,
+            strict=True,
+        ):
+            per_cell[cell] = per_cell.get(cell, 0.0) + float(marker)
+        coordinates = np.asarray(list(per_cell), dtype=int)
+        lower = coordinates.min(axis=0) + np.asarray(trim)
+        upper = coordinates.max(axis=0) - np.asarray(trim)
+        if np.any(lower > upper):
+            raise ValueError(
+                f"trim_cells={trim_cells} is too large for the finite sample"
+            )
+        bulk_values = [
+            marker
+            for cell, marker in per_cell.items()
+            if all(
+                lower[axis] <= cell[axis] <= upper[axis]
+                for axis in range(2)
+            )
+        ]
+        if not bulk_values:
+            raise ValueError("No bulk cells remain after trimming")
+        return local_marker, float(np.mean(bulk_values))
+
     def _chern_number_with_parameter_sweeps(
         self,
         plane,
@@ -1167,6 +1370,20 @@ class TBModel:
             for target, source, offset, amplitude in hoppings
         ]
 
+    def add_orb(self, orb_pos):
+        """Append an empty orbital to the model in place."""
+        self._lattice.add_orb(orb_pos)
+        if self.spinful:
+            self._site_energies = np.concatenate(
+                (
+                    self._site_energies,
+                    np.zeros((1, 2, 2), dtype=complex),
+                ),
+                axis=0,
+            )
+        else:
+            self._site_energies = np.append(self._site_energies, 0.0)
+
     def remove_orb(self, to_remove):
         """Remove orbital subspaces and compact all remaining hopping indices."""
         if isinstance(to_remove, int):
@@ -1259,6 +1476,10 @@ class TBModel:
             glue_edges = glue_edgs
         new_lattice = self._lattice.cut_piece(num_cells, periodic_dir)
         result = TBModel(new_lattice, self.spinful)
+        result._from_w90 = self._from_w90
+        result.assume_position_operator_diagonal = (
+            self.assume_position_operator_diagonal
+        )
         for cell in range(num_cells):
             for orbital in range(self.norb):
                 result.set_onsite(
@@ -1285,7 +1506,79 @@ class TBModel:
                     mode="add",
                     allow_conjugate_pair=True,
                 )
+        for cell in range(num_cells):
+            for orbital, provider in self._onsite_providers.items():
+                result.set_onsite(provider, cell * self.norb + orbital)
+        for (target, source, original_offset), provider in (
+            self._hopping_providers.items()
+        ):
+            shift = original_offset[periodic_dir]
+            for cell in range(num_cells):
+                source_cell = cell + shift
+                if glue_edges:
+                    source_cell %= num_cells
+                elif not 0 <= source_cell < num_cells:
+                    continue
+                offset = list(original_offset)
+                offset[periodic_dir] = 0
+                result.set_hop(
+                    provider,
+                    cell * self.norb + target,
+                    source_cell * self.norb + source,
+                    offset,
+                    allow_conjugate_pair=True,
+                )
         return result
+
+    def make_finite(self, periodic_dirs, num_cells, glue_edges=None):
+        """Cut one or more periodic directions into a finite sample."""
+        directions = list(periodic_dirs)
+        cell_counts = list(num_cells)
+        if self.dim_k == 0:
+            raise ValueError("Model is already finite!")
+        if len(directions) != len(cell_counts):
+            raise ValueError(
+                "Length of periodic_dirs must match length of num_cells."
+            )
+        if len(set(directions)) != len(directions):
+            raise ValueError("All directions in periodic_dirs must be unique.")
+        if any(direction not in self.periodic_dirs for direction in directions):
+            raise ValueError("All directions in periodic_dirs must be periodic.")
+        if any(
+            not isinstance(count, (int, np.integer)) or int(count) < 1
+            for count in cell_counts
+        ):
+            raise ValueError("Each num_cells entry must be a positive integer.")
+        if glue_edges is None:
+            glue = [False] * len(directions)
+        else:
+            glue = list(glue_edges)
+            if len(glue) != len(directions):
+                raise ValueError(
+                    "Length of glue_edges must match number of periodic directions."
+                )
+        result = self
+        for direction, count, glue_direction in zip(
+            directions,
+            cell_counts,
+            glue,
+            strict=True,
+        ):
+            result = result.cut_piece(
+                int(count),
+                int(direction),
+                glue_edges=bool(glue_direction),
+            )
+        return result
+
+    def reduce_dim(self):
+        """Deprecated PythTB 2.0 placeholder retained verbatim."""
+        warnings.warn(
+            "reduce_dim() is deprecated; use make_finite() or cut_piece()",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return None
 
 
 class tb_model(TBModel):

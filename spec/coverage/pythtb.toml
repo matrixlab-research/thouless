@@ -206,9 +206,8 @@ source_entries = [
   "TBModel.local_chern_marker",
 ]
 compat_entry = "python/pythtb/tbmodel.py"
-rust_capability = "model.structure, geometry.finite, and geometry.topology"
-public_test = "partial transformed-model and Chern contracts"
+rust_capability = "model.structure, geometry.finite, and geometry.local_chern_marker"
+public_test = "compat-tests/test_pythtb_api.py shell hopping, parameter copy, mutation reset, multidirectional finite Haldane, and local-marker contracts"
 source_test = "no complete collected source coverage"
-actual_result = "partial"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/4"
+actual_result = "all listed public methods are present; the finite Haldane marker matches PythTB 2.0 to roundoff and its finite-sample trace vanishes"
+status = "implemented"
