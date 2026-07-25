@@ -247,3 +247,100 @@ def test_compressed_graph_generalizes_to_parallel_and_dangling_edges() -> None:
     assert restored.__getstate__() == compressed.__getstate__()
     assert list(restored) == list(compressed)
     assert tuple(restored.in_neighbors(43)) == tuple(compressed.in_neighbors(43))
+
+
+def test_dense_decompositions_generalize_to_nonnormal_matrix_pencils() -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    rng = np.random.default_rng(1905)
+    dimension = 12
+    left = (
+        rng.normal(size=(dimension, dimension))
+        + 1j * rng.normal(size=(dimension, dimension))
+    )
+    right = (
+        3.0 * np.eye(dimension)
+        + 0.15 * rng.normal(size=(dimension, dimension))
+        + 0.15j * rng.normal(size=(dimension, dimension))
+    )
+
+    form, vectors, eigenvalues = kwant.linalg.schur(left)
+    np.testing.assert_allclose(
+        vectors @ form @ vectors.conj().T,
+        left,
+        rtol=1e-11,
+        atol=1e-11,
+    )
+    selection = np.array(
+        [index % 3 == 1 for index in range(dimension)],
+        dtype=bool,
+    )
+    reordered, reordered_vectors, reordered_eigenvalues = (
+        kwant.linalg.order_schur(selection, form, vectors)
+    )
+    np.testing.assert_allclose(
+        reordered_vectors @ reordered @ reordered_vectors.conj().T,
+        left,
+        rtol=1e-11,
+        atol=1e-11,
+    )
+    np.testing.assert_allclose(
+        np.sort_complex(reordered_eigenvalues),
+        np.sort_complex(eigenvalues),
+        rtol=1e-11,
+        atol=1e-11,
+    )
+    selected_left, selected_right = kwant.linalg.evecs_from_schur(
+        form,
+        vectors,
+        selection,
+        left=True,
+        right=True,
+    )
+    np.testing.assert_allclose(
+        left @ selected_right,
+        selected_right @ np.diag(eigenvalues[selection]),
+        rtol=1e-10,
+        atol=1e-10,
+    )
+    np.testing.assert_allclose(
+        selected_left.conj().T @ left,
+        np.diag(eigenvalues[selection]) @ selected_left.conj().T,
+        rtol=1e-10,
+        atol=1e-10,
+    )
+
+    s, t, q, z, alpha, beta = kwant.linalg.gen_schur(left, right)
+    np.testing.assert_allclose(q @ s @ z.conj().T, left, rtol=1e-11, atol=1e-11)
+    np.testing.assert_allclose(q @ t @ z.conj().T, right, rtol=1e-11, atol=1e-11)
+    generalized_left, generalized_right = kwant.linalg.evecs_from_gen_schur(
+        s,
+        t,
+        q,
+        z,
+        selection,
+        left=True,
+        right=True,
+    )
+    np.testing.assert_allclose(
+        left @ generalized_right @ np.diag(beta[selection]),
+        right @ generalized_right @ np.diag(alpha[selection]),
+        rtol=1e-9,
+        atol=1e-9,
+    )
+    np.testing.assert_allclose(
+        np.diag(beta[selection]) @ generalized_left.conj().T @ left,
+        np.diag(alpha[selection]) @ generalized_left.conj().T @ right,
+        rtol=1e-9,
+        atol=1e-9,
+    )
+
+    form_only = kwant.linalg.schur(left, calc_q=False, calc_ev=False)
+    assert len(form_only) == 1
+    generalized_forms = kwant.linalg.gen_schur(
+        left,
+        right,
+        calc_q=False,
+        calc_z=False,
+        calc_ev=False,
+    )
+    assert len(generalized_forms) == 2

@@ -145,7 +145,7 @@ actual_result = "8 source tests passed"
 status = "implemented"
 
 [[interface]]
-name = "matrix decompositions and optional sparse backends"
+name = "Schur and generalized Schur decompositions"
 source_entries = [
   "linalg.schur",
   "linalg.convert_r2c_schur",
@@ -155,12 +155,22 @@ source_entries = [
   "linalg.convert_r2c_gen_schur",
   "linalg.order_gen_schur",
   "linalg.evecs_from_gen_schur",
-  "linalg.mumps",
 ]
 compat_entry = "python/kwant/linalg"
-rust_capability = "dense and sparse decomposition APIs not yet designed"
+rust_capability = "algebra.dense_decomposition"
+public_test = "repository nonnormal ordinary and generalized decomposition, reordering, eigenvector, and optional-output contract"
+source_test = "complete pinned linalg decomposition module across float32, float64, complex64, complex128, and integer input"
+actual_result = "40 source tests passed; compatibility currently normalizes outputs to complex128 instead of preserving real quasi-triangular forms and source dtypes"
+status = "partial"
+issue = "https://github.com/matrixlab-research/thouless/issues/5"
+
+[[interface]]
+name = "optional sparse direct solver backend"
+source_entries = ["linalg.mumps"]
+compat_entry = "python/kwant/linalg/mumps"
+rust_capability = "sparse direct-solver backend not yet designed"
 public_test = "not implemented"
-source_test = "pinned linalg decomposition and MUMPS modules"
+source_test = "pinned MUMPS module"
 actual_result = "not selected"
 status = "missing"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"

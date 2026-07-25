@@ -8,6 +8,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod decomposition;
 pub mod differentiation;
 mod error;
 pub mod geometry;

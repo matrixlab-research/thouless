@@ -6,6 +6,15 @@ extern crate lapack_src;
 
 use num_complex::Complex64;
 
+mod schur;
+
+pub use schur::{
+    complex_schur, complex_schur_eigenvectors, generalized_complex_schur,
+    generalized_complex_schur_eigenvectors, reorder_complex_schur,
+    reorder_generalized_complex_schur, ComplexEigenvectors, ComplexSchur, EigenvectorSides,
+    GeneralizedComplexSchur,
+};
+
 /// A column-major Hermitian eigensystem.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HermitianEigensystem {
@@ -66,6 +75,13 @@ pub enum Error {
         /// Supplied number of values.
         actual: usize,
     },
+    /// The selection vector does not contain one entry per matrix row.
+    InvalidSelectionLength {
+        /// Required number of entries.
+        expected: usize,
+        /// Supplied number of entries.
+        actual: usize,
+    },
     /// The matrix dimension does not fit LAPACK's integer ABI.
     DimensionTooLarge,
     /// LAPACK rejected an argument despite boundary validation.
@@ -87,7 +103,11 @@ impl std::fmt::Display for Error {
         match self {
             Self::InvalidInputLength { expected, actual } => write!(
                 formatter,
-                "Hermitian matrix requires {expected} values; received {actual}"
+                "square matrix requires {expected} values; received {actual}"
+            ),
+            Self::InvalidSelectionLength { expected, actual } => write!(
+                formatter,
+                "selection requires {expected} values; received {actual}"
             ),
             Self::DimensionTooLarge => {
                 write!(formatter, "matrix dimension exceeds the LAPACK integer ABI")

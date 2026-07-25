@@ -94,6 +94,13 @@ test = "src/graph.rs property tests, repository large-graph contract, and comple
 status = "implemented"
 
 [[capability]]
+id = "algebra.dense_decomposition"
+description = "Complex Schur and generalized Schur decompositions, invariant-subspace reordering, and left and right eigenvectors"
+native_api = "thouless::decomposition"
+test = "src/decomposition.rs property tests, thouless-lapack reconstruction tests, repository nonnormal-matrix contracts, and complete pinned Kwant linalg decomposition module"
+status = "implemented"
+
+[[capability]]
 id = "validation.held_out"
 description = "Evaluator-owned tests on unseen models and workflows"
 native_api = "not applicable"
