@@ -7,6 +7,7 @@ use thouless::decomposition::{
     eigenvectors_from_schur, generalized_schur, reorder_generalized_schur, reorder_schur, schur,
 };
 use thouless::differentiation::{finite_difference_uniform, DifferenceScheme};
+use thouless::digest::{gaussian as digest_gaussian_value, uniform_pair};
 use thouless::geometry::ReciprocalPath;
 use thouless::graph::{
     CompressedGraph, CompressionOptions, DirectedEdge, DirectedGraphBuilder, GraphError, NodeId,
@@ -433,6 +434,16 @@ fn lead_band_evaluation(
 #[pyfunction]
 fn reflection_shot_noise(reflection_amplitudes: MatrixRows) -> PyResult<f64> {
     partition_shot_noise(&matrix_from_rows(reflection_amplitudes)?).map_err(value_error)
+}
+
+#[pyfunction]
+fn digest_uniform_pair(input: Vec<u8>, salt: Vec<u8>) -> (f64, f64) {
+    uniform_pair(&input, &salt)
+}
+
+#[pyfunction]
+fn digest_gaussian(input: Vec<u8>, salt: Vec<u8>) -> f64 {
+    digest_gaussian_value(&input, &salt)
 }
 
 #[pyfunction]
@@ -1363,6 +1374,8 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(validate_periodic_bands, module)?)?;
     module.add_function(wrap_pyfunction!(lead_band_evaluation, module)?)?;
     module.add_function(wrap_pyfunction!(reflection_shot_noise, module)?)?;
+    module.add_function(wrap_pyfunction!(digest_uniform_pair, module)?)?;
+    module.add_function(wrap_pyfunction!(digest_gaussian, module)?)?;
     module.add_function(wrap_pyfunction!(lead_propagating_modes, module)?)?;
     module.add_function(wrap_pyfunction!(lead_retarded_self_energy, module)?)?;
     module.add_function(wrap_pyfunction!(square_strip_self_energy, module)?)?;

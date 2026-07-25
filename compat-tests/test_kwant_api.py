@@ -417,3 +417,12 @@ def test_lead_selfenergy_executes_without_python_eigensolvers(monkeypatch) -> No
     analytic = kwant.physics.square_selfenergy(width, amplitude, energy)
     numerical = kwant.physics.selfenergy(cell, -amplitude * np.eye(width))
     np.testing.assert_allclose(analytic, numerical, atol=1e-9)
+
+
+def test_digest_matches_kwant_15_byte_contract() -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    assert kwant.digest.uniform("abc") == 0.4944136595586759
+    assert kwant.digest.gauss("abc") == -3.3392115425542803
+    pair = kwant.digest.uniform2(np.array([1, 2], dtype=np.int32), salt=b"x")
+    assert len(pair) == 2
+    assert all(0.0 <= value < 1.0 for value in pair)

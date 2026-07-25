@@ -16,6 +16,7 @@ members = [".", "crates/thouless-lapack", "crates/thouless-python"]
 resolver = "2"
 
 [dependencies]
+md-5 = "0.10.6"
 nalgebra = "0.33.2"
 num-complex = "0.4.6"
 thouless-lapack = { path = "crates/thouless-lapack" }

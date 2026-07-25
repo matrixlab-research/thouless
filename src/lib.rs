@@ -11,6 +11,7 @@
 pub mod bands;
 pub mod decomposition;
 pub mod differentiation;
+pub mod digest;
 mod error;
 pub mod geometry;
 pub mod graph;

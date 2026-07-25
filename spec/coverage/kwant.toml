@@ -192,10 +192,20 @@ issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
 [[interface]]
 name = "optional scientific modules"
-source_entries = ["kpm", "continuum", "wraparound", "digest", "plotter"]
+source_entries = ["kpm", "continuum", "wraparound", "plotter"]
 compat_entry = "python/kwant"
 rust_capability = "compatibility utility layer; native migration pending"
 public_test = "pinned gauge-covariant operator workflow"
-actual_result = "digest utilities implemented; remaining optional modules missing"
+actual_result = "missing"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
+
+[[interface]]
+name = "deterministic random-access variates"
+source_entries = ["digest.uniform", "digest.uniform2", "digest.gauss"]
+compat_entry = "python/kwant/digest"
+rust_capability = "utility.random_access_variates"
+public_test = "exact Kwant 1.5 string-byte values and buffer-input range contract"
+source_test = "no dedicated source test module"
+actual_result = "implemented through the Rust MD5 and Box-Muller core"
+status = "implemented"

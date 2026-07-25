@@ -102,6 +102,13 @@ test = "src/random_matrix.rs property tests, LAPACK QR tests, repository general
 status = "implemented"
 
 [[capability]]
+id = "utility.random_access_variates"
+description = "Deterministic uniform and Gaussian random-access variates over immutable byte inputs"
+native_api = "thouless::digest::{uniform_pair,uniform,gaussian}"
+test = "src/digest.rs reproducibility and range properties plus exact Kwant 1.5 byte-contract values"
+status = "implemented"
+
+[[capability]]
 id = "geometry.lattice_reduction"
 description = "LLL basis reduction, closest lattice-vector search, and Voronoi neighbors"
 native_api = "thouless::lattice_reduction"
