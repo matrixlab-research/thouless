@@ -8,6 +8,7 @@ use crate::decomposition::{
     eigenvectors_from_generalized_schur, generalized_schur, DecompositionError,
 };
 use crate::spectrum::hermitian_eigensystem;
+use crate::symmetry::{DiscreteSymmetry, SymmetryViolation};
 use crate::{Complex64, ComplexMatrix, MatrixError};
 
 const UNIT_CIRCLE_TOLERANCE: f64 = 1.0e-7;
@@ -69,6 +70,27 @@ impl PropagatingLeadModes {
     }
 }
 
+/// Propagating modes resolved into orthogonal conservation-law subspaces.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProjectedLeadModes {
+    modes: PropagatingLeadModes,
+    block_incoming_counts: Vec<usize>,
+}
+
+impl ProjectedLeadModes {
+    /// Combined modes, grouped into all incoming and then all outgoing blocks.
+    #[must_use]
+    pub const fn modes(&self) -> &PropagatingLeadModes {
+        &self.modes
+    }
+
+    /// Number of incoming modes in each projector subspace.
+    #[must_use]
+    pub fn block_incoming_counts(&self) -> &[usize] {
+        &self.block_incoming_counts
+    }
+}
+
 /// Failures raised by propagating-mode analysis.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -79,6 +101,8 @@ pub enum LeadModeError {
     NonHermitianCell,
     /// Generalized eigendecomposition failed.
     DecompositionFailure,
+    /// Conservation-law projectors are invalid or do not reduce both lead matrices.
+    InvalidProjectors,
     /// Matrix construction failed.
     Matrix(MatrixError),
 }
@@ -94,6 +118,10 @@ impl fmt::Display for LeadModeError {
             Self::DecompositionFailure => {
                 write!(formatter, "lead generalized eigendecomposition failed")
             }
+            Self::InvalidProjectors => write!(
+                formatter,
+                "projectors must be complete orthonormal subspaces that reduce the lead matrices"
+            ),
             Self::Matrix(error) => error.fmt(formatter),
         }
     }
@@ -376,6 +404,117 @@ pub fn propagating_modes(
         stabilized_vectors,
         stabilized_vectors_lambda_inverse,
         square_root_hopping,
+    })
+}
+
+/// Solve propagating modes independently in complete orthogonal subspaces.
+///
+/// The returned wave functions live in the original physical basis. The
+/// stabilized vectors live in the concatenated projector basis, and the
+/// square-root hopping maps that basis back to the physical basis.
+pub fn propagating_modes_in_subspaces(
+    cell_hamiltonian: &ComplexMatrix,
+    inter_cell_hopping: &ComplexMatrix,
+    projectors: &[ComplexMatrix],
+) -> Result<ProjectedLeadModes, LeadModeError> {
+    let dimension = cell_hamiltonian.rows();
+    if cell_hamiltonian.shape() != (dimension, dimension)
+        || inter_cell_hopping.shape() != (dimension, dimension)
+        || projectors.is_empty()
+    {
+        return Err(LeadModeError::InvalidShape);
+    }
+    let symmetry = DiscreteSymmetry::new(Some(projectors.to_vec()), None, None, None)
+        .map_err(|_| LeadModeError::InvalidProjectors)?;
+    if symmetry
+        .validate(cell_hamiltonian)
+        .map_err(|_| LeadModeError::InvalidProjectors)?
+        .contains(&SymmetryViolation::ConservationLaw)
+        || symmetry
+            .validate(inter_cell_hopping)
+            .map_err(|_| LeadModeError::InvalidProjectors)?
+            .contains(&SymmetryViolation::ConservationLaw)
+    {
+        return Err(LeadModeError::InvalidProjectors);
+    }
+    let projectors = symmetry
+        .projectors()
+        .ok_or(LeadModeError::InvalidProjectors)?;
+    let cell = backend(cell_hamiltonian);
+    let hopping = backend(inter_cell_hopping);
+    let mut blocks = Vec::with_capacity(projectors.len());
+    for projector in projectors {
+        let projector_dense = backend(projector);
+        let projected_cell = projector_dense.adjoint() * &cell * &projector_dense;
+        let projected_hopping = projector_dense.adjoint() * &hopping * &projector_dense;
+        let modes = propagating_modes(&owned(&projected_cell)?, &owned(&projected_hopping)?)?;
+        if modes.wave_functions().columns() != 2 * modes.incoming_count() {
+            return Err(LeadModeError::DecompositionFailure);
+        }
+        blocks.push((projector_dense, modes));
+    }
+
+    let block_incoming_counts = blocks
+        .iter()
+        .map(|(_, modes)| modes.incoming_count())
+        .collect::<Vec<_>>();
+    let total_incoming = block_incoming_counts.iter().sum::<usize>();
+    let total_modes = 2 * total_incoming;
+    let mut wave_functions = DMatrix::<Complex64>::zeros(dimension, total_modes);
+    let mut stabilized_vectors = DMatrix::<Complex64>::zeros(dimension, total_modes);
+    let mut stabilized_vectors_lambda_inverse = DMatrix::<Complex64>::zeros(dimension, total_modes);
+    let mut square_root_hopping = DMatrix::<Complex64>::zeros(dimension, dimension);
+    let mut velocities = vec![0.0; total_modes];
+    let mut momenta = vec![0.0; total_modes];
+    let mut row_offset = 0;
+    let mut mode_offset = 0;
+
+    for (projector, modes) in &blocks {
+        let block_dimension = projector.ncols();
+        let block_incoming = modes.incoming_count();
+        let lifted_wave_functions = projector * backend(modes.wave_functions());
+        let block_vectors = backend(modes.stabilized_vectors());
+        let block_vectors_lambda_inverse = backend(modes.stabilized_vectors_lambda_inverse());
+        let lifted_square_root = projector * backend(modes.square_root_hopping());
+
+        for row in 0..dimension {
+            for column in 0..block_dimension {
+                square_root_hopping[(row, row_offset + column)] = lifted_square_root[(row, column)];
+            }
+        }
+        for direction in 0..2 {
+            for local_mode in 0..block_incoming {
+                let local_column = direction * block_incoming + local_mode;
+                let global_column = direction * total_incoming + mode_offset + local_mode;
+                velocities[global_column] = modes.velocities()[local_column];
+                momenta[global_column] = modes.momenta()[local_column];
+                for row in 0..dimension {
+                    wave_functions[(row, global_column)] =
+                        lifted_wave_functions[(row, local_column)];
+                }
+                for row in 0..block_dimension {
+                    stabilized_vectors[(row_offset + row, global_column)] =
+                        block_vectors[(row, local_column)];
+                    stabilized_vectors_lambda_inverse[(row_offset + row, global_column)] =
+                        block_vectors_lambda_inverse[(row, local_column)];
+                }
+            }
+        }
+        row_offset += block_dimension;
+        mode_offset += block_incoming;
+    }
+
+    Ok(ProjectedLeadModes {
+        modes: PropagatingLeadModes {
+            wave_functions: owned(&wave_functions)?,
+            velocities,
+            momenta,
+            incoming_count: total_incoming,
+            stabilized_vectors: owned(&stabilized_vectors)?,
+            stabilized_vectors_lambda_inverse: owned(&stabilized_vectors_lambda_inverse)?,
+            square_root_hopping: owned(&square_root_hopping)?,
+        },
+        block_incoming_counts,
     })
 }
 
@@ -724,6 +863,79 @@ mod tests {
         }
         for (baseline, scaled) in baseline.velocities().iter().zip(scaled.velocities()) {
             assert!((scaled / scale - baseline).abs() < 1.0e-10);
+        }
+    }
+
+    #[test]
+    fn complex_projectors_produce_block_resolved_modes() {
+        let inverse_sqrt_two = 2.0_f64.sqrt().recip();
+        let projectors = vec![
+            ComplexMatrix::new(
+                2,
+                1,
+                vec![
+                    Complex64::new(inverse_sqrt_two, 0.0),
+                    Complex64::new(0.0, inverse_sqrt_two),
+                ],
+            )
+            .unwrap(),
+            ComplexMatrix::new(
+                2,
+                1,
+                vec![
+                    Complex64::new(0.0, inverse_sqrt_two),
+                    Complex64::new(inverse_sqrt_two, 0.0),
+                ],
+            )
+            .unwrap(),
+        ];
+        let cell = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(0.3, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.3, 0.0),
+            ],
+        )
+        .unwrap();
+        let hopping = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(0.7, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.7, 0.0),
+            ],
+        )
+        .unwrap();
+
+        let projected = propagating_modes_in_subspaces(&cell, &hopping, &projectors).unwrap();
+        assert_eq!(projected.block_incoming_counts(), &[1, 1]);
+        let modes = projected.modes();
+        assert_eq!(modes.incoming_count(), 2);
+        for column in [0, 2] {
+            assert!(modes.stabilized_vectors().get(0, column).unwrap().norm() > 0.0);
+            assert_eq!(
+                modes.stabilized_vectors().get(1, column).unwrap(),
+                Complex64::new(0.0, 0.0)
+            );
+        }
+        for column in [1, 3] {
+            assert!(modes.stabilized_vectors().get(1, column).unwrap().norm() > 0.0);
+            assert_eq!(
+                modes.stabilized_vectors().get(0, column).unwrap(),
+                Complex64::new(0.0, 0.0)
+            );
+        }
+        let square_root = modes.square_root_hopping();
+        for row in 0..2 {
+            for (column, projector) in projectors.iter().enumerate() {
+                let expected = projector.get(row, 0).unwrap() * 0.7_f64.sqrt();
+                assert!((square_root.get(row, column).unwrap() - expected).norm() < 1.0e-12);
+            }
         }
     }
 }

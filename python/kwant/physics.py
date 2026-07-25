@@ -212,9 +212,30 @@ def phs_symmetrization(wave_functions, particle_hole):
     )
 
 
-def modes(h_cell, h_hop, tol=1e6, stabilization=None, *, discrete_symmetry=None):
+def modes(
+    h_cell,
+    h_hop,
+    tol=1e6,
+    stabilization=None,
+    *,
+    discrete_symmetry=None,
+    projectors=None,
+    time_reversal=None,
+    particle_hole=None,
+    chiral=None,
+):
     """Solve Bloch modes of a nearest-cell periodic lead."""
-    del tol, stabilization, discrete_symmetry
+    del tol, stabilization
+    if discrete_symmetry is not None:
+        projectors, time_reversal, particle_hole, chiral = discrete_symmetry
+    if any(
+        symmetry is not None
+        for symmetry in (time_reversal, particle_hole, chiral)
+    ):
+        raise NotImplementedError(
+            "Symmetry-related lead modes are tracked in "
+            "https://github.com/matrixlab-research/thouless/issues/5"
+        )
     h_cell = np.asarray(h_cell, dtype=complex)
     h_hop = np.asarray(h_hop, dtype=complex)
     if h_cell.ndim != 2 or h_cell.shape[0] != h_cell.shape[1]:
@@ -225,20 +246,44 @@ def modes(h_cell, h_hop, tol=1e6, stabilization=None, *, discrete_symmetry=None)
     square_hopping = np.zeros_like(h_cell)
     square_hopping[:, : h_hop.shape[1]] = h_hop
 
-    (
-        wave_functions,
-        velocities,
-        momenta,
-        incoming_count,
-        stabilized_vectors,
-        stabilized_vectors_lambda_inverse,
-        square_root_hopping,
-    ) = (
-        _core.lead_propagating_modes(
+    if projectors is None:
+        (
+            wave_functions,
+            velocities,
+            momenta,
+            incoming_count,
+            stabilized_vectors,
+            stabilized_vectors_lambda_inverse,
+            square_root_hopping,
+        ) = _core.lead_propagating_modes(
             h_cell.tolist(),
             square_hopping.tolist(),
         )
-    )
+        block_nmodes = [incoming_count]
+        projected = False
+    else:
+        (
+            wave_functions,
+            velocities,
+            momenta,
+            incoming_count,
+            stabilized_vectors,
+            stabilized_vectors_lambda_inverse,
+            square_root_hopping,
+            block_nmodes,
+        ) = _core.lead_projected_modes(
+            h_cell.tolist(),
+            square_hopping.tolist(),
+            [
+                (
+                    projector.toarray()
+                    if scipy_sparse.issparse(projector)
+                    else np.asarray(projector, dtype=complex)
+                ).tolist()
+                for projector in projectors
+            ],
+        )
+        projected = True
     wave_functions = np.asarray(wave_functions, dtype=complex).reshape(
         size,
         len(velocities),
@@ -248,14 +293,18 @@ def modes(h_cell, h_hop, tol=1e6, stabilization=None, *, discrete_symmetry=None)
         velocities,
         momenta,
     )
+    propagating.block_nmodes = list(block_nmodes)
     interface_size = h_hop.shape[1]
-    stabilized_vectors = np.asarray(stabilized_vectors, dtype=complex)[
-        :interface_size
-    ]
+    stabilized_vectors = np.asarray(stabilized_vectors, dtype=complex)
     stabilized_vectors_lambda_inverse = np.asarray(
         stabilized_vectors_lambda_inverse,
         dtype=complex,
-    )[:interface_size]
+    )
+    if not projected:
+        stabilized_vectors = stabilized_vectors[:interface_size]
+        stabilized_vectors_lambda_inverse = stabilized_vectors_lambda_inverse[
+            :interface_size
+        ]
     square_root_hopping = np.asarray(square_root_hopping, dtype=complex)[
         :interface_size
     ]

@@ -468,6 +468,35 @@ def test_propagating_modes_execute_without_scipy_eigensolvers(monkeypatch) -> No
     assert stabilized.nmodes == 1
 
 
+def test_projected_modes_execute_in_rust_subspaces(monkeypatch) -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    import scipy.linalg
+    from scipy import sparse
+
+    def forbidden(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("SciPy eigensolver must not implement projected modes")
+
+    monkeypatch.setattr(scipy.linalg, "eig", forbidden)
+    scale = 1 / np.sqrt(2)
+    projectors = [
+        sparse.csr_matrix([[scale], [1j * scale]]),
+        sparse.csr_matrix([[1j * scale], [scale]]),
+    ]
+    propagating, stabilized = kwant.physics.modes(
+        0.3 * np.eye(2),
+        0.7 * np.eye(2),
+        projectors=projectors,
+    )
+
+    assert propagating.block_nmodes == [1, 1]
+    assert stabilized.nmodes == 2
+    np.testing.assert_allclose(stabilized.vecs[1, [0, 2]], 0)
+    np.testing.assert_allclose(stabilized.vecs[0, [1, 3]], 0)
+    assert np.all(np.abs(stabilized.vecs[0, [0, 2]]) > 0)
+    assert np.all(np.abs(stabilized.vecs[1, [1, 3]]) > 0)
+
+
 def test_lead_selfenergy_executes_without_python_eigensolvers(monkeypatch) -> None:
     kwant = require_compat_module("kwant", ISSUE_URL)
 
