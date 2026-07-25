@@ -2,9 +2,12 @@
 
 use std::fmt;
 
+use nalgebra::DMatrix;
+
 use crate::decomposition::{
     eigenvectors_from_generalized_schur, generalized_schur, DecompositionError,
 };
+use crate::spectrum::hermitian_eigensystem;
 use crate::{Complex64, ComplexMatrix, MatrixError};
 
 const UNIT_CIRCLE_TOLERANCE: f64 = 1.0e-7;
@@ -161,105 +164,156 @@ pub fn propagating_modes(
         });
     }
 
-    let pencil_dimension = 2 * dimension;
-    let mut left = ComplexMatrix::zeros(pencil_dimension, pencil_dimension);
-    let mut right = ComplexMatrix::zeros(pencil_dimension, pencil_dimension);
-    for row in 0..dimension {
-        for column in 0..dimension {
-            left.set(
-                row,
-                column,
-                -cell_hamiltonian.as_slice()[row * dimension + column],
-            )?;
-            left.set(
-                row,
-                dimension + column,
-                -inter_cell_hopping.as_slice()[row * dimension + column],
-            )?;
-            right.set(
-                row,
-                column,
-                inter_cell_hopping.as_slice()[column * dimension + row].conj(),
-            )?;
-        }
-        left.set(dimension + row, row, Complex64::new(1.0, 0.0))?;
-        right.set(dimension + row, dimension + row, Complex64::new(1.0, 0.0))?;
-    }
+    let cell_norm = cell_hamiltonian
+        .as_slice()
+        .iter()
+        .map(Complex64::norm_sqr)
+        .sum::<f64>()
+        .sqrt();
+    let hopping_backend = backend(inter_cell_hopping);
+    let singular_values = hopping_backend.clone().svd(false, false).singular_values;
+    let singular_tolerance = singular_values[0] * 1.0e-10;
+    let hopping_rank = singular_values
+        .iter()
+        .filter(|&&value| value > singular_tolerance)
+        .count();
+    let raw_modes = if hopping_rank < dimension {
+        reduced_raw_modes(cell_hamiltonian, inter_cell_hopping, hopping_rank)?
+    } else {
+        regular_raw_modes(
+            cell_hamiltonian,
+            inter_cell_hopping,
+            cell_norm.max(hopping_norm),
+        )?
+    };
 
-    let decomposition = generalized_schur(&left, &right)?;
-    let selected = vec![true; pencil_dimension];
-    let vectors = eigenvectors_from_generalized_schur(
-        decomposition.left_form(),
-        decomposition.right_form(),
-        decomposition.left_vectors(),
-        decomposition.right_vectors(),
-        &selected,
-        false,
-        true,
-    )?;
-    let right_vectors = vectors
-        .right()
-        .expect("right generalized eigenvectors were requested");
     let mut candidates = Vec::new();
-    for mode in 0..pencil_dimension {
-        let alpha = decomposition.alpha()[mode];
-        let beta = decomposition.beta()[mode];
-        if beta.norm() == 0.0 {
+    let mut assigned = vec![false; raw_modes.len()];
+    for seed in 0..raw_modes.len() {
+        if assigned[seed] {
             continue;
         }
-        let bloch_factor = alpha / beta;
-        if !bloch_factor.re.is_finite()
-            || !bloch_factor.im.is_finite()
-            || (bloch_factor.norm() - 1.0).abs() > UNIT_CIRCLE_TOLERANCE
-        {
-            continue;
-        }
-        let mut wave = (0..dimension)
-            .map(|row| right_vectors.as_slice()[row * pencil_dimension + mode])
-            .collect::<Vec<_>>();
-        let norm = wave.iter().map(Complex64::norm_sqr).sum::<f64>().sqrt();
-        if norm == 0.0 {
-            continue;
-        }
-        for value in &mut wave {
-            *value /= norm;
-        }
-
-        let velocity_operator_wave = (0..dimension)
-            .map(|row| {
-                (0..dimension)
-                    .map(|column| {
-                        let backward = inter_cell_hopping.as_slice()[column * dimension + row]
-                            .conj()
-                            * bloch_factor;
-                        let forward =
-                            inter_cell_hopping.as_slice()[row * dimension + column] / bloch_factor;
-                        (backward - forward) * wave[column]
-                    })
-                    .sum::<Complex64>()
+        let group = (0..raw_modes.len())
+            .filter(|&mode| {
+                !assigned[mode]
+                    && (raw_modes[mode].0 - raw_modes[seed].0).norm() <= UNIT_CIRCLE_TOLERANCE
             })
             .collect::<Vec<_>>();
-        let velocity = (Complex64::new(0.0, 1.0)
-            * wave
+        for &mode in &group {
+            assigned[mode] = true;
+        }
+        let basis = orthonormalize_columns(
+            &group
                 .iter()
-                .zip(&velocity_operator_wave)
-                .map(|(left, right)| left.conj() * right)
-                .sum::<Complex64>())
-        .re;
-        if velocity.abs() <= VELOCITY_TOLERANCE {
+                .map(|&mode| raw_modes[mode].1.clone())
+                .collect::<Vec<_>>(),
+        );
+        if basis.is_empty() {
             continue;
         }
-        let scale = velocity.abs().sqrt();
-        for value in &mut wave {
-            *value /= scale;
+        let bloch_factor = raw_modes[seed].0 / raw_modes[seed].0.norm();
+        let velocity_images = basis
+            .iter()
+            .map(|wave| {
+                (0..dimension)
+                    .map(|row| {
+                        Complex64::new(0.0, 1.0)
+                            * (0..dimension)
+                                .map(|column| {
+                                    let backward = inter_cell_hopping.as_slice()
+                                        [column * dimension + row]
+                                        .conj()
+                                        * bloch_factor;
+                                    let forward = inter_cell_hopping.as_slice()
+                                        [row * dimension + column]
+                                        / bloch_factor;
+                                    (backward - forward) * wave[column]
+                                })
+                                .sum::<Complex64>()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let mut velocity_matrix = ComplexMatrix::new(
+            basis.len(),
+            basis.len(),
+            (0..basis.len())
+                .flat_map(|row| {
+                    let basis = &basis;
+                    let velocity_images = &velocity_images;
+                    (0..basis.len()).map(move |column| {
+                        basis[row]
+                            .iter()
+                            .zip(&velocity_images[column])
+                            .map(|(left, right)| left.conj() * right)
+                            .sum::<Complex64>()
+                    })
+                })
+                .collect(),
+        )?;
+        for row in 0..basis.len() {
+            for column in 0..row {
+                let value = 0.5
+                    * (velocity_matrix.get(row, column)?
+                        + velocity_matrix.get(column, row)?.conj());
+                velocity_matrix.set(row, column, value)?;
+                velocity_matrix.set(column, row, value.conj())?;
+            }
+            velocity_matrix.set(
+                row,
+                row,
+                Complex64::new(velocity_matrix.get(row, row)?.re, 0.0),
+            )?;
         }
-        candidates.push((velocity, bloch_factor.arg(), bloch_factor, wave));
+        let velocity_scale = velocity_matrix
+            .as_slice()
+            .iter()
+            .map(|value| value.norm())
+            .fold(0.0_f64, f64::max);
+        if velocity_scale == 0.0 {
+            continue;
+        }
+        let scaled_velocity_matrix = ComplexMatrix::new(
+            basis.len(),
+            basis.len(),
+            velocity_matrix
+                .as_slice()
+                .iter()
+                .map(|value| value / velocity_scale)
+                .collect(),
+        )?;
+        let velocity_decomposition = hermitian_eigensystem(&scaled_velocity_matrix, 1.0e-10)
+            .map_err(|_| LeadModeError::DecompositionFailure)?;
+        for mode in 0..basis.len() {
+            let velocity = velocity_decomposition.eigenvalues()[mode] * velocity_scale;
+            if velocity.abs() <= VELOCITY_TOLERANCE * cell_norm.max(hopping_norm).max(1.0) {
+                continue;
+            }
+            let rotation = velocity_decomposition.eigenvectors();
+            let mut wave = (0..dimension)
+                .map(|row| {
+                    (0..basis.len())
+                        .map(|column| {
+                            basis[column][row] * rotation.as_slice()[column * basis.len() + mode]
+                        })
+                        .sum::<Complex64>()
+                })
+                .collect::<Vec<_>>();
+            let scale = velocity.abs().sqrt();
+            for value in &mut wave {
+                *value /= scale;
+            }
+            candidates.push((velocity, bloch_factor.arg(), bloch_factor, wave));
+        }
     }
 
     candidates.sort_by(|left, right| {
+        let left_momentum = if left.0 > 0.0 { -left.1 } else { left.1 };
+        let right_momentum = if right.0 > 0.0 { -right.1 } else { right.1 };
         (left.0 > 0.0)
             .cmp(&(right.0 > 0.0))
-            .then_with(|| left.1.total_cmp(&right.1))
+            .then_with(|| left_momentum.total_cmp(&right_momentum))
+            .then_with(|| left.0.abs().total_cmp(&right.0.abs()))
     });
     let incoming_count = candidates
         .iter()
@@ -325,6 +379,265 @@ pub fn propagating_modes(
     })
 }
 
+fn regular_raw_modes(
+    cell_hamiltonian: &ComplexMatrix,
+    inter_cell_hopping: &ComplexMatrix,
+    pencil_scale: f64,
+) -> Result<Vec<(Complex64, Vec<Complex64>)>, LeadModeError> {
+    let dimension = cell_hamiltonian.rows();
+    let pencil_dimension = 2 * dimension;
+    let mut left = ComplexMatrix::zeros(pencil_dimension, pencil_dimension);
+    let mut right = ComplexMatrix::zeros(pencil_dimension, pencil_dimension);
+    for row in 0..dimension {
+        for column in 0..dimension {
+            left.set(
+                row,
+                column,
+                -cell_hamiltonian.as_slice()[row * dimension + column] / pencil_scale,
+            )?;
+            left.set(
+                row,
+                dimension + column,
+                -inter_cell_hopping.as_slice()[row * dimension + column] / pencil_scale,
+            )?;
+            right.set(
+                row,
+                column,
+                inter_cell_hopping.as_slice()[column * dimension + row].conj() / pencil_scale,
+            )?;
+        }
+        left.set(dimension + row, row, Complex64::new(1.0, 0.0))?;
+        right.set(dimension + row, dimension + row, Complex64::new(1.0, 0.0))?;
+    }
+    raw_modes_from_pencil(&left, &right, |mode, _, vectors| {
+        (0..dimension)
+            .map(|row| vectors.as_slice()[row * pencil_dimension + mode])
+            .collect()
+    })
+}
+
+fn reduced_raw_modes(
+    cell_hamiltonian: &ComplexMatrix,
+    inter_cell_hopping: &ComplexMatrix,
+    rank: usize,
+) -> Result<Vec<(Complex64, Vec<Complex64>)>, LeadModeError> {
+    let dimension = cell_hamiltonian.rows();
+    let decomposition = backend(inter_cell_hopping).svd(true, true);
+    let left_vectors = decomposition.u.ok_or(LeadModeError::DecompositionFailure)?;
+    let right_vectors = decomposition
+        .v_t
+        .ok_or(LeadModeError::DecompositionFailure)?
+        .adjoint();
+    let mut left_factor = DMatrix::<Complex64>::zeros(dimension, rank);
+    let mut right_factor = DMatrix::<Complex64>::zeros(dimension, rank);
+    for column in 0..rank {
+        let scale = decomposition.singular_values[column].sqrt();
+        for row in 0..dimension {
+            left_factor[(row, column)] = left_vectors[(row, column)] * scale;
+            right_factor[(row, column)] = right_vectors[(row, column)] * scale;
+        }
+    }
+
+    let stabilizer = &left_factor * left_factor.adjoint() + &right_factor * right_factor.adjoint();
+    let stabilized_cell = backend(cell_hamiltonian) + stabilizer * Complex64::new(0.0, 1.0);
+    let cell_inverse = stabilized_cell
+        .try_inverse()
+        .ok_or(LeadModeError::DecompositionFailure)?;
+    let inverse_right = &cell_inverse * &right_factor;
+    let left_inverse_right = left_factor.adjoint() * &inverse_right;
+    let right_inverse_right = right_factor.adjoint() * inverse_right;
+    let inverse_left = &cell_inverse * &left_factor;
+    let left_inverse_left = left_factor.adjoint() * &inverse_left;
+    let right_inverse_left = right_factor.adjoint() * inverse_left;
+
+    let pencil_dimension = 2 * rank;
+    let mut left = DMatrix::<Complex64>::zeros(pencil_dimension, pencil_dimension);
+    let mut right = DMatrix::<Complex64>::zeros(pencil_dimension, pencil_dimension);
+    for index in 0..rank {
+        left[(rank + index, index)] = Complex64::new(1.0, 0.0);
+        right[(index, rank + index)] = Complex64::new(-1.0, 0.0);
+    }
+    add_block(
+        &mut left,
+        0,
+        0,
+        &left_inverse_right,
+        Complex64::new(0.0, -1.0),
+    );
+    add_block(
+        &mut left,
+        0,
+        rank,
+        &left_inverse_right,
+        Complex64::new(1.0, 0.0),
+    );
+    add_block(
+        &mut left,
+        rank,
+        0,
+        &right_inverse_right,
+        Complex64::new(0.0, -1.0),
+    );
+    add_block(
+        &mut left,
+        rank,
+        rank,
+        &right_inverse_right,
+        Complex64::new(1.0, 0.0),
+    );
+    add_block(
+        &mut right,
+        0,
+        0,
+        &left_inverse_left,
+        Complex64::new(-1.0, 0.0),
+    );
+    add_block(
+        &mut right,
+        0,
+        rank,
+        &left_inverse_left,
+        Complex64::new(0.0, 1.0),
+    );
+    add_block(
+        &mut right,
+        rank,
+        0,
+        &right_inverse_left,
+        Complex64::new(-1.0, 0.0),
+    );
+    add_block(
+        &mut right,
+        rank,
+        rank,
+        &right_inverse_left,
+        Complex64::new(0.0, 1.0),
+    );
+
+    let left = owned(&left)?;
+    let right = owned(&right)?;
+    raw_modes_from_pencil(&left, &right, |mode, inverse_bloch, vectors| {
+        let projected = backend(vectors).column(mode).into_owned();
+        let first = projected.rows(0, rank).into_owned();
+        let second = projected.rows(rank, rank).into_owned();
+        let rhs = -&left_factor * (&first * inverse_bloch) - &right_factor * &second
+            + (&right_factor * &first + &left_factor * (&second * inverse_bloch))
+                * Complex64::new(0.0, 1.0);
+        let wave = &cell_inverse * rhs;
+        wave.iter().copied().collect()
+    })
+    .map(|modes| {
+        modes
+            .into_iter()
+            .map(|(inverse_bloch, wave)| (Complex64::new(1.0, 0.0) / inverse_bloch, wave))
+            .collect()
+    })
+}
+
+fn raw_modes_from_pencil<F>(
+    left: &ComplexMatrix,
+    right: &ComplexMatrix,
+    extract_wave: F,
+) -> Result<Vec<(Complex64, Vec<Complex64>)>, LeadModeError>
+where
+    F: Fn(usize, Complex64, &ComplexMatrix) -> Vec<Complex64>,
+{
+    let decomposition = generalized_schur(left, right)?;
+    let pencil_dimension = left.rows();
+    let selected = vec![true; pencil_dimension];
+    let vectors = eigenvectors_from_generalized_schur(
+        decomposition.left_form(),
+        decomposition.right_form(),
+        decomposition.left_vectors(),
+        decomposition.right_vectors(),
+        &selected,
+        false,
+        true,
+    )?;
+    let right_vectors = vectors
+        .right()
+        .expect("right generalized eigenvectors were requested");
+    let mut raw_modes = Vec::new();
+    for mode in 0..pencil_dimension {
+        let beta = decomposition.beta()[mode];
+        if beta.norm() == 0.0 {
+            continue;
+        }
+        let eigenvalue = decomposition.alpha()[mode] / beta;
+        if !eigenvalue.re.is_finite()
+            || !eigenvalue.im.is_finite()
+            || (eigenvalue.norm() - 1.0).abs() > UNIT_CIRCLE_TOLERANCE
+        {
+            continue;
+        }
+        let mut wave = extract_wave(mode, eigenvalue, right_vectors);
+        let norm = wave.iter().map(Complex64::norm_sqr).sum::<f64>().sqrt();
+        if norm <= 1.0e-14 {
+            continue;
+        }
+        for value in &mut wave {
+            *value /= norm;
+        }
+        raw_modes.push((eigenvalue, wave));
+    }
+    Ok(raw_modes)
+}
+
+fn add_block(
+    target: &mut DMatrix<Complex64>,
+    row_offset: usize,
+    column_offset: usize,
+    source: &DMatrix<Complex64>,
+    factor: Complex64,
+) {
+    for row in 0..source.nrows() {
+        for column in 0..source.ncols() {
+            target[(row_offset + row, column_offset + column)] += factor * source[(row, column)];
+        }
+    }
+}
+
+fn backend(matrix: &ComplexMatrix) -> DMatrix<Complex64> {
+    DMatrix::from_row_slice(matrix.rows(), matrix.columns(), matrix.as_slice())
+}
+
+fn owned(matrix: &DMatrix<Complex64>) -> Result<ComplexMatrix, LeadModeError> {
+    ComplexMatrix::new(
+        matrix.nrows(),
+        matrix.ncols(),
+        (0..matrix.nrows())
+            .flat_map(|row| (0..matrix.ncols()).map(move |column| matrix[(row, column)]))
+            .collect(),
+    )
+    .map_err(Into::into)
+}
+
+fn orthonormalize_columns(columns: &[Vec<Complex64>]) -> Vec<Vec<Complex64>> {
+    let mut basis: Vec<Vec<Complex64>> = Vec::new();
+    for column in columns {
+        let mut vector = column.clone();
+        for existing in &basis {
+            let overlap = existing
+                .iter()
+                .zip(&vector)
+                .map(|(left, right)| left.conj() * right)
+                .sum::<Complex64>();
+            for (value, direction) in vector.iter_mut().zip(existing) {
+                *value -= overlap * direction;
+            }
+        }
+        let norm = vector.iter().map(Complex64::norm_sqr).sum::<f64>().sqrt();
+        if norm <= 1.0e-10 {
+            continue;
+        }
+        for value in &mut vector {
+            *value /= norm;
+        }
+        basis.push(vector);
+    }
+    basis
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,5 +670,60 @@ mod tests {
         assert!(
             (modes.square_root_hopping().get(0, 0).unwrap().re - 0.7_f64.sqrt()).abs() < 1.0e-12
         );
+    }
+
+    #[test]
+    fn degenerate_unit_bloch_factor_is_resolved_by_current() {
+        let cell = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(0.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ],
+        )
+        .unwrap();
+        let hopping = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(-1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ],
+        )
+        .unwrap();
+        let modes = propagating_modes(&cell, &hopping).unwrap();
+        assert_eq!(modes.incoming_count(), 1);
+        assert!((modes.velocities()[0] + 1.0).abs() < 1.0e-12);
+        assert!((modes.velocities()[1] - 1.0).abs() < 1.0e-12);
+        assert!(modes
+            .momenta()
+            .iter()
+            .all(|momentum| momentum.abs() < 1.0e-12));
+    }
+
+    #[test]
+    fn momenta_are_invariant_under_global_energy_rescaling() {
+        let baseline = propagating_modes(
+            &ComplexMatrix::scalar(Complex64::new(0.3, 0.0)),
+            &ComplexMatrix::scalar(Complex64::new(0.7, 0.0)),
+        )
+        .unwrap();
+        let scale = 1.0e20;
+        let scaled = propagating_modes(
+            &ComplexMatrix::scalar(Complex64::new(0.3 * scale, 0.0)),
+            &ComplexMatrix::scalar(Complex64::new(0.7 * scale, 0.0)),
+        )
+        .unwrap();
+        for (baseline, scaled) in baseline.momenta().iter().zip(scaled.momenta()) {
+            assert!((baseline - scaled).abs() < 1.0e-12);
+        }
+        for (baseline, scaled) in baseline.velocities().iter().zip(scaled.velocities()) {
+            assert!((scaled / scale - baseline).abs() < 1.0e-10);
+        }
     }
 }
