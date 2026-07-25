@@ -69,8 +69,10 @@ jobs:
           tinyarray==1.2.5
       - name: Build the repository compatibility extension
         run: .venv/bin/maturin develop
-      - name: Validate coverage matrices
-        run: .venv/bin/python tools/check_contracts.py
+      - name: Validate coverage and compatibility API manifests
+        run: |
+          .venv/bin/python tools/check_contracts.py
+          .venv/bin/python tools/check_python_api.py
       - name: Run compatibility smoke contracts
         env:
           PYTHONPATH: ${{ github.workspace }}/python

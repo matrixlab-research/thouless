@@ -5,8 +5,8 @@ source_repository = "https://gitlab.kwant-project.org/kwant/kwant.git"
 source_commit = "de315f171270d62ee2412c4084260c912cc4d58f"
 test_modules = 24
 static_test_functions = 241
-inventory_status = "incomplete"
-inventory_issue = "https://github.com/matrixlab-research/thouless/issues/5"
+inventory_status = "complete"
+api_manifest = "spec/api/kwant-1.5.toml"
 
 [[interface]]
 name = "system construction"

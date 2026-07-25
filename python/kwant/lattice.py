@@ -58,26 +58,28 @@ class Monatomic(SiteFamily):
         return ta.array(np.asarray(tag, dtype=float) @ self.prim_vecs)
 
     def closest(self, position):
+        return ta.array(self.n_closest(position)[0], int)
+
+    def n_closest(
+        self,
+        position,
+        n=1,
+        group_by_length=False,
+        rtol=1e-9,
+    ):
+        """Return lattice coordinates of the nearest sites."""
         position = np.asarray(position, dtype=float)
         if position.shape != (self.space_dim,):
             raise ValueError("Position has wrong dimensionality.")
-        reduced = np.linalg.lstsq(
-            self.prim_vecs.T,
+        from .linalg.lll import cvp
+
+        return cvp(
             position - self.offset,
-            rcond=None,
-        )[0]
-        center = np.rint(reduced).astype(int)
-        candidates = (
-            center + np.asarray(delta)
-            for delta in itertools.product(range(-4, 5), repeat=self.lattice_dim)
+            self.prim_vecs,
+            n=n,
+            group_by_length=group_by_length,
+            rtol=rtol,
         )
-        closest = min(
-            candidates,
-            key=lambda tag: np.linalg.norm(
-                tag @ self.prim_vecs + self.offset - position
-            ),
-        )
-        return ta.array(closest, int)
 
     def shape(self, function, start):
         return Polyatomic(

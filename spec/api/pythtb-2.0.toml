@@ -1,0 +1,222 @@
+schema_version = 1
+package = "PythTB"
+version = "2.0.0"
+source_commit = "0f3bb0b8588101cafbdf428c70fb43c9302fe7cf"
+upstream_manifest = "spec/upstream/pythtb.toml"
+scope = "Public module exports plus public members of core exported classes"
+gap_issue = "https://github.com/matrixlab-research/thouless/issues/4"
+
+[[module]]
+name = "pythtb"
+symbols = [
+  "TBModel", "tb_model", "WFArray", "wf_array", "W90", "Mesh", "Wannier",
+  "levi_civita", "finite_diff_coeffs", "finite_difference", "is_Hermitian",
+  "pauli_decompose", "get_trial_wfs", "Lattice", "configure_logging",
+  "set_log_level",
+]
+exports = [
+  "TBModel", "tb_model", "WFArray", "wf_array", "W90", "Mesh", "Wannier",
+  "levi_civita", "finite_diff_coeffs", "finite_difference", "is_Hermitian",
+  "pauli_decompose", "get_trial_wfs", "Lattice",
+]
+
+[[module]]
+name = "pythtb.tbmodel"
+symbols = ["TBModel", "tb_model"]
+exports = ["TBModel", "tb_model"]
+
+[[module]]
+name = "pythtb.wfarray"
+symbols = ["WFArray", "wf_array"]
+exports = ["WFArray", "wf_array"]
+
+[[module]]
+name = "pythtb.w90"
+symbols = ["W90"]
+exports = ["W90"]
+
+[[module]]
+name = "pythtb.mesh"
+symbols = ["Axis", "Mesh"]
+exports = ["Mesh"]
+
+[[module]]
+name = "pythtb.wannier"
+symbols = ["Wannier"]
+exports = ["Wannier"]
+
+[[module]]
+name = "pythtb.utils"
+symbols = [
+  "levi_civita", "finite_diff_coeffs", "finite_difference", "is_Hermitian",
+  "pauli_decompose", "get_trial_wfs",
+]
+exports = [
+  "levi_civita", "finite_diff_coeffs", "finite_difference", "is_Hermitian",
+  "pauli_decompose", "get_trial_wfs",
+]
+
+[[module]]
+name = "pythtb.lattice"
+symbols = ["Lattice"]
+exports = ["Lattice"]
+
+[[module]]
+name = "pythtb.hoptable"
+symbols = ["HoppingTable"]
+
+[[module]]
+name = "pythtb.io"
+symbols = [
+  "HRBlock", "W90Dataset", "read_win", "parse_unit_cell_cart", "read_centres",
+  "read_hr", "read_kpoint_path", "load_w90_dataset", "read_bands_w90",
+  "BOHRTOANG", "QEParseError", "QEConsistencyError", "read_bands_qe",
+]
+exports = [
+  "HRBlock", "W90Dataset", "read_win", "parse_unit_cell_cart", "read_centres",
+  "read_hr", "read_kpoint_path", "load_w90_dataset", "read_bands_w90",
+  "BOHRTOANG", "QEParseError", "QEConsistencyError", "read_bands_qe",
+]
+
+[[module]]
+name = "pythtb.io.w90"
+symbols = [
+  "HRBlock", "W90Dataset", "W90ParseError", "W90ConsistencyError", "read_win",
+  "parse_unit_cell_cart", "read_centres", "read_hr", "read_kpoint_path",
+  "load_w90_dataset", "read_bands_w90",
+]
+exports = [
+  "HRBlock", "W90Dataset", "read_win", "parse_unit_cell_cart", "read_centres",
+  "read_hr", "read_kpoint_path", "load_w90_dataset", "read_bands_w90",
+]
+
+[[module]]
+name = "pythtb.io.qe"
+symbols = [
+  "BOHRTOANG", "QEParseError", "QEConsistencyError", "read_bands_qe",
+]
+exports = [
+  "BOHRTOANG", "QEParseError", "QEConsistencyError", "read_bands_qe",
+]
+
+[[module]]
+name = "pythtb.models"
+symbols = [
+  "checkerboard", "fu_kane_mele", "graphene", "haldane", "kane_mele", "ssh",
+]
+exports = [
+  "checkerboard", "fu_kane_mele", "graphene", "haldane", "kane_mele", "ssh",
+]
+
+[[module]]
+name = "pythtb.visualization"
+symbols = [
+  "plot_lattice", "plot_lattice_3d", "plot_tbmodel", "plot_tbmodel_3d",
+  "plot_bands", "plot_centers", "plot_decay", "plot_density",
+]
+exports = [
+  "plot_lattice", "plot_lattice_3d", "plot_tbmodel", "plot_tbmodel_3d",
+  "plot_bands", "plot_centers", "plot_decay", "plot_density",
+]
+
+[[object]]
+module = "pythtb.hoptable"
+name = "HoppingTable"
+members = [
+  "clear", "components", "append", "extend", "update", "remove", "add",
+  "remove_orbitals", "shift_orbital", "normalize_entry", "find",
+  "flatten_cache",
+]
+
+[[object]]
+module = "pythtb.lattice"
+name = "Lattice"
+members = [
+  "periodic_dirs", "orb_vecs", "lat_vecs", "nsuper", "dim_r", "dim_k",
+  "norb", "recip_lat_vecs", "recip_volume", "cell_volume", "info",
+  "get_orb_vecs", "get_lat_vecs", "get_recip_lat_vecs", "cut_piece", "add_orb",
+  "remove_orb", "change_nonperiodic_vector", "make_supercell", "nn_bonds",
+  "nn_k_shell", "k_shell_weights", "k_path", "k_uniform_mesh",
+  "get_kpath_distance", "visualize", "visualize_3d",
+]
+
+[[object]]
+module = "pythtb.mesh"
+name = "Axis"
+members = [
+  "size", "name", "type", "is_k_axis", "is_lambda_axis", "is_loop",
+  "loop_components", "add_loop_component", "remove_loop_component",
+  "has_endpoint", "endpoint_components", "add_endpoint_component",
+  "remove_endpoint_component", "winds_bz", "winds_bz_components",
+  "add_wind_bz_component", "remove_wind_bz_component",
+]
+
+[[object]]
+module = "pythtb.mesh"
+name = "Mesh"
+members = [
+  "points", "flat", "nodes", "filled", "axes", "k_axes", "lambda_axes",
+  "k_axis_indices", "lambda_axis_indices", "axis_names", "axis_types",
+  "npoints", "shape_k", "shape_lambda", "shape", "shape_axes", "nk_axes",
+  "nl_axes", "naxes", "dim_lambda", "dim_k", "dim_total", "component_types",
+  "lambda_component_indices", "k_component_indices", "loop_axes", "loop_mask",
+  "endpoint_axes", "endpoint_mask", "bz_winding_axes", "bz_winding_mask",
+  "is_grid", "is_k_torus", "info", "loop", "unloop", "is_axis_closed",
+  "is_axis_looped", "is_axis_bz_winding", "build_path", "build_grid",
+  "build_custom", "get_axis_range", "get_k_points", "get_param_points",
+  "gen_hyper_cube",
+]
+
+[[object]]
+module = "pythtb.tbmodel"
+name = "TBModel"
+members = [
+  "lattice", "dim_r", "dim_k", "nspin", "spinful", "periodic_dirs", "norb",
+  "nstate", "orb_vecs", "lat_vecs", "recip_lat_vecs", "recip_volume",
+  "cell_volume", "onsite", "hoppings", "nhops", "parameters", "from_w90",
+  "assume_position_operator_diagonal", "display", "info", "copy",
+  "clear_hoppings", "clear_onsite", "get_num_orbitals", "get_orb",
+  "get_orb_vecs", "nn_bonds", "get_lat", "get_lat_vecs", "set_onsite",
+  "set_hop", "set_shell_hops", "set_parameters", "with_parameters", "add_orb",
+  "remove_orb", "cut_piece", "make_finite", "reduce_dim",
+  "change_nonperiodic_vector", "make_supercell", "k_uniform_mesh", "k_path",
+  "hamiltonian", "solve_ham", "solve_one", "solve_all", "velocity",
+  "quantum_geometric_tensor", "berry_curvature", "quantum_metric",
+  "axion_angle", "chern_number", "local_chern_marker", "position_matrix",
+  "position_expectation", "position_hwf", "visualize", "visualize_3d",
+  "plot_bands",
+]
+
+[[object]]
+module = "pythtb.wfarray"
+name = "WFArray"
+members = [
+  "impose_loop", "impose_pbc", "solve_on_grid", "solve_on_one_point", "model",
+  "lattice", "mesh", "filled", "wfs", "u_nk", "psi_nk", "Mmn", "energies",
+  "hamiltonian", "shape", "nstates", "nspin", "spinful", "norb",
+  "shape_mesh", "dim_k", "dim_lambda", "naxes", "k_points", "param_points",
+  "empty_like", "copy", "set_states", "remove_states", "choose_states",
+  "states", "projectors", "solve_model", "roll_states_with_pbc",
+  "overlap_matrix", "links", "wilson_loop", "berry_connection", "berry_phase",
+  "berry_flux", "berry_curvature", "chern_number", "position_matrix",
+  "position_expectation", "position_hwf",
+]
+
+[[object]]
+module = "pythtb.w90"
+name = "W90"
+members = [
+  "model", "dist_hop", "shells", "w90_bands_consistency", "bands_w90",
+  "bands_qe",
+]
+
+[[object]]
+module = "pythtb.wannier"
+name = "Wannier"
+members = [
+  "mesh", "lattice", "bloch_states", "tilde_states", "nks", "wannier",
+  "spread", "Omega_OD", "Omega_D", "Omega_I", "centers", "trial_wfs",
+  "num_twfs", "Amn", "info", "get_centers", "set_trial_wfs",
+  "set_tilde_states", "project", "disentangle", "maxloc", "min_spread",
+  "interp_bands", "plot_centers", "plot_decay", "plot_density",
+]

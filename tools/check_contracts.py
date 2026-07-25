@@ -56,9 +56,24 @@ def check_matrix(path: Path) -> None:
         if status != "implemented" and not ISSUE_PATTERN.match(row.get("issue", "")):
             fail(f"{path.name} row {index} has no valid gap issue")
 
-    if document.get("inventory_status") == "incomplete":
-        if not ISSUE_PATTERN.match(document.get("inventory_issue", "")):
-            fail(f"{path.name} has an incomplete inventory without an issue")
+    if "source_package" in document:
+        inventory_status = document.get("inventory_status")
+        if inventory_status == "incomplete":
+            if not ISSUE_PATTERN.match(document.get("inventory_issue", "")):
+                fail(
+                    f"{path.name} has an incomplete inventory without an issue"
+                )
+        elif inventory_status == "complete":
+            api_manifest = document.get("api_manifest", "")
+            if not api_manifest.startswith("spec/api/"):
+                fail(f"{path.name} has no repository API manifest")
+            if not (ROOT / api_manifest).is_file():
+                fail(f"{path.name} references a missing API manifest")
+        else:
+            fail(
+                f"{path.name} has invalid inventory status "
+                f"{inventory_status!r}"
+            )
 
 
 def check_compatibility_test(path: Path) -> None:

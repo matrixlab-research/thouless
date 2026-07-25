@@ -7,6 +7,7 @@ from .core import (
     Graph,
     NodeDoesNotExistError,
 )
+from .defs import gint_dtype
 
 __all__ = [
     "CGraph",
@@ -14,4 +15,5 @@ __all__ = [
     "EdgeDoesNotExistError",
     "Graph",
     "NodeDoesNotExistError",
+    "gint_dtype",
 ]

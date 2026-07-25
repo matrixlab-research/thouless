@@ -12,6 +12,7 @@ from functools import total_ordering, update_wrapper
 import numpy as np
 
 from thouless import _core
+from . import system as system_module
 from .graph import Graph as _MutableGraph
 
 
@@ -366,6 +367,12 @@ class Symmetry:
         element = tuple(-value for value in self.which(a))
         return self.act(element, a) if b is None else self.act(element, a, b)
 
+    def subgroup(self, *generators):
+        raise NotImplementedError
+
+    def has_subgroup(self, other):
+        raise NotImplementedError
+
     def reversed(self):
         raise NotImplementedError
 
@@ -406,7 +413,14 @@ class _Other:
 Other = _Other
 
 
-class BuilderLead:
+class Lead:
+    """Abstract lead attached to a finite Builder."""
+
+    def finalized(self):
+        raise NotImplementedError
+
+
+class BuilderLead(Lead):
     """A periodic Builder together with its scattering-region interface."""
 
     def __init__(self, builder, interface, padding=None):
@@ -437,7 +451,7 @@ def _ensure_lead_signature(function):
     return wrapper
 
 
-class SelfEnergyLead:
+class SelfEnergyLead(Lead):
     """Lead defined by a retarded self-energy callback."""
 
     def __init__(self, selfenergy_func, interface, parameters):
@@ -452,7 +466,7 @@ class SelfEnergyLead:
         return self.selfenergy_func(energy, args, params=params)
 
 
-class ModesLead:
+class ModesLead(Lead):
     """Lead defined by propagating and stabilized mode callbacks."""
 
     _uses_stabilized_selfenergy = True
@@ -1183,7 +1197,7 @@ class Builder:
         return FiniteSystem(self)
 
 
-class InfiniteSystem:
+class InfiniteSystem(system_module.InfiniteSystem):
     """Finalized one-dimensional periodic lead."""
 
     def __init__(self, builder, interface_order=None):
@@ -1328,6 +1342,9 @@ class InfiniteSystem:
                 f'Error occurred in user-supplied value function "{name}"'
             ) from error
 
+    def pos(self, index):
+        return self.sites[int(index)].pos
+
     def discrete_symmetry(self, args=(), *, params=None):
         return _discrete_symmetry(
             self._builder,
@@ -1453,7 +1470,7 @@ class InfiniteSystem:
         return self._builder.reversed().finalized()
 
 
-class FiniteSystem:
+class FiniteSystem(system_module.FiniteSystem):
     """Finalized finite graph evaluated through the Rust Hamiltonian core."""
 
     def __init__(self, builder):
@@ -1529,6 +1546,9 @@ class FiniteSystem:
             _evaluate(self._builder._sites[site], (site,), args, params)
             for site in self.sites
         ]
+
+    def pos(self, index):
+        return self.sites[int(index)].pos
 
     def discrete_symmetry(self, args=(), *, params=None):
         return _discrete_symmetry(
@@ -1902,6 +1922,7 @@ __all__ = [
     "HoppingKind",
     "HermConjOfFunc",
     "InfiniteSystem",
+    "Lead",
     "ModesLead",
     "NoSymmetry",
     "Site",

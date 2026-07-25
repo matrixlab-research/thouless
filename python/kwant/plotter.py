@@ -13,6 +13,7 @@ from thouless import _core
 
 from . import _plotter
 from .builder import Builder, FiniteSystem, InfiniteSystem
+from .system import System
 
 
 def set_engine(engine):
@@ -104,6 +105,223 @@ def _components(system):
     if isinstance(system, (FiniteSystem, InfiniteSystem)):
         return _finalized_components(system)
     raise TypeError("expected a Builder or finalized system")
+
+
+def sys_leads_sites(syst, num_lead_cells=2):
+    """Return system and repeated lead sites with lead/cell annotations."""
+    count = int(num_lead_cells)
+    if count < 0:
+        raise ValueError("num_lead_cells must be nonnegative")
+    lead_cells = []
+    if isinstance(syst, Builder):
+        sites = [(site, None, 0) for site in syst.sites()]
+        for lead_number, lead in enumerate(syst.leads):
+            start = len(sites)
+            lead_builder = getattr(lead, "builder", None)
+            if isinstance(lead_builder, Builder) and len(lead.interface):
+                sites.extend(
+                    (site, lead_number, copy_number)
+                    for site in lead_builder.sites()
+                    for copy_number in range(count)
+                )
+            lead_cells.append(slice(start, len(sites)))
+        return sites, lead_cells
+    if isinstance(syst, System):
+        sites = [
+            (site, None, 0)
+            for site in range(int(syst.graph.num_nodes))
+        ]
+        for lead_number, lead in enumerate(getattr(syst, "leads", ())):
+            start = len(sites)
+            interface = syst.lead_interfaces[lead_number]
+            if (
+                hasattr(lead, "graph")
+                and hasattr(lead, "symmetry")
+                and len(interface)
+            ):
+                sites.extend(
+                    (site, lead_number, copy_number)
+                    for site in range(int(lead.cell_size))
+                    for copy_number in range(count)
+                )
+            lead_cells.append(slice(start, len(sites)))
+        return sites, lead_cells
+    raise TypeError("Unrecognized system type.")
+
+
+def _lead_translation(syst, lead_number, dimension):
+    if lead_number is None:
+        return np.zeros(dimension, dtype=float), 0
+    if isinstance(syst, Builder):
+        lead = syst.leads[int(lead_number)]
+        symmetry = lead.builder.symmetry
+        if not lead.interface:
+            return np.zeros(dimension, dtype=float), 0
+        site = lead.interface[0]
+    else:
+        lead = syst.leads[int(lead_number)]
+        try:
+            site = syst.sites[
+                int(syst.lead_interfaces[int(lead_number)][0])
+            ]
+            symmetry = lead.symmetry
+        except (AttributeError, IndexError):
+            return np.zeros(dimension, dtype=float), 0
+    vector = np.asarray(symmetry.periods[0], dtype=float)
+    domain = int(symmetry.which(site)[0]) + 1
+    return vector, domain
+
+
+def sys_leads_pos(syst, site_lead_nr):
+    """Return Cartesian positions for annotated system/lead sites."""
+    entries = list(site_lead_nr)
+    if not entries:
+        return np.empty((0, 0), dtype=float)
+    if isinstance(syst, Builder):
+        positions = np.asarray(
+            [np.asarray(site.pos, dtype=float) for site, _, _ in entries]
+        )
+    elif isinstance(syst, System):
+        positions = np.asarray(
+            [
+                np.asarray(
+                    (
+                        syst
+                        if lead_number is None
+                        else syst.leads[int(lead_number)]
+                    ).pos(site),
+                    dtype=float,
+                )
+                for site, lead_number, _ in entries
+            ]
+        )
+    else:
+        raise TypeError("Unrecognized system type.")
+    if positions.dtype == object or positions.ndim != 2:
+        raise ValueError(
+            "pos attribute of the sites does not have consistent values."
+        )
+    dimension = positions.shape[1]
+    for index, (_, lead_number, copy_number) in enumerate(entries):
+        vector, domain = _lead_translation(
+            syst,
+            lead_number,
+            dimension,
+        )
+        positions[index] += vector * (domain + int(copy_number))
+    return positions
+
+
+def _low_level_hoppings(syst):
+    for first in range(int(syst.graph.num_nodes)):
+        for second in syst.graph.out_neighbors(first):
+            second = int(second)
+            if first < second:
+                yield first, second
+
+
+def sys_leads_hoppings(syst, num_lead_cells=2):
+    """Return system and repeated lead hoppings with annotations."""
+    count = int(num_lead_cells)
+    if count < 0:
+        raise ValueError("num_lead_cells must be nonnegative")
+    hoppings = []
+    lead_cells = []
+    if isinstance(syst, Builder):
+        hoppings.extend((hopping, None, 0) for hopping in syst.hoppings())
+        for lead_number, lead in enumerate(syst.leads):
+            start = len(hoppings)
+            lead_builder = getattr(lead, "builder", None)
+            if isinstance(lead_builder, Builder) and len(lead.interface):
+                symmetry = lead_builder.symmetry
+                canonical = []
+                for first, second in lead_builder.hoppings():
+                    shift = max(
+                        int(symmetry.which(first)[0]),
+                        int(symmetry.which(second)[0]),
+                    )
+                    canonical.append(
+                        (
+                            symmetry.act((-shift,), first),
+                            symmetry.act((-shift,), second),
+                        )
+                    )
+                hoppings.extend(
+                    (hopping, lead_number, copy_number)
+                    for hopping in canonical
+                    for copy_number in range(count)
+                )
+            lead_cells.append(slice(start, len(hoppings)))
+        return hoppings, lead_cells
+    if isinstance(syst, System):
+        hoppings.extend(
+            (hopping, None, 0)
+            for hopping in _low_level_hoppings(syst)
+        )
+        for lead_number, lead in enumerate(getattr(syst, "leads", ())):
+            start = len(hoppings)
+            if (
+                hasattr(lead, "graph")
+                and hasattr(lead, "symmetry")
+                and len(syst.lead_interfaces[lead_number])
+            ):
+                hoppings.extend(
+                    (hopping, lead_number, copy_number)
+                    for hopping in _low_level_hoppings(lead)
+                    for copy_number in range(count)
+                )
+            lead_cells.append(slice(start, len(hoppings)))
+        return hoppings, lead_cells
+    raise TypeError("Unrecognized system type.")
+
+
+def sys_leads_hopping_pos(syst, hop_lead_nr):
+    """Return start and end positions for annotated hoppings."""
+    entries = list(hop_lead_nr)
+    if not entries:
+        return np.empty((0, 3)), np.empty((0, 3))
+    if isinstance(syst, Builder):
+        pairs = [
+            (
+                np.asarray(hopping[0].pos, dtype=float),
+                np.asarray(hopping[1].pos, dtype=float),
+            )
+            for hopping, _, _ in entries
+        ]
+    elif isinstance(syst, System):
+        pairs = []
+        for hopping, lead_number, _ in entries:
+            owner = (
+                syst
+                if lead_number is None
+                else syst.leads[int(lead_number)]
+            )
+            pairs.append(
+                (
+                    np.asarray(owner.pos(hopping[0]), dtype=float),
+                    np.asarray(owner.pos(hopping[1]), dtype=float),
+                )
+            )
+    else:
+        raise TypeError("Unrecognized system type.")
+    dimensions = {len(position) for pair in pairs for position in pair}
+    if len(dimensions) != 1:
+        raise ValueError(
+            "pos attribute of the sites does not have consistent values."
+        )
+    dimension = dimensions.pop()
+    first_positions = np.asarray([pair[0] for pair in pairs])
+    second_positions = np.asarray([pair[1] for pair in pairs])
+    for index, (_, lead_number, copy_number) in enumerate(entries):
+        vector, domain = _lead_translation(
+            syst,
+            lead_number,
+            dimension,
+        )
+        shift = vector * (domain + int(copy_number))
+        first_positions[index] += shift
+        second_positions[index] += shift
+    return first_positions, second_positions
 
 
 def _resolve_specification(specification, items, default, argument_count):
@@ -633,4 +851,8 @@ __all__ = [
     "set_engine",
     "spectrum",
     "streamplot",
+    "sys_leads_hopping_pos",
+    "sys_leads_hoppings",
+    "sys_leads_pos",
+    "sys_leads_sites",
 ]

@@ -1,0 +1,424 @@
+schema_version = 1
+package = "Kwant"
+version = "1.5.0"
+source_commit = "de315f171270d62ee2412c4084260c912cc4d58f"
+upstream_manifest = "spec/upstream/kwant.toml"
+scope = "Public module exports plus public members of core exported classes"
+gap_issue = "https://github.com/matrixlab-research/thouless/issues/5"
+
+[[module]]
+name = "kwant"
+symbols = [
+  "KwantDeprecationWarning", "UserCodeError", "system", "builder", "lattice",
+  "solvers", "digest", "rmt", "operator", "kpm", "wraparound", "Builder",
+  "HoppingKind", "TranslationalSymmetry", "smatrix", "greens_function", "ldos",
+  "wave_function", "plotter", "plot", "continuum", "test",
+]
+exports = [
+  "KwantDeprecationWarning", "UserCodeError", "system", "builder", "lattice",
+  "solvers", "digest", "rmt", "operator", "kpm", "wraparound", "Builder",
+  "HoppingKind", "TranslationalSymmetry", "smatrix", "greens_function", "ldos",
+  "wave_function", "plotter", "plot", "continuum",
+]
+
+[[module]]
+name = "kwant.builder"
+symbols = [
+  "Builder", "Site", "SiteFamily", "Symmetry", "HoppingKind", "Lead",
+  "BuilderLead", "SelfEnergyLead", "ModesLead", "add_peierls_phase",
+]
+exports = [
+  "Builder", "Site", "SiteFamily", "Symmetry", "HoppingKind", "Lead",
+  "BuilderLead", "SelfEnergyLead", "ModesLead", "add_peierls_phase",
+]
+
+[[module]]
+name = "kwant.system"
+symbols = ["System", "FiniteSystem", "InfiniteSystem"]
+exports = ["System", "FiniteSystem", "InfiniteSystem"]
+
+[[module]]
+name = "kwant.lattice"
+symbols = [
+  "TranslationalSymmetry", "general", "Polyatomic", "Monatomic", "chain",
+  "square", "cubic", "triangular", "honeycomb", "kagome",
+]
+exports = [
+  "TranslationalSymmetry", "general", "Polyatomic", "Monatomic", "chain",
+  "square", "cubic", "triangular", "honeycomb", "kagome",
+]
+
+[[module]]
+name = "kwant.solvers"
+symbols = ["default"]
+exports = ["default"]
+
+[[module]]
+name = "kwant.solvers.common"
+symbols = ["SparseSolver", "SMatrix", "GreensFunction", "BlockResult"]
+exports = ["SparseSolver", "SMatrix", "GreensFunction"]
+
+[[module]]
+name = "kwant.solvers.default"
+symbols = ["smatrix", "ldos", "wave_function", "greens_function"]
+exports = ["smatrix", "ldos", "wave_function", "greens_function"]
+
+[[module]]
+name = "kwant.solvers.sparse"
+symbols = ["smatrix", "greens_function", "ldos", "wave_function", "Solver"]
+exports = ["smatrix", "greens_function", "ldos", "wave_function", "Solver"]
+
+[[module]]
+name = "kwant.solvers.mumps"
+symbols = [
+  "smatrix", "ldos", "wave_function", "greens_function", "options",
+  "reset_options", "Solver",
+]
+exports = [
+  "smatrix", "ldos", "wave_function", "greens_function", "options", "Solver",
+]
+
+[[module]]
+name = "kwant.digest"
+symbols = ["uniform", "gauss", "test"]
+exports = ["uniform", "gauss", "test"]
+
+[[module]]
+name = "kwant.rmt"
+symbols = ["gaussian", "circular"]
+exports = ["gaussian", "circular"]
+
+[[module]]
+name = "kwant.operator"
+symbols = ["Density", "Current", "Source"]
+exports = ["Density", "Current", "Source"]
+
+[[module]]
+name = "kwant.kpm"
+symbols = [
+  "SpectralDensity", "Correlator", "conductivity", "RandomVectors",
+  "LocalVectors", "jackson_kernel", "lorentz_kernel", "fermi_distribution",
+]
+exports = [
+  "SpectralDensity", "Correlator", "conductivity", "RandomVectors",
+  "LocalVectors", "jackson_kernel", "lorentz_kernel", "fermi_distribution",
+]
+
+[[module]]
+name = "kwant.wraparound"
+symbols = ["wraparound", "plot_2d_bands"]
+exports = ["wraparound", "plot_2d_bands"]
+
+[[module]]
+name = "kwant.plotter"
+symbols = [
+  "set_engine", "get_engine", "plot", "map", "bands", "spectrum", "current",
+  "density", "interpolate_current", "interpolate_density", "streamplot",
+  "scalarplot", "sys_leads_sites", "sys_leads_hoppings", "sys_leads_pos",
+  "sys_leads_hopping_pos", "mask_interpolate",
+]
+exports = [
+  "set_engine", "get_engine", "plot", "map", "bands", "spectrum", "current",
+  "density", "interpolate_current", "interpolate_density", "streamplot",
+  "scalarplot", "sys_leads_sites", "sys_leads_hoppings", "sys_leads_pos",
+  "sys_leads_hopping_pos", "mask_interpolate",
+]
+
+[[module]]
+name = "kwant.qsymm"
+symbols = ["builder_to_model", "model_to_builder", "find_builder_symmetries"]
+exports = ["builder_to_model", "model_to_builder", "find_builder_symmetries"]
+
+[[module]]
+name = "kwant.physics"
+symbols = [
+  "selfenergy", "modes", "PropagatingModes", "StabilizedModes", "Bands",
+  "two_terminal_shotnoise", "DiscreteSymmetry", "magnetic_gauge",
+]
+exports = [
+  "selfenergy", "modes", "PropagatingModes", "StabilizedModes", "Bands",
+  "two_terminal_shotnoise", "DiscreteSymmetry", "magnetic_gauge",
+]
+
+[[module]]
+name = "kwant.physics.leads"
+symbols = ["selfenergy", "modes", "PropagatingModes", "StabilizedModes"]
+exports = ["selfenergy", "modes", "PropagatingModes", "StabilizedModes"]
+
+[[module]]
+name = "kwant.physics.dispersion"
+symbols = ["Bands"]
+exports = ["Bands"]
+
+[[module]]
+name = "kwant.physics.noise"
+symbols = ["two_terminal_shotnoise"]
+exports = ["two_terminal_shotnoise"]
+
+[[module]]
+name = "kwant.physics.symmetry"
+symbols = ["DiscreteSymmetry"]
+exports = ["DiscreteSymmetry"]
+
+[[module]]
+name = "kwant.physics.gauge"
+symbols = ["magnetic_gauge"]
+exports = ["magnetic_gauge"]
+
+[[module]]
+name = "kwant.continuum"
+symbols = [
+  "discretize", "discretize_symbolic", "build_discretized", "to_landau_basis",
+  "discretize_landau", "LandauLattice", "sympify", "lambdify",
+  "momentum_operators", "position_operators",
+]
+exports = [
+  "discretize", "discretize_symbolic", "build_discretized", "to_landau_basis",
+  "discretize_landau", "LandauLattice", "sympify", "lambdify",
+  "momentum_operators", "position_operators",
+]
+
+[[module]]
+name = "kwant.continuum.discretizer"
+symbols = ["discretize"]
+exports = ["discretize"]
+
+[[module]]
+name = "kwant.continuum.landau_levels"
+symbols = ["to_landau_basis", "discretize_landau"]
+exports = ["to_landau_basis", "discretize_landau"]
+
+[[module]]
+name = "kwant.graph"
+symbols = ["Graph", "CGraph", "gint_dtype"]
+exports = ["Graph", "CGraph", "gint_dtype"]
+
+[[module]]
+name = "kwant.graph.core"
+symbols = ["Graph", "CGraph"]
+exports = ["Graph", "CGraph"]
+
+[[module]]
+name = "kwant.graph.defs"
+symbols = ["gint_dtype"]
+exports = ["gint_dtype"]
+
+[[module]]
+name = "kwant.linalg"
+symbols = [
+  "lapack", "schur", "convert_r2c_schur", "order_schur",
+  "evecs_from_schur", "gen_schur", "order_gen_schur",
+  "convert_r2c_gen_schur", "evecs_from_gen_schur",
+]
+exports = [
+  "lapack", "schur", "convert_r2c_schur", "order_schur",
+  "evecs_from_schur", "gen_schur", "order_gen_schur",
+  "convert_r2c_gen_schur", "evecs_from_gen_schur",
+]
+
+[[module]]
+name = "kwant.linalg.lapack"
+symbols = ["trsen", "trevc", "tgsen", "tgevc", "prepare_for_lapack"]
+exports = ["trsen", "trevc", "tgsen", "tgevc", "prepare_for_lapack"]
+
+[[module]]
+name = "kwant.linalg.decomp_schur"
+symbols = [
+  "schur", "convert_r2c_schur", "order_schur", "evecs_from_schur",
+  "gen_schur", "order_gen_schur", "convert_r2c_gen_schur",
+  "evecs_from_gen_schur",
+]
+exports = [
+  "schur", "convert_r2c_schur", "order_schur", "evecs_from_schur",
+  "gen_schur", "order_gen_schur", "convert_r2c_gen_schur",
+  "evecs_from_gen_schur",
+]
+
+[[module]]
+name = "kwant.linalg.lll"
+symbols = ["lll", "cvp", "voronoi"]
+exports = ["lll", "cvp", "voronoi"]
+
+[[module]]
+name = "kwant.linalg.mumps"
+symbols = [
+  "MUMPSContext", "schur_complement", "AnalysisStatistics",
+  "FactorizationStatistics", "MUMPSError", "possible_orderings",
+]
+exports = [
+  "MUMPSContext", "schur_complement", "AnalysisStatistics",
+  "FactorizationStatistics", "MUMPSError",
+]
+
+[[object]]
+module = "kwant.builder"
+name = "Site"
+members = ["pos"]
+
+[[object]]
+module = "kwant.builder"
+name = "SiteFamily"
+members = ["normalize_tag"]
+
+[[object]]
+module = "kwant.builder"
+name = "Symmetry"
+members = [
+  "num_directions", "which", "act", "to_fd", "in_fd", "subgroup",
+  "has_subgroup",
+]
+
+[[object]]
+module = "kwant.builder"
+name = "Lead"
+members = ["finalized"]
+
+[[object]]
+module = "kwant.builder"
+name = "BuilderLead"
+members = ["finalized"]
+
+[[object]]
+module = "kwant.builder"
+name = "SelfEnergyLead"
+members = ["finalized", "selfenergy"]
+
+[[object]]
+module = "kwant.builder"
+name = "ModesLead"
+members = ["finalized", "modes", "selfenergy"]
+
+[[object]]
+module = "kwant.builder"
+name = "Builder"
+members = [
+  "reversed", "expand", "eradicate_dangling", "sites", "site_value_pairs",
+  "hoppings", "hopping_value_pairs", "dangling", "degree", "neighbors",
+  "closest", "update", "substituted", "fill", "attach_lead", "finalized",
+]
+
+[[object]]
+module = "kwant.system"
+name = "System"
+members = ["hamiltonian", "hamiltonian_submatrix", "discrete_symmetry"]
+
+[[object]]
+module = "kwant.system"
+name = "FiniteSystem"
+members = ["precalculate", "validate_symmetries"]
+
+[[object]]
+module = "kwant.system"
+name = "InfiniteSystem"
+members = [
+  "cell_hamiltonian", "inter_cell_hopping", "modes", "selfenergy",
+  "validate_symmetries",
+]
+
+[[object]]
+module = "kwant.lattice"
+name = "Polyatomic"
+members = ["shape", "wire", "neighbors", "vec"]
+
+[[object]]
+module = "kwant.lattice"
+name = "Monatomic"
+members = ["normalize_tag", "n_closest", "closest", "pos"]
+
+[[object]]
+module = "kwant.lattice"
+name = "TranslationalSymmetry"
+members = [
+  "subgroup", "has_subgroup", "add_site_family", "num_directions", "which",
+  "act", "reversed",
+]
+
+[[object]]
+module = "kwant.solvers.common"
+name = "SparseSolver"
+members = ["smatrix", "greens_function", "ldos", "wave_function"]
+
+[[object]]
+module = "kwant.solvers.common"
+name = "BlockResult"
+members = [
+  "block_coords", "out_block_coords", "in_block_coords", "submatrix",
+  "num_propagating", "transmission", "conductance_matrix",
+]
+
+[[object]]
+module = "kwant.solvers.common"
+name = "SMatrix"
+members = [
+  "out_block_coords", "in_block_coords", "submatrix", "transmission",
+  "num_propagating", "conductance_matrix",
+]
+
+[[object]]
+module = "kwant.solvers.common"
+name = "GreensFunction"
+members = [
+  "block_coords", "out_block_coords", "in_block_coords", "submatrix",
+  "transmission", "num_propagating", "conductance_matrix",
+]
+
+[[object]]
+module = "kwant.physics"
+name = "StabilizedModes"
+members = ["selfenergy"]
+
+[[object]]
+module = "kwant.physics"
+name = "DiscreteSymmetry"
+members = ["validate"]
+
+[[object]]
+module = "kwant.kpm"
+name = "SpectralDensity"
+members = [
+  "energies", "num_vectors", "integrate", "add_moments", "add_vectors",
+]
+
+[[object]]
+module = "kwant.kpm"
+name = "Correlator"
+members = ["energies", "add_moments", "add_vectors"]
+
+[[object]]
+module = "kwant.graph"
+name = "Graph"
+members = ["reserve", "add_edge", "add_edges", "compressed", "write_dot"]
+
+[[object]]
+module = "kwant.graph"
+name = "CGraph"
+members = [
+  "has_dangling_edges", "out_neighbors", "out_edge_ids", "in_neighbors",
+  "in_edge_ids", "has_edge", "edge_id", "first_edge_id", "all_edge_ids",
+  "tail", "head", "write_dot",
+]
+
+[[object]]
+module = "kwant.operator"
+name = "Density"
+members = ["act", "bind", "tocoo"]
+
+[[object]]
+module = "kwant.operator"
+name = "Current"
+members = ["act", "bind"]
+
+[[object]]
+module = "kwant.operator"
+name = "Source"
+members = ["act", "bind"]
+
+[[object]]
+module = "kwant.continuum"
+name = "LandauLattice"
+members = ["pos", "landau_index"]
+
+[[object]]
+module = "kwant.linalg.mumps"
+name = "MUMPSContext"
+members = ["analyze", "factor", "solve"]

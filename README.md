@@ -23,20 +23,22 @@ Voronoi neighbors, gauge-covariant Wannier projection, sampled-frame overlaps,
 multidimensional FFTs, spread decomposition, and periodic matrix
 interpolation, including a native multidimensional maximal-localization
 optimizer and fixed-rank SMV disentanglement with frozen subspaces. The Python
-extension and partial PythTB 2.0 layer pass
-all 98 pinned upstream tests without changing their tolerances. Every public
-PythTB 2.0 module, class, function, and method is now represented, including
-Wannier and visualization entry points, but complete semantic parity,
-broader Wannier differential fixtures, realistic material-scale validation,
-complete topology and response theory, complete open-system transport, and the
-complete Kwant compatibility surface remain open.
+extension and compatibility layers pass all 98 pinned PythTB 2.0 tests and all
+398 pinned Kwant 1.5 tests without changing their tolerances. Executable API
+manifests cover the public modules, exports, and core object members of both
+source packages, including Wannier, visualization, low-level system, solver,
+and linear-algebra entry points. Complete semantic parity, broader Wannier
+differential fixtures, realistic material-scale validation, complete topology
+and response theory, and scientific-scale open-system transport remain open.
 
 A green CI run currently means:
 
 - the implemented Rust model and spectral invariants pass;
 - the coverage matrices are internally consistent;
+- the PythTB and Kwant public API inventories remain importable;
 - compatibility tests cannot accidentally run against the original packages;
-- the implemented PythTB smoke contracts execute through the Rust extension;
+- all pinned PythTB and Kwant source tests execute through the compatibility
+  layers;
 - every intentionally skipped compatibility suite links to an open issue.
 
 It does **not** mean that the scientific package or compatibility targets are
@@ -89,6 +91,8 @@ let model = builder.build()?;
   entry points.
 - `spec/coverage/` maps scientific capabilities and source interfaces to tests,
   implementation status, and GitHub issues.
+- `spec/api/` contains executable public API inventories for the pinned source
+  versions.
 - Exact upstream source and test baselines are pinned in `spec/upstream/`.
   Remaining PythTB and Kwant failures are tracked in
   [issue #4](https://github.com/matrixlab-research/thouless/issues/4) and
@@ -109,17 +113,17 @@ cargo test --workspace --all-features
 python tools/check_contracts.py
 python -m pip install maturin numpy pytest
 maturin develop
+python tools/check_python_api.py
 PYTHONPATH=python python -m pytest -q -ra compat-tests
 ```
 
-The Kwant ballistic smoke contract executes through the Rust transport core,
-and the strict upstream slice currently includes 398 passing tests. This
-includes the complete selected plotting, Qsymm, and continuum modules without
-an expected skip; remaining Kwant inventory and backend gaps are tracked in
-issue #5. The strict PythTB runner executes all 98 collected source tests
-through the repository-built extension. Deeper PythTB semantic parity,
-Wannier and file-format differential fixtures, and scientific-scale validation
-remain tracked in issue #4. A skip without a linked issue is a CI error.
+The strict runners execute all 398 collected Kwant tests and all 98 collected
+PythTB tests through the repository-built extension. The API checker separately
+validates the pinned public surfaces, so a green source-test run cannot hide a
+missing untested export. Remaining Kwant semantic and backend gaps are tracked
+in issue #5. Deeper PythTB semantic parity, Wannier and file-format
+differential fixtures, and scientific-scale validation remain tracked in issue
+#4. A skip without a linked issue is a CI error.
 
 ## Source baselines
 

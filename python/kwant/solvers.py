@@ -12,7 +12,116 @@ from thouless import _core
 _SURFACE_BROADENING = 1.0e-6
 
 
-class SMatrix:
+class BlockResult:
+    """Common block access and transport statistics for solver results."""
+
+    def __init__(
+        self,
+        data,
+        lead_info,
+        out_leads,
+        in_leads,
+        sizes,
+        current_conserving=False,
+    ):
+        self.data = np.asarray(data, dtype=complex)
+        self.lead_info = tuple(lead_info)
+        self.out_leads = list(out_leads)
+        self.in_leads = list(in_leads)
+        self.sizes = np.asarray(sizes, dtype=int)
+        self.current_conserving = bool(current_conserving)
+        self.in_offsets = np.cumsum(
+            [0, *(self.sizes[index] for index in self.in_leads)]
+        )
+        self.out_offsets = np.cumsum(
+            [0, *(self.sizes[index] for index in self.out_leads)]
+        )
+
+    def block_coords(self, out_lead, in_lead):
+        return (
+            self.out_block_coords(out_lead),
+            self.in_block_coords(in_lead),
+        )
+
+    def out_block_coords(self, out_lead):
+        position = self.out_leads.index(int(out_lead))
+        return slice(
+            self.out_offsets[position],
+            self.out_offsets[position + 1],
+        )
+
+    def in_block_coords(self, in_lead):
+        position = self.in_leads.index(int(in_lead))
+        return slice(
+            self.in_offsets[position],
+            self.in_offsets[position + 1],
+        )
+
+    def submatrix(self, out_lead, in_lead):
+        return self.data[self.block_coords(out_lead, in_lead)]
+
+    def num_propagating(self, lead):
+        """Return the number of propagating channels in a lead."""
+        raise NotImplementedError
+
+    def transmission(self, out_lead, in_lead):
+        chosen = [int(out_lead), int(in_lead)]
+        present = self.out_leads, self.in_leads
+        available = [
+            int(lead in leads)
+            for lead, leads in zip(chosen, present, strict=True)
+        ]
+        if all(available):
+            return self._transmission(*chosen)
+
+        all_but_one = len(self.lead_info) - 1
+        if self.current_conserving:
+            if sum(available) == 1:
+                sum_axis, available_axis = available
+                if len(present[sum_axis]) == all_but_one:
+                    return self.num_propagating(
+                        chosen[available_axis]
+                    ) - sum(
+                        self._transmission(*chosen)
+                        for chosen[sum_axis] in present[sum_axis]
+                    )
+            elif all(
+                len(leads) == all_but_one for leads in present
+            ):
+                return sum(
+                    self._transmission(out_index, in_index)
+                    - (
+                        self.num_propagating(out_index)
+                        if out_index == in_index
+                        else 0
+                    )
+                    for out_index in present[0]
+                    for in_index in present[1]
+                )
+        raise ValueError(
+            "Insufficient matrix elements to compute "
+            f"transmission({chosen[0]}, {chosen[1]})"
+        )
+
+    def conductance_matrix(self):
+        lead_count = len(self.lead_info)
+        matrix = np.asarray(
+            [
+                [
+                    -self.transmission(drain, source)
+                    if drain != source
+                    else 0.0
+                    for source in range(lead_count)
+                ]
+                for drain in range(lead_count)
+            ],
+            dtype=float,
+        )
+        matrix.flat[:: lead_count + 1] = -matrix.sum(axis=0)
+        return matrix
+
+
+class SMatrix(BlockResult):
     """Scattering amplitudes in the propagating-mode basis of each lead."""
 
     def __init__(
@@ -23,61 +132,71 @@ class SMatrix:
         lead_info=(),
         out_leads=None,
         in_leads=None,
+        current_conserving=True,
     ):
-        self.data = np.asarray(data, dtype=complex)
         self._transmissions = np.asarray(transmissions, dtype=float)
-        self.lead_info = tuple(lead_info)
-        lead_count = len(self.lead_info)
-        self.out_leads = list(
+        lead_info = tuple(lead_info)
+        lead_count = len(lead_info)
+        out_leads = list(
             range(lead_count) if out_leads is None else out_leads
         )
-        self.in_leads = list(
+        in_leads = list(
             range(lead_count) if in_leads is None else in_leads
         )
         sizes = [
             int(lead_slices[index].stop - lead_slices[index].start)
             for index in range(lead_count)
         ]
-        out_offsets = np.cumsum(
-            [0, *(sizes[index] for index in self.out_leads)]
+        super().__init__(
+            data,
+            lead_info,
+            out_leads,
+            in_leads,
+            sizes,
+            current_conserving,
         )
-        in_offsets = np.cumsum(
-            [0, *(sizes[index] for index in self.in_leads)]
+
+    def out_block_coords(self, out_lead):
+        if np.isscalar(out_lead):
+            return super().out_block_coords(out_lead)
+        lead, block = map(int, out_lead)
+        sizes = getattr(self.lead_info[lead], "block_nmodes", None)
+        if sizes is None:
+            raise IndexError(f"Lead {lead} has no conservation-law blocks")
+        base = super().out_block_coords(lead).start
+        offsets = np.cumsum([0, *sizes])
+        return slice(base + offsets[block], base + offsets[block + 1])
+
+    def in_block_coords(self, in_lead):
+        if np.isscalar(in_lead):
+            return super().in_block_coords(in_lead)
+        lead, block = map(int, in_lead)
+        sizes = getattr(self.lead_info[lead], "block_nmodes", None)
+        if sizes is None:
+            raise IndexError(f"Lead {lead} has no conservation-law blocks")
+        base = super().in_block_coords(lead).start
+        offsets = np.cumsum([0, *sizes])
+        return slice(base + offsets[block], base + offsets[block + 1])
+
+    def _transmission(self, out_lead, in_lead):
+        return float(
+            np.linalg.norm(self.submatrix(out_lead, in_lead)) ** 2
         )
-        self._out_slices = {
-            lead: slice(out_offsets[position], out_offsets[position + 1])
-            for position, lead in enumerate(self.out_leads)
-        }
-        self._in_slices = {
-            lead: slice(in_offsets[position], in_offsets[position + 1])
-            for position, lead in enumerate(self.in_leads)
-        }
 
     def transmission(self, out_lead, in_lead):
-        _require_transmission(
-            int(out_lead),
-            int(in_lead),
-            self.out_leads,
-            self.in_leads,
-            len(self.lead_info),
-        )
-        return float(self._transmissions[int(out_lead), int(in_lead)])
+        if np.isscalar(out_lead) and np.isscalar(in_lead):
+            return super().transmission(out_lead, in_lead)
+        return self._transmission(out_lead, in_lead)
 
     def submatrix(self, out_lead, in_lead):
-        return self.data[
-            self._out_slices[int(out_lead)],
-            self._in_slices[int(in_lead)],
-        ]
+        return super().submatrix(out_lead, in_lead)
 
     def num_propagating(self, lead):
         info = self.lead_info[int(lead)]
         return len(getattr(info, "momenta", ())) // 2
 
-    def conductance_matrix(self):
-        return _conductance_matrix(self)
 
-
-class GreensFunction:
+class GreensFunction(BlockResult):
     """Retarded device Green function and lead-to-lead transmissions."""
 
     def __init__(
@@ -89,41 +208,39 @@ class GreensFunction:
         channel_counts,
         out_leads=None,
         in_leads=None,
+        current_conserving=True,
     ):
-        self.data = np.asarray(data, dtype=complex)
         self._transmissions = np.asarray(transmissions, dtype=float)
         self.selfenergies = tuple(
             np.asarray(value, dtype=complex) for value in selfenergies
         )
-        self.lead_info = self.selfenergies
         self.broadenings = tuple(
             np.asarray(value, dtype=complex) for value in broadenings
         )
         self._channel_counts = tuple(channel_counts)
         lead_count = len(self.selfenergies)
-        self.out_leads = list(
+        out_leads = list(
             range(lead_count) if out_leads is None else out_leads
         )
-        self.in_leads = list(
+        in_leads = list(
             range(lead_count) if in_leads is None else in_leads
         )
-
-    def transmission(self, out_lead, in_lead):
-        _require_transmission(
-            int(out_lead),
-            int(in_lead),
-            self.out_leads,
-            self.in_leads,
-            len(self.lead_info),
+        super().__init__(
+            data,
+            self.selfenergies,
+            out_leads,
+            in_leads,
+            [matrix.shape[0] for matrix in self.selfenergies],
+            current_conserving,
         )
-        return float(self._transmission(out_lead, in_lead))
 
     def _a_ttdagger_a_inv(self, lead_out, lead_in):
+        green = self.submatrix(lead_out, lead_in)
         return (
             self.broadenings[int(lead_out)]
-            @ self.data
+            @ green
             @ self.broadenings[int(lead_in)]
-            @ self.data.conj().T
+            @ green.conj().T
         )
 
     def _transmission(self, lead_out, lead_in):
@@ -134,8 +251,9 @@ class GreensFunction:
         ).real
         if lead_out == lead_in:
             gamma = self.broadenings[lead_in]
+            green = self.submatrix(lead_out, lead_in)
             result += (
-                2 * np.trace(gamma @ self.data).imag
+                2 * np.trace(gamma @ green).imag
                 + self.num_propagating(lead_in)
             )
         return float(result)
@@ -154,51 +272,6 @@ class GreensFunction:
                 > 1.0e-10 * scale
             )
         )
-
-    def conductance_matrix(self):
-        return _conductance_matrix(self)
-
-
-def _require_transmission(
-    out_lead, in_lead, out_leads, in_leads, lead_count
-):
-    out_present = out_lead in out_leads
-    in_present = in_lead in in_leads
-    if out_present and in_present:
-        return
-    all_but_one = lead_count - 1
-    if out_present != in_present:
-        missing_axis = in_leads if out_present else out_leads
-        if len(missing_axis) == all_but_one:
-            return
-    elif (
-        len(out_leads) == all_but_one
-        and len(in_leads) == all_but_one
-    ):
-        return
-    raise ValueError(
-        f"Insufficient matrix elements to compute "
-        f"transmission({out_lead}, {in_lead})"
-    )
-
-
-def _conductance_matrix(result):
-    lead_count = len(result.lead_info)
-    matrix = np.asarray(
-        [
-            [
-                -result.transmission(drain, source)
-                if drain != source
-                else 0.0
-                for source in range(lead_count)
-            ]
-            for drain in range(lead_count)
-        ],
-        dtype=float,
-    )
-    matrix.flat[:: lead_count + 1] = -matrix.sum(axis=0)
-    return matrix
-
 
 def _solution(syst, energy, args, params, channel_counts=None):
     device, leads = syst._transport_data(args=args, params=params)
@@ -461,17 +534,53 @@ def _mode_factors(syst, lead_info, selfenergies, args, params):
     return incoming, outgoing
 
 
-def smatrix(syst, energy=0, args=(), out_leads=None, in_leads=None, *, params=None, **kwargs):
-    _check_precalculated(syst, {"modes", "all"})
-    lead_count = len(syst.leads)
+def _lead_selection(lead_count, out_leads, in_leads):
     out_leads = list(
         range(lead_count) if out_leads is None else out_leads
     )
     in_leads = list(
         range(lead_count) if in_leads is None else in_leads
     )
+    if (
+        np.any(np.diff(out_leads) <= 0)
+        or np.any(np.diff(in_leads) <= 0)
+    ):
+        raise ValueError("Lead lists must be sorted and with unique entries.")
     if not out_leads or not in_leads:
-        raise ValueError("At least one incoming and outgoing lead is required")
+        raise ValueError("No output is requested.")
+    return out_leads, in_leads
+
+
+def _interface_bases(syst, args, params):
+    offsets = syst._site_slices(args, params)
+    return tuple(
+        np.concatenate(
+            [
+                np.arange(offsets[index], offsets[index + 1])
+                for index in interface
+            ]
+        )
+        for interface in syst.lead_interfaces
+    )
+
+
+def smatrix(
+    syst,
+    energy=0,
+    args=(),
+    out_leads=None,
+    in_leads=None,
+    check_hermiticity=True,
+    *,
+    params=None,
+    **kwargs,
+):
+    del kwargs
+    _check_precalculated(syst, {"modes", "all"})
+    lead_count = len(syst.leads)
+    out_leads, in_leads = _lead_selection(
+        lead_count, out_leads, in_leads
+    )
     selected = set(out_leads) | set(in_leads)
     if any(
         not hasattr(syst.leads[index], "modes") for index in selected
@@ -533,6 +642,7 @@ def smatrix(syst, energy=0, args=(), out_leads=None, in_leads=None, *, params=No
         lead_info,
         out_leads,
         in_leads,
+        check_hermiticity,
     )
 
 
@@ -542,11 +652,17 @@ def greens_function(
     args=(),
     out_leads=None,
     in_leads=None,
+    check_hermiticity=True,
     *,
     params=None,
     **kwargs,
 ):
+    del kwargs
     _check_precalculated(syst, {"selfenergy", "all"})
+    lead_count = len(syst.leads)
+    out_leads, in_leads = _lead_selection(
+        lead_count, out_leads, in_leads
+    )
     green, selfenergies, broadenings, transmissions = _solution(
         syst, energy, args, params
     )
@@ -563,14 +679,34 @@ def greens_function(
         )
         for lead in syst.leads
     )
+    interface_bases = _interface_bases(syst, args, params)
+    interface_selfenergies = tuple(
+        matrix[np.ix_(basis, basis)]
+        for matrix, basis in zip(
+            selfenergies, interface_bases, strict=True
+        )
+    )
+    interface_broadenings = tuple(
+        matrix[np.ix_(basis, basis)]
+        for matrix, basis in zip(
+            broadenings, interface_bases, strict=True
+        )
+    )
+    rows = np.concatenate(
+        [interface_bases[index] for index in out_leads]
+    )
+    columns = np.concatenate(
+        [interface_bases[index] for index in in_leads]
+    )
     return GreensFunction(
-        green,
+        green[np.ix_(rows, columns)],
         transmissions,
-        selfenergies,
-        broadenings,
+        interface_selfenergies,
+        interface_broadenings,
         channel_counts,
         out_leads,
         in_leads,
+        check_hermiticity,
     )
 
 
@@ -650,11 +786,8 @@ def wave_function(syst, energy=0, args=(), *, params=None, **kwargs):
     return WaveFunction(states)
 
 
-default = sys.modules[__name__]
-
-
-class Solver:
-    """Sparse-solver compatible facade over the shared transport kernel."""
+class SparseSolver:
+    """Reusable sparse-solver facade over the Thouless transport entry points."""
 
     smatrix = staticmethod(smatrix)
     greens_function = staticmethod(greens_function)
@@ -662,19 +795,125 @@ class Solver:
     wave_function = staticmethod(wave_function)
 
 
+class Solver(SparseSolver):
+    """Sparse-solver compatible facade over the shared transport kernel."""
+
+    lhsformat = "csc"
+    rhsformat = "csc"
+
+    def __init__(self):
+        self.nrhs = 6
+        self.ordering = "auto"
+        self.sparse_rhs = False
+
+    def options(self, nrhs=None, ordering=None, sparse_rhs=None):
+        old = {
+            "nrhs": self.nrhs,
+            "ordering": self.ordering,
+            "sparse_rhs": self.sparse_rhs,
+        }
+        if nrhs is not None:
+            if int(nrhs) != nrhs or int(nrhs) < 1:
+                raise ValueError("nrhs must be a positive integer")
+            self.nrhs = int(nrhs)
+        if ordering is not None:
+            if ordering not in {
+                "amd",
+                "amf",
+                "auto",
+                "kwant_decides",
+                "metis",
+                "pord",
+                "scotch",
+            }:
+                raise ValueError(f"Invalid ordering: {ordering}")
+            self.ordering = (
+                "auto" if ordering == "kwant_decides" else ordering
+            )
+        if sparse_rhs is not None:
+            self.sparse_rhs = bool(sparse_rhs)
+        return old
+
+    def reset_options(self):
+        old = {
+            "nrhs": self.nrhs,
+            "ordering": self.ordering,
+            "sparse_rhs": self.sparse_rhs,
+        }
+        self.nrhs = 6
+        self.ordering = "auto"
+        self.sparse_rhs = False
+        return old
+
+
 sparse = types.ModuleType(f"{__name__}.sparse")
 sparse.Solver = Solver
+sparse.smatrix = smatrix
+sparse.greens_function = greens_function
+sparse.ldos = ldos
+sparse.wave_function = wave_function
+sparse.__all__ = [
+    "smatrix",
+    "greens_function",
+    "ldos",
+    "wave_function",
+    "Solver",
+]
 sys.modules[sparse.__name__] = sparse
+
+common = types.ModuleType(f"{__name__}.common")
+common.BlockResult = BlockResult
+common.GreensFunction = GreensFunction
+common.SMatrix = SMatrix
+common.SparseSolver = SparseSolver
+common.__all__ = ["SparseSolver", "SMatrix", "GreensFunction"]
+sys.modules[common.__name__] = common
+
+default = types.ModuleType(f"{__name__}.default")
+default.greens_function = greens_function
+default.ldos = ldos
+default.smatrix = smatrix
+default.wave_function = wave_function
+default.__all__ = [
+    "smatrix",
+    "ldos",
+    "wave_function",
+    "greens_function",
+]
+sys.modules[default.__name__] = default
+
+mumps = types.ModuleType(f"{__name__}.mumps")
+mumps.Solver = Solver
+mumps.default_solver = Solver()
+mumps.greens_function = greens_function
+mumps.ldos = ldos
+mumps.smatrix = smatrix
+mumps.wave_function = wave_function
+mumps.options = mumps.default_solver.options
+mumps.reset_options = mumps.default_solver.reset_options
+mumps.__all__ = [
+    "smatrix",
+    "ldos",
+    "wave_function",
+    "greens_function",
+    "options",
+    "Solver",
+]
+sys.modules[mumps.__name__] = mumps
 
 
 __all__ = [
+    "BlockResult",
     "GreensFunction",
     "SMatrix",
     "Solver",
+    "SparseSolver",
     "WaveFunction",
+    "common",
     "default",
     "greens_function",
     "ldos",
+    "mumps",
     "smatrix",
     "sparse",
     "wave_function",

@@ -31,6 +31,89 @@ def test_builder_and_finalized_system_contract() -> None:
     np.testing.assert_allclose(sparse_hamiltonian.toarray(), hamiltonian)
 
 
+def test_low_level_system_protocol_and_plotter_iterators() -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    lattice = kwant.lattice.chain(norbs=1)
+    builder = kwant.Builder()
+    builder[lattice(0)] = 0.0
+    builder[lattice(1)] = 0.0
+    builder[lattice(0), lattice(1)] = -1.0
+    finalized = builder.finalized()
+
+    assert isinstance(finalized, kwant.system.System)
+    assert isinstance(finalized, kwant.system.FiniteSystem)
+    np.testing.assert_allclose(finalized.pos(1), [1.0])
+
+    sites, lead_slices = kwant.plotter.sys_leads_sites(finalized)
+    assert sites == [(0, None, 0), (1, None, 0)]
+    assert lead_slices == []
+    np.testing.assert_allclose(
+        kwant.plotter.sys_leads_pos(finalized, sites),
+        [[0.0], [1.0]],
+    )
+
+    hoppings, hopping_lead_slices = (
+        kwant.plotter.sys_leads_hoppings(finalized)
+    )
+    assert hoppings == [((0, 1), None, 0)]
+    assert hopping_lead_slices == []
+    starts, ends = kwant.plotter.sys_leads_hopping_pos(
+        finalized,
+        hoppings,
+    )
+    np.testing.assert_allclose(starts, [[0.0]])
+    np.testing.assert_allclose(ends, [[1.0]])
+
+    cached = kwant.system.PrecalculatedLead(
+        selfenergy=np.asarray([[-0.5j]])
+    )
+    np.testing.assert_allclose(cached.selfenergy(), [[-0.5j]])
+    callback_lead = kwant.builder.SelfEnergyLead(
+        lambda energy, args=(): np.asarray([[-0.5j]]),
+        [lattice(0)],
+        (),
+    )
+    assert kwant.system.is_selfenergy_lead(callback_lead)
+
+    from kwant.solvers import common, default, mumps, sparse
+
+    assert issubclass(sparse.Solver, common.SparseSolver)
+    assert default.smatrix is kwant.smatrix
+    assert kwant.plot is kwant.plotter.plot
+    previous = mumps.options(nrhs=2, sparse_rhs=True)
+    assert previous["nrhs"] == 6
+    restored = mumps.reset_options()
+    assert restored["nrhs"] == 2
+
+
+def test_low_level_lapack_entry_points() -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    matrix = np.asarray([[1.0, 2.0], [0.0, 3.0]])
+    prepared = kwant.linalg.lapack.prepare_for_lapack(False, matrix)
+    assert prepared.flags["F_CONTIGUOUS"]
+
+    form = np.asfortranarray(np.diag([1.0 + 0j, 2.0 + 0j]))
+    vectors = np.asfortranarray(np.eye(2, dtype=complex))
+    select = np.asarray([False, True], dtype=np.int32)
+    reordered, reordered_vectors, eigenvalues = (
+        kwant.linalg.lapack.trsen(select, form, vectors)
+    )
+    np.testing.assert_allclose(eigenvalues, [2.0, 1.0])
+    np.testing.assert_allclose(
+        reordered_vectors @ reordered @ reordered_vectors.conj().T,
+        form,
+    )
+    right = kwant.linalg.lapack.trevc(
+        reordered,
+        reordered_vectors,
+        None,
+    )
+    np.testing.assert_allclose(
+        form @ right,
+        right * eigenvalues,
+    )
+
+
 def test_magnetic_gauge_flux_and_normalized_site_constructor() -> None:
     kwant = require_compat_module("kwant", ISSUE_URL)
     lattice = kwant.lattice.square(norbs=1)
@@ -121,8 +204,25 @@ def test_green_function_and_ldos_contract() -> None:
     finalized = system.finalized()
 
     green = kwant.greens_function(finalized, energy=0.0)
-    assert green.data.shape == (3, 3)
+    assert green.data.shape == (2, 2)
+    assert green.submatrix(1, 0).shape == (1, 1)
+    assert green.submatrix(1, 0)[0, 0] == pytest.approx(
+        green.data[1, 0]
+    )
+    assert all(info.shape == (1, 1) for info in green.lead_info)
     assert green.transmission(1, 0) == pytest.approx(1.0)
+
+    selected = kwant.greens_function(
+        finalized,
+        energy=0.0,
+        out_leads=[1],
+        in_leads=[0],
+    )
+    assert selected.data.shape == (1, 1)
+    np.testing.assert_allclose(
+        selected.data,
+        green.submatrix(1, 0),
+    )
     density = kwant.ldos(finalized, energy=0.0)
     assert density.shape == (3,)
     assert np.all(density > 0)

@@ -5,6 +5,7 @@ import sys
 
 from . import (
     _plotter,
+    system,
     builder,
     digest,
     gauge,
@@ -19,8 +20,10 @@ from . import (
     solvers,
     wraparound,
 )
+from ._common import KwantDeprecationWarning
 from .builder import Builder, HoppingKind, Site, SiteFamily, UserCodeError
 from .lattice import TranslationalSymmetry
+from .plotter import plot
 from .solvers import (
     GreensFunction,
     SMatrix,
@@ -31,6 +34,21 @@ from .solvers import (
 )
 
 __version__ = "1.5.0+thouless"
+
+
+def test(verbose=True):
+    """Run tests installed alongside the Kwant compatibility package."""
+    from pathlib import Path
+
+    import pytest
+
+    arguments = [str(Path(__file__).resolve().parent), "-s"]
+    if verbose:
+        arguments.append("-v")
+    return pytest.main(arguments)
+
+
+test.__test__ = False
 
 
 def __getattr__(name):
@@ -45,13 +63,22 @@ def __getattr__(name):
 # resolves to the same object.
 physics.leads = physics
 sys.modules[f"{__name__}.physics.leads"] = physics
+physics.dispersion = physics
+physics.noise = physics
+physics.symmetry = physics
+sys.modules[f"{__name__}.physics.dispersion"] = physics
+sys.modules[f"{__name__}.physics.noise"] = physics
+sys.modules[f"{__name__}.physics.symmetry"] = physics
 physics.gauge = gauge
 physics.magnetic_gauge = gauge.magnetic_gauge
+if "magnetic_gauge" not in physics.__all__:
+    physics.__all__.append("magnetic_gauge")
 sys.modules[f"{__name__}.physics.gauge"] = gauge
 
 __all__ = [
     "Builder",
     "HoppingKind",
+    "KwantDeprecationWarning",
     "GreensFunction",
     "SMatrix",
     "Site",
@@ -68,11 +95,14 @@ __all__ = [
     "linalg",
     "operator",
     "physics",
+    "plot",
     "plotter",
     "rmt",
     "greens_function",
     "ldos",
     "solvers",
+    "system",
+    "test",
     "smatrix",
     "wave_function",
     "wraparound",

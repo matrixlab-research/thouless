@@ -5,8 +5,8 @@ source_repository = "https://github.com/pythtb/pythtb"
 source_commit = "0f3bb0b8588101cafbdf428c70fb43c9302fe7cf"
 collected_tests = 98
 root_public_exports = 13
-inventory_status = "partial"
-inventory_issue = "https://github.com/matrixlab-research/thouless/issues/4"
+inventory_status = "complete"
+api_manifest = "spec/api/pythtb-2.0.toml"
 
 [[interface]]
 name = "lattice and model construction"
