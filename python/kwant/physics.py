@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from collections import namedtuple
+
 import numpy as np
 from scipy import sparse as scipy_sparse
 from thouless import _core
+
+Linsys = namedtuple("Linsys", ["eigenproblem", "v", "extract"])
 
 
 class DiscreteSymmetry:
@@ -212,6 +216,63 @@ def phs_symmetrization(wave_functions, particle_hole):
     )
 
 
+def setup_linsys(h_cell, h_hop, tol=1e6, stabilization=None):
+    """Construct Kwant's stabilized translation eigenproblem."""
+    h_cell = np.asarray(h_cell)
+    h_hop = np.asarray(h_hop)
+    if h_cell.ndim != 2 or h_cell.shape[0] != h_cell.shape[1]:
+        raise ValueError("Cell Hamiltonian must be square")
+    if h_hop.shape != h_cell.shape:
+        raise ValueError("Inter-cell hopping must have the cell shape")
+    if stabilization is None:
+        singular_basis = False
+        force_imaginary = False
+        regularize_pencil = None
+    else:
+        if len(stabilization) != 2:
+            raise ValueError("stabilization must contain two booleans")
+        singular_basis = True
+        force_imaginary = bool(stabilization[0])
+        regularize_pencil = True if bool(stabilization[1]) else None
+    native = _core.lead_setup_linear_system(
+        np.asarray(h_cell, dtype=complex).tolist(),
+        np.asarray(h_hop, dtype=complex).tolist(),
+        float(tol),
+        singular_basis,
+        force_imaginary,
+        regularize_pencil,
+    )
+    def native_matrix(rows):
+        matrix = np.asarray(rows, dtype=complex)
+        return matrix.real if native.uses_real_arithmetic else matrix
+
+    left = native_matrix(native.left)
+    right = None if native.right is None else native_matrix(native.right)
+    square_root_hopping = native_matrix(native.square_root_hopping)
+
+    def extract(projected, inverse_bloch_factor):
+        projected = np.asarray(projected, dtype=complex)
+        inverse_bloch_factor = np.asarray(inverse_bloch_factor, dtype=complex)
+        if projected.ndim == 1:
+            factor = complex(inverse_bloch_factor.reshape(()))
+            return np.asarray(native.extract(projected.tolist(), factor), dtype=complex)
+        if projected.ndim != 2:
+            raise ValueError("projected eigenvectors must be one- or two-dimensional")
+        factors = np.broadcast_to(
+            inverse_bloch_factor,
+            (projected.shape[1],),
+        )
+        columns = [
+            native.extract(projected[:, column].tolist(), complex(factors[column]))
+            for column in range(projected.shape[1])
+        ]
+        if not columns:
+            return np.zeros((h_cell.shape[0], 0), dtype=complex)
+        return np.asarray(columns, dtype=complex).T
+
+    return Linsys((left, right), square_root_hopping, extract)
+
+
 def modes(
     h_cell,
     h_hop,
@@ -225,7 +286,6 @@ def modes(
     chiral=None,
 ):
     """Solve Bloch modes of a nearest-cell periodic lead."""
-    del tol, stabilization
     if discrete_symmetry is not None:
         projectors, time_reversal, particle_hole, chiral = discrete_symmetry
     has_symmetries = any(
@@ -252,7 +312,26 @@ def modes(
     square_hopping = np.zeros_like(h_cell)
     square_hopping[:, : h_hop.shape[1]] = h_hop
 
-    if projectors is None and not has_symmetries:
+    if projectors is None and stabilization is not None:
+        (
+            wave_functions,
+            velocities,
+            momenta,
+            incoming_count,
+            stabilized_vectors,
+            stabilized_vectors_lambda_inverse,
+            square_root_hopping,
+        ) = _core.lead_singular_basis_modes(
+            h_cell.tolist(),
+            square_hopping.tolist(),
+            np.finfo(float).eps * float(tol),
+            symmetry_rows(time_reversal),
+            symmetry_rows(particle_hole),
+            symmetry_rows(chiral),
+        )
+        block_nmodes = [incoming_count]
+        projected = False
+    elif projectors is None and not has_symmetries:
         (
             wave_functions,
             velocities,
@@ -397,6 +476,7 @@ __all__ = [
     "DiscreteSymmetry",
     "PropagatingModes",
     "StabilizedModes",
+    "setup_linsys",
     "modes",
     "selfenergy",
     "square_selfenergy",

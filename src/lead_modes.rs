@@ -10,6 +10,7 @@ use crate::decomposition::{
 use crate::spectrum::hermitian_eigensystem;
 use crate::symmetry::{particle_hole_symmetric_basis, DiscreteSymmetry, SymmetryViolation};
 use crate::{Complex64, ComplexMatrix, MatrixError};
+use thouless_lapack::complex_svd;
 
 const UNIT_CIRCLE_TOLERANCE: f64 = 1.0e-7;
 const VELOCITY_TOLERANCE: f64 = 1.0e-10;
@@ -91,6 +92,141 @@ impl ProjectedLeadModes {
     }
 }
 
+/// Policy for constructing a stabilized translation eigenproblem.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LeadLinearSystemOptions {
+    tolerance_multiplier: f64,
+    use_singular_hopping_basis: bool,
+    force_imaginary_stabilizer: bool,
+    regularize_pencil: Option<bool>,
+}
+
+impl LeadLinearSystemOptions {
+    /// Let the solver select the cheapest stable representation.
+    #[must_use]
+    pub const fn automatic(tolerance_multiplier: f64) -> Self {
+        Self {
+            tolerance_multiplier,
+            use_singular_hopping_basis: false,
+            force_imaginary_stabilizer: false,
+            regularize_pencil: None,
+        }
+    }
+
+    /// Use the nonzero hopping singular subspace explicitly.
+    ///
+    /// `regularize_pencil` selects whether to convert the generalized pencil
+    /// into a regular eigenproblem. `None` performs the conversion only when
+    /// the right pencil matrix is well-conditioned.
+    #[must_use]
+    pub const fn singular_hopping_basis(
+        tolerance_multiplier: f64,
+        force_imaginary_stabilizer: bool,
+        regularize_pencil: Option<bool>,
+    ) -> Self {
+        Self {
+            tolerance_multiplier,
+            use_singular_hopping_basis: true,
+            force_imaginary_stabilizer,
+            regularize_pencil,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum LeadWaveFunctionExtractor {
+    Regular {
+        inverse_scale: f64,
+        dimension: usize,
+    },
+    Singular {
+        left_factor: ComplexMatrix,
+        right_factor: ComplexMatrix,
+        cell_inverse: ComplexMatrix,
+        imaginary_stabilizer: bool,
+    },
+}
+
+/// Stabilized matrix pencil and hopping basis for a periodic lead.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LeadLinearSystem {
+    left: ComplexMatrix,
+    right: Option<ComplexMatrix>,
+    square_root_hopping: ComplexMatrix,
+    real_arithmetic: bool,
+    extractor: LeadWaveFunctionExtractor,
+}
+
+impl LeadLinearSystem {
+    /// Left matrix of the regular or generalized eigenproblem.
+    #[must_use]
+    pub const fn left(&self) -> &ComplexMatrix {
+        &self.left
+    }
+
+    /// Right matrix of a generalized eigenproblem, or `None` for a regular one.
+    #[must_use]
+    pub const fn right(&self) -> Option<&ComplexMatrix> {
+        self.right.as_ref()
+    }
+
+    /// Right singular hopping factor used by the stabilized representation.
+    #[must_use]
+    pub const fn square_root_hopping(&self) -> &ComplexMatrix {
+        &self.square_root_hopping
+    }
+
+    /// Whether every matrix in the eigenproblem can use real arithmetic.
+    #[must_use]
+    pub const fn uses_real_arithmetic(&self) -> bool {
+        self.real_arithmetic
+    }
+
+    /// Recover a cell wave function from one stabilized eigenvector.
+    pub fn extract_wave_function(
+        &self,
+        projected: &[Complex64],
+        inverse_bloch_factor: Complex64,
+    ) -> Result<Vec<Complex64>, LeadModeError> {
+        match &self.extractor {
+            LeadWaveFunctionExtractor::Regular {
+                inverse_scale,
+                dimension,
+            } => {
+                if projected.len() != 2 * dimension {
+                    return Err(LeadModeError::InvalidShape);
+                }
+                Ok(projected[..*dimension]
+                    .iter()
+                    .map(|value| value * *inverse_scale)
+                    .collect())
+            }
+            LeadWaveFunctionExtractor::Singular {
+                left_factor,
+                right_factor,
+                cell_inverse,
+                imaginary_stabilizer,
+            } => {
+                let rank = left_factor.columns();
+                if projected.len() != 2 * rank {
+                    return Err(LeadModeError::InvalidShape);
+                }
+                let left = backend(left_factor);
+                let right = backend(right_factor);
+                let first = DMatrix::<Complex64>::from_column_slice(rank, 1, &projected[..rank]);
+                let second = DMatrix::<Complex64>::from_column_slice(rank, 1, &projected[rank..]);
+                let mut source = -&left * (&first * inverse_bloch_factor) - &right * &second;
+                if *imaginary_stabilizer {
+                    source += (&right * &first + &left * (&second * inverse_bloch_factor))
+                        * Complex64::new(0.0, 1.0);
+                }
+                let wave = backend(cell_inverse) * source;
+                Ok(wave.iter().copied().collect())
+            }
+        }
+    }
+}
+
 /// Failures raised by propagating-mode analysis.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -101,6 +237,12 @@ pub enum LeadModeError {
     NonHermitianCell,
     /// Generalized eigendecomposition failed.
     DecompositionFailure,
+    /// The inter-cell hopping is exactly zero.
+    ZeroHopping,
+    /// Stabilization cannot define a lead mode at a flat band.
+    FlatBand,
+    /// A numerical tolerance is negative or non-finite.
+    InvalidTolerance,
     /// Conservation-law projectors are invalid or do not reduce both lead matrices.
     InvalidProjectors,
     /// Declared discrete symmetries are invalid or do not preserve the lead.
@@ -119,6 +261,14 @@ impl fmt::Display for LeadModeError {
             Self::NonHermitianCell => write!(formatter, "cell Hamiltonian is not Hermitian"),
             Self::DecompositionFailure => {
                 write!(formatter, "lead generalized eigendecomposition failed")
+            }
+            Self::ZeroHopping => write!(formatter, "inter-cell hopping is exactly zero"),
+            Self::FlatBand => write!(
+                formatter,
+                "flat band encountered at the requested energy; lead modes are undefined"
+            ),
+            Self::InvalidTolerance => {
+                write!(formatter, "lead tolerance must be finite and non-negative")
             }
             Self::InvalidProjectors => write!(
                 formatter,
@@ -152,6 +302,209 @@ impl From<DecompositionError> for LeadModeError {
     fn from(_: DecompositionError) -> Self {
         Self::DecompositionFailure
     }
+}
+
+/// Construct a stable regular or generalized translation eigenproblem.
+pub fn setup_lead_linear_system(
+    cell_hamiltonian: &ComplexMatrix,
+    inter_cell_hopping: &ComplexMatrix,
+    options: LeadLinearSystemOptions,
+) -> Result<LeadLinearSystem, LeadModeError> {
+    let dimension = cell_hamiltonian.rows();
+    if cell_hamiltonian.columns() != dimension
+        || inter_cell_hopping.shape() != (dimension, dimension)
+    {
+        return Err(LeadModeError::InvalidShape);
+    }
+    if !options.tolerance_multiplier.is_finite() || options.tolerance_multiplier < 0.0 {
+        return Err(LeadModeError::InvalidTolerance);
+    }
+    let hopping_norm = inter_cell_hopping
+        .as_slice()
+        .iter()
+        .map(Complex64::norm_sqr)
+        .sum::<f64>()
+        .sqrt();
+    if hopping_norm == 0.0 {
+        return Err(LeadModeError::ZeroHopping);
+    }
+    let relative_tolerance = f64::EPSILON * options.tolerance_multiplier;
+    let decomposition = complex_svd(dimension, inter_cell_hopping.as_slice())
+        .map_err(|_| LeadModeError::DecompositionFailure)?;
+    let singular_values = decomposition.singular_values();
+    let rank = singular_values
+        .iter()
+        .filter(|&&value| value > relative_tolerance * singular_values[0])
+        .count();
+    if rank == dimension && !options.use_singular_hopping_basis {
+        let hopping_scale = hopping_norm.sqrt();
+        let hopping = backend(inter_cell_hopping);
+        let scaled_hopping = hopping * Complex64::new(hopping_scale.recip(), 0.0);
+        let negative_inverse = -scaled_hopping
+            .clone()
+            .try_inverse()
+            .ok_or(LeadModeError::DecompositionFailure)?;
+        let cell = backend(cell_hamiltonian);
+        let mut left = DMatrix::<Complex64>::zeros(2 * dimension, 2 * dimension);
+        let inverse_scale = Complex64::new(hopping_scale.recip(), 0.0);
+        let scale = Complex64::new(hopping_scale, 0.0);
+        left.view_mut((0, 0), (dimension, dimension))
+            .copy_from(&(&negative_inverse * cell * inverse_scale));
+        left.view_mut((0, dimension), (dimension, dimension))
+            .copy_from(&(&negative_inverse * scale));
+        left.view_mut((dimension, 0), (dimension, dimension))
+            .copy_from(&(scaled_hopping.adjoint() * inverse_scale));
+        let square_root_hopping = DMatrix::<Complex64>::identity(dimension, dimension) * scale;
+        let real_arithmetic = matrices_are_real(&[&left, &square_root_hopping]);
+        return Ok(LeadLinearSystem {
+            left: owned(&left)?,
+            right: None,
+            square_root_hopping: owned(&square_root_hopping)?,
+            real_arithmetic,
+            extractor: LeadWaveFunctionExtractor::Regular {
+                inverse_scale: hopping_scale.recip(),
+                dimension,
+            },
+        });
+    }
+
+    let left_vectors = DMatrix::<Complex64>::from_row_slice(
+        dimension,
+        dimension,
+        decomposition.left_vectors_row_major(),
+    );
+    let right_adjoint = DMatrix::<Complex64>::from_row_slice(
+        dimension,
+        dimension,
+        decomposition.right_vectors_adjoint_row_major(),
+    );
+    let right_vectors = right_adjoint.adjoint();
+    let mut left_factor = DMatrix::<Complex64>::zeros(dimension, rank);
+    let mut right_factor = DMatrix::<Complex64>::zeros(dimension, rank);
+    for column in 0..rank {
+        let scale = singular_values[column].sqrt();
+        for row in 0..dimension {
+            left_factor[(row, column)] = left_vectors[(row, column)] * scale;
+            right_factor[(row, column)] = right_vectors[(row, column)] * scale;
+        }
+    }
+
+    let cell = backend(cell_hamiltonian);
+    let input_is_real = cell_hamiltonian
+        .as_slice()
+        .iter()
+        .chain(inter_cell_hopping.as_slice())
+        .all(|value| value.im == 0.0);
+    let mut imaginary_stabilizer = options.force_imaginary_stabilizer
+        || (!input_is_real && !options.use_singular_hopping_basis);
+    let mut stabilized_cell = cell.clone();
+    let cell_condition = reciprocal_condition_number(&stabilized_cell);
+    if !imaginary_stabilizer && cell_condition < relative_tolerance {
+        imaginary_stabilizer = true;
+    }
+    if imaginary_stabilizer {
+        let stabilizer =
+            &left_factor * left_factor.adjoint() + &right_factor * right_factor.adjoint();
+        stabilized_cell += stabilizer * Complex64::new(0.0, 1.0);
+    }
+    if reciprocal_condition_number(&stabilized_cell) < relative_tolerance {
+        return Err(LeadModeError::FlatBand);
+    }
+    let cell_inverse = stabilized_cell
+        .try_inverse()
+        .ok_or(LeadModeError::FlatBand)?;
+    let inverse_right = &cell_inverse * &right_factor;
+    let left_inverse_right = left_factor.adjoint() * &inverse_right;
+    let right_inverse_right = right_factor.adjoint() * inverse_right;
+    let inverse_left = &cell_inverse * &left_factor;
+    let left_inverse_left = left_factor.adjoint() * &inverse_left;
+    let right_inverse_left = right_factor.adjoint() * inverse_left;
+
+    let pencil_dimension = 2 * rank;
+    let mut left = DMatrix::<Complex64>::zeros(pencil_dimension, pencil_dimension);
+    let mut right = DMatrix::<Complex64>::zeros(pencil_dimension, pencil_dimension);
+    for index in 0..rank {
+        left[(rank + index, index)] = Complex64::new(1.0, 0.0);
+        right[(index, rank + index)] = Complex64::new(-1.0, 0.0);
+    }
+    let imaginary_negative = if imaginary_stabilizer {
+        Complex64::new(0.0, -1.0)
+    } else {
+        Complex64::new(0.0, 0.0)
+    };
+    let imaginary_positive = if imaginary_stabilizer {
+        Complex64::new(0.0, 1.0)
+    } else {
+        Complex64::new(0.0, 0.0)
+    };
+    add_block(&mut left, 0, 0, &left_inverse_right, imaginary_negative);
+    add_block(
+        &mut left,
+        0,
+        rank,
+        &left_inverse_right,
+        Complex64::new(1.0, 0.0),
+    );
+    add_block(&mut left, rank, 0, &right_inverse_right, imaginary_negative);
+    add_block(
+        &mut left,
+        rank,
+        rank,
+        &right_inverse_right,
+        Complex64::new(1.0, 0.0),
+    );
+    add_block(
+        &mut right,
+        0,
+        0,
+        &left_inverse_left,
+        Complex64::new(-1.0, 0.0),
+    );
+    add_block(&mut right, 0, rank, &left_inverse_left, imaginary_positive);
+    add_block(
+        &mut right,
+        rank,
+        0,
+        &right_inverse_left,
+        Complex64::new(-1.0, 0.0),
+    );
+    add_block(
+        &mut right,
+        rank,
+        rank,
+        &right_inverse_left,
+        imaginary_positive,
+    );
+
+    let right_condition = reciprocal_condition_number(&right);
+    let regular_condition_threshold = relative_tolerance * options.tolerance_multiplier;
+    let regularize = options
+        .regularize_pencil
+        .unwrap_or(right_condition > regular_condition_threshold);
+    let (left, right) = if regularize {
+        let inverse = right
+            .try_inverse()
+            .ok_or(LeadModeError::DecompositionFailure)?;
+        (inverse * left, None)
+    } else {
+        (left, Some(right))
+    };
+    let real_arithmetic = matrices_are_real(&right.as_ref().map_or_else(
+        || vec![&left, &right_factor],
+        |right| vec![&left, right, &right_factor],
+    ));
+    Ok(LeadLinearSystem {
+        left: owned(&left)?,
+        right: right.as_ref().map(owned).transpose()?,
+        square_root_hopping: owned(&right_factor)?,
+        real_arithmetic,
+        extractor: LeadWaveFunctionExtractor::Singular {
+            left_factor: owned(&left_factor)?,
+            right_factor: owned(&right_factor)?,
+            cell_inverse: owned(&cell_inverse)?,
+            imaginary_stabilizer,
+        },
+    })
 }
 
 /// Solve current-carrying modes of
@@ -415,6 +768,87 @@ pub fn propagating_modes(
         stabilized_vectors,
         stabilized_vectors_lambda_inverse,
         square_root_hopping,
+    })
+}
+
+/// Re-express a solved lead-mode basis in the nonzero singular subspace of
+/// the inter-cell hopping.
+///
+/// The physical wave functions, velocities, and momenta are unchanged. The
+/// stabilized vectors are transformed from the regular scalar hopping basis
+/// to the basis defined by `T = U S Vᴴ`, and the returned square-root hopping
+/// is `V sqrt(S)`. This representation remains well-defined for rank-deficient
+/// hopping and is the natural narrow waist for stabilized scattering solvers.
+pub fn reexpress_modes_in_singular_hopping_basis(
+    modes: &PropagatingLeadModes,
+    inter_cell_hopping: &ComplexMatrix,
+    relative_singular_tolerance: f64,
+) -> Result<PropagatingLeadModes, LeadModeError> {
+    let dimension = inter_cell_hopping.rows();
+    if inter_cell_hopping.columns() != dimension
+        || modes.wave_functions.rows() != dimension
+        || !relative_singular_tolerance.is_finite()
+        || relative_singular_tolerance < 0.0
+    {
+        return Err(LeadModeError::InvalidShape);
+    }
+    if dimension == 0 {
+        return Ok(modes.clone());
+    }
+    let hopping_norm = inter_cell_hopping
+        .as_slice()
+        .iter()
+        .map(Complex64::norm_sqr)
+        .sum::<f64>()
+        .sqrt();
+    if hopping_norm == 0.0 {
+        return Ok(modes.clone());
+    }
+    let decomposition = complex_svd(dimension, inter_cell_hopping.as_slice())
+        .map_err(|_| LeadModeError::DecompositionFailure)?;
+    let singular_values = decomposition.singular_values();
+    let threshold = singular_values[0] * relative_singular_tolerance;
+    let rank = singular_values
+        .iter()
+        .filter(|&&value| value > threshold)
+        .count();
+    if rank == 0 {
+        return Err(LeadModeError::DecompositionFailure);
+    }
+
+    let right_adjoint = DMatrix::<Complex64>::from_row_slice(
+        dimension,
+        dimension,
+        decomposition.right_vectors_adjoint_row_major(),
+    );
+    let right_vectors = right_adjoint.adjoint();
+    let mut square_root_hopping = DMatrix::<Complex64>::zeros(dimension, rank);
+    for column in 0..rank {
+        let scale = singular_values[column].sqrt();
+        for row in 0..dimension {
+            square_root_hopping[(row, column)] = right_vectors[(row, column)] * scale;
+        }
+    }
+
+    let regular_vectors = backend(&modes.stabilized_vectors);
+    let regular_vectors_lambda_inverse = backend(&modes.stabilized_vectors_lambda_inverse);
+    let regular_scale = Complex64::new(hopping_norm.sqrt(), 0.0);
+    let explicit_vectors_lambda_inverse =
+        square_root_hopping.adjoint() * regular_vectors_lambda_inverse / regular_scale;
+    let mut explicit_vectors = square_root_hopping.adjoint() * (regular_vectors * regular_scale);
+    for (row, singular_value) in singular_values.iter().take(rank).enumerate() {
+        let inverse_gram = singular_value.recip();
+        explicit_vectors.row_mut(row).scale_mut(inverse_gram);
+    }
+
+    Ok(PropagatingLeadModes {
+        wave_functions: modes.wave_functions.clone(),
+        velocities: modes.velocities.clone(),
+        momenta: modes.momenta.clone(),
+        incoming_count: modes.incoming_count,
+        stabilized_vectors: owned(&explicit_vectors)?,
+        stabilized_vectors_lambda_inverse: owned(&explicit_vectors_lambda_inverse)?,
+        square_root_hopping: owned(&square_root_hopping)?,
     })
 }
 
@@ -1420,6 +1854,27 @@ fn add_block(
     }
 }
 
+fn reciprocal_condition_number(matrix: &DMatrix<Complex64>) -> f64 {
+    if matrix.nrows() == 0 || matrix.ncols() == 0 {
+        return 1.0;
+    }
+    let singular_values = matrix.clone().svd(false, false).singular_values;
+    let largest = singular_values[0];
+    let smallest = singular_values[singular_values.len() - 1];
+    if largest == 0.0 {
+        0.0
+    } else {
+        smallest / largest
+    }
+}
+
+fn matrices_are_real(matrices: &[&DMatrix<Complex64>]) -> bool {
+    matrices
+        .iter()
+        .flat_map(|matrix| matrix.iter())
+        .all(|value| value.im == 0.0)
+}
+
 fn backend(matrix: &ComplexMatrix) -> DMatrix<Complex64> {
     DMatrix::from_row_slice(matrix.rows(), matrix.columns(), matrix.as_slice())
 }
@@ -1493,6 +1948,112 @@ mod tests {
         assert!(
             (modes.square_root_hopping().get(0, 0).unwrap().re - 0.7_f64.sqrt()).abs() < 1.0e-12
         );
+    }
+
+    #[test]
+    fn automatic_linear_system_uses_complex_stabilization_only_when_needed() {
+        let hopping = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(0.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(-1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ],
+        )
+        .unwrap();
+        let regular_cell = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(1.7, 0.0),
+                Complex64::new(-1.0, 0.0),
+                Complex64::new(-1.0, 0.0),
+                Complex64::new(1.7, 0.0),
+            ],
+        )
+        .unwrap();
+        let singular_cell = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(1.0, 0.0),
+                Complex64::new(-1.0, 0.0),
+                Complex64::new(-1.0, 0.0),
+                Complex64::new(1.0, 0.0),
+            ],
+        )
+        .unwrap();
+
+        let regular = setup_lead_linear_system(
+            &regular_cell,
+            &hopping,
+            LeadLinearSystemOptions::automatic(1.0e6),
+        )
+        .unwrap();
+        assert!(regular.uses_real_arithmetic());
+        assert_eq!(regular.left().shape(), (2, 2));
+        assert_eq!(regular.square_root_hopping().shape(), (2, 1));
+
+        let stabilized = setup_lead_linear_system(
+            &singular_cell,
+            &hopping,
+            LeadLinearSystemOptions::automatic(1.0e6),
+        )
+        .unwrap();
+        assert!(!stabilized.uses_real_arithmetic());
+    }
+
+    #[test]
+    fn singular_hopping_basis_preserves_physical_mode_vectors() {
+        let cell = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(0.1, 0.0),
+                Complex64::new(0.05, 0.02),
+                Complex64::new(0.05, -0.02),
+                Complex64::new(-0.2, 0.0),
+            ],
+        )
+        .unwrap();
+        let hopping = ComplexMatrix::new(
+            2,
+            2,
+            vec![
+                Complex64::new(0.8, 0.1),
+                Complex64::new(0.1, -0.03),
+                Complex64::new(-0.04, 0.08),
+                Complex64::new(0.55, -0.06),
+            ],
+        )
+        .unwrap();
+        let regular = propagating_modes(&cell, &hopping).unwrap();
+        let singular =
+            reexpress_modes_in_singular_hopping_basis(&regular, &hopping, 1.0e-12).unwrap();
+        assert_eq!(regular.wave_functions(), singular.wave_functions());
+        assert_eq!(regular.velocities(), singular.velocities());
+        assert_eq!(regular.momenta(), singular.momenta());
+
+        let hopping_norm = hopping
+            .as_slice()
+            .iter()
+            .map(Complex64::norm_sqr)
+            .sum::<f64>()
+            .sqrt();
+        let scale = Complex64::new(hopping_norm.sqrt(), 0.0);
+        let singular_factor = backend(singular.square_root_hopping());
+        let singular_vectors = backend(singular.stabilized_vectors());
+        let regular_vectors = backend(regular.stabilized_vectors());
+        let lower_residual = singular_factor * singular_vectors - regular_vectors * scale;
+        assert!(lower_residual.iter().all(|value| value.norm() < 1.0e-10));
+
+        let singular_inverse = backend(singular.stabilized_vectors_lambda_inverse());
+        let regular_inverse = backend(regular.stabilized_vectors_lambda_inverse());
+        let upper_residual = singular_inverse
+            - backend(singular.square_root_hopping()).adjoint() * regular_inverse / scale;
+        assert!(upper_residual.iter().all(|value| value.norm() < 1.0e-10));
     }
 
     #[test]

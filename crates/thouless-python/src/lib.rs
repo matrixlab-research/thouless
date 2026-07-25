@@ -27,6 +27,8 @@ use thouless::lattice_reduction::{
 use thouless::lead_modes::{
     propagating_modes, propagating_modes_in_declared_symmetric_subspaces,
     propagating_modes_in_subspaces, propagating_modes_with_symmetries,
+    reexpress_modes_in_singular_hopping_basis, setup_lead_linear_system, LeadLinearSystem,
+    LeadLinearSystemOptions,
 };
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
 use thouless::observables::{pauli_coefficients, project_diagonal_observable};
@@ -140,6 +142,44 @@ fn graph_error(error: GraphError) -> PyErr {
 
 fn graph_index(value: i64) -> Result<usize, GraphError> {
     usize::try_from(value).map_err(|_| GraphError::EdgeDoesNotExist)
+}
+
+#[pyclass(name = "_LeadLinearSystem")]
+struct PyLeadLinearSystem {
+    inner: LeadLinearSystem,
+}
+
+#[pymethods]
+impl PyLeadLinearSystem {
+    #[getter]
+    fn left(&self) -> MatrixRows {
+        matrix_to_rows(self.inner.left())
+    }
+
+    #[getter]
+    fn right(&self) -> Option<MatrixRows> {
+        self.inner.right().map(matrix_to_rows)
+    }
+
+    #[getter]
+    fn square_root_hopping(&self) -> MatrixRows {
+        matrix_to_rows(self.inner.square_root_hopping())
+    }
+
+    #[getter]
+    fn uses_real_arithmetic(&self) -> bool {
+        self.inner.uses_real_arithmetic()
+    }
+
+    fn extract(
+        &self,
+        projected: Vec<Complex64>,
+        inverse_bloch_factor: Complex64,
+    ) -> PyResult<Vec<Complex64>> {
+        self.inner
+            .extract_wave_function(&projected, inverse_bloch_factor)
+            .map_err(value_error)
+    }
 }
 
 #[pyclass(name = "_GraphBuilder")]
@@ -730,6 +770,40 @@ fn lead_propagating_modes(
     .map_err(value_error)
 }
 
+#[pyfunction(signature = (
+    cell_hamiltonian,
+    inter_cell_hopping,
+    tolerance_multiplier=1.0e6,
+    singular_hopping_basis=false,
+    force_imaginary_stabilizer=false,
+    regularize_pencil=None
+))]
+fn lead_setup_linear_system(
+    cell_hamiltonian: MatrixRows,
+    inter_cell_hopping: MatrixRows,
+    tolerance_multiplier: f64,
+    singular_hopping_basis: bool,
+    force_imaginary_stabilizer: bool,
+    regularize_pencil: Option<bool>,
+) -> PyResult<PyLeadLinearSystem> {
+    let options = if singular_hopping_basis {
+        LeadLinearSystemOptions::singular_hopping_basis(
+            tolerance_multiplier,
+            force_imaginary_stabilizer,
+            regularize_pencil,
+        )
+    } else {
+        LeadLinearSystemOptions::automatic(tolerance_multiplier)
+    };
+    setup_lead_linear_system(
+        &matrix_from_rows(cell_hamiltonian)?,
+        &matrix_from_rows(inter_cell_hopping)?,
+        options,
+    )
+    .map(|inner| PyLeadLinearSystem { inner })
+    .map_err(value_error)
+}
+
 #[pyfunction]
 fn lead_projected_modes(
     cell_hamiltonian: MatrixRows,
@@ -797,6 +871,57 @@ fn lead_symmetric_modes(
         )
     })
     .map_err(value_error)
+}
+
+#[pyfunction(signature = (
+    cell_hamiltonian,
+    inter_cell_hopping,
+    relative_singular_tolerance,
+    time_reversal=None,
+    particle_hole=None,
+    chiral=None
+))]
+fn lead_singular_basis_modes(
+    cell_hamiltonian: MatrixRows,
+    inter_cell_hopping: MatrixRows,
+    relative_singular_tolerance: f64,
+    time_reversal: Option<MatrixRows>,
+    particle_hole: Option<MatrixRows>,
+    chiral: Option<MatrixRows>,
+) -> PyResult<LeadModeOutput> {
+    let cell_hamiltonian = matrix_from_rows(cell_hamiltonian)?;
+    let inter_cell_hopping = matrix_from_rows(inter_cell_hopping)?;
+    let time_reversal = optional_matrix(time_reversal)?;
+    let particle_hole = optional_matrix(particle_hole)?;
+    let chiral = optional_matrix(chiral)?;
+    let modes = if time_reversal.is_some() || particle_hole.is_some() || chiral.is_some() {
+        propagating_modes_with_symmetries(
+            &cell_hamiltonian,
+            &inter_cell_hopping,
+            time_reversal.as_ref(),
+            particle_hole.as_ref(),
+            chiral.as_ref(),
+        )
+    } else {
+        propagating_modes(&cell_hamiltonian, &inter_cell_hopping)
+    }
+    .and_then(|modes| {
+        reexpress_modes_in_singular_hopping_basis(
+            &modes,
+            &inter_cell_hopping,
+            relative_singular_tolerance,
+        )
+    })
+    .map_err(value_error)?;
+    Ok((
+        matrix_to_rows(modes.wave_functions()),
+        modes.velocities().to_vec(),
+        modes.momenta().to_vec(),
+        modes.incoming_count(),
+        matrix_to_rows(modes.stabilized_vectors()),
+        matrix_to_rows(modes.stabilized_vectors_lambda_inverse()),
+        matrix_to_rows(modes.square_root_hopping()),
+    ))
 }
 
 #[pyfunction(signature = (
@@ -1764,6 +1889,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     module.add_class::<PyGraphBuilder>()?;
     module.add_class::<PyCompressedGraph>()?;
+    module.add_class::<PyLeadLinearSystem>()?;
     module.add_function(wrap_pyfunction!(validate_periodic_bands, module)?)?;
     module.add_function(wrap_pyfunction!(lead_band_evaluation, module)?)?;
     module.add_function(wrap_pyfunction!(reflection_shot_noise, module)?)?;
@@ -1787,8 +1913,10 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(kpm_velocity_operator, module)?)?;
     module.add_function(wrap_pyfunction!(periodic_fold_terms, module)?)?;
     module.add_function(wrap_pyfunction!(lead_propagating_modes, module)?)?;
+    module.add_function(wrap_pyfunction!(lead_setup_linear_system, module)?)?;
     module.add_function(wrap_pyfunction!(lead_projected_modes, module)?)?;
     module.add_function(wrap_pyfunction!(lead_symmetric_modes, module)?)?;
+    module.add_function(wrap_pyfunction!(lead_singular_basis_modes, module)?)?;
     module.add_function(wrap_pyfunction!(lead_symmetric_projected_modes, module)?)?;
     module.add_function(wrap_pyfunction!(lead_retarded_self_energy, module)?)?;
     module.add_function(wrap_pyfunction!(square_strip_self_energy, module)?)?;

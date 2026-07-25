@@ -30,6 +30,34 @@ pub struct ComplexQr {
     first_superdiagonal: Vec<Complex64>,
 }
 
+/// A square complex singular-value decomposition.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComplexSvd {
+    left_vectors: Vec<Complex64>,
+    singular_values: Vec<f64>,
+    right_vectors_adjoint: Vec<Complex64>,
+}
+
+impl ComplexSvd {
+    /// Returns the left singular vectors in row-major order.
+    #[must_use]
+    pub fn left_vectors_row_major(&self) -> &[Complex64] {
+        &self.left_vectors
+    }
+
+    /// Returns singular values in descending order.
+    #[must_use]
+    pub fn singular_values(&self) -> &[f64] {
+        &self.singular_values
+    }
+
+    /// Returns the adjoint of the right singular-vector matrix in row-major order.
+    #[must_use]
+    pub fn right_vectors_adjoint_row_major(&self) -> &[Complex64] {
+        &self.right_vectors_adjoint
+    }
+}
+
 impl ComplexQr {
     /// Returns the unitary factor in row-major order.
     #[must_use]
@@ -334,6 +362,125 @@ pub fn complex_qr(dimension: usize, row_major_entries: &[Complex64]) -> Result<C
     })
 }
 
+/// Computes the full SVD of a square complex matrix with LAPACK's
+/// divide-and-conquer driver.
+pub fn complex_svd(dimension: usize, row_major_entries: &[Complex64]) -> Result<ComplexSvd, Error> {
+    let entry_count = dimension
+        .checked_mul(dimension)
+        .ok_or(Error::DimensionTooLarge)?;
+    if row_major_entries.len() != entry_count {
+        return Err(Error::InvalidInputLength {
+            expected: entry_count,
+            actual: row_major_entries.len(),
+        });
+    }
+    if dimension == 0 {
+        return Ok(ComplexSvd {
+            left_vectors: Vec::new(),
+            singular_values: Vec::new(),
+            right_vectors_adjoint: Vec::new(),
+        });
+    }
+    let lapack_dimension = i32::try_from(dimension).map_err(|_| Error::DimensionTooLarge)?;
+    let mut matrix = (0..dimension)
+        .flat_map(|column| {
+            (0..dimension).map(move |row| row_major_entries[row * dimension + column])
+        })
+        .collect::<Vec<_>>();
+    let mut singular_values = vec![0.0; dimension];
+    let mut left_vectors = vec![Complex64::new(0.0, 0.0); entry_count];
+    let mut right_vectors_adjoint = vec![Complex64::new(0.0, 0.0); entry_count];
+    let mut work_query = [Complex64::new(0.0, 0.0)];
+    let real_work_length = 5usize
+        .checked_mul(entry_count)
+        .and_then(|value| value.checked_add(7 * dimension))
+        .ok_or(Error::DimensionTooLarge)?;
+    let mut real_work = vec![0.0; real_work_length.max(1)];
+    let mut integer_work = vec![
+        0;
+        8usize
+            .checked_mul(dimension)
+            .ok_or(Error::DimensionTooLarge)?
+    ];
+    let mut info = 0;
+
+    // SAFETY: dimensions and all fixed-size buffers satisfy zgesdd's
+    // workspace-query ABI. The real and integer work arrays use the
+    // documented divide-and-conquer bounds.
+    unsafe {
+        lapack::zgesdd(
+            b'A',
+            lapack_dimension,
+            lapack_dimension,
+            &mut matrix,
+            lapack_dimension,
+            &mut singular_values,
+            &mut left_vectors,
+            lapack_dimension,
+            &mut right_vectors_adjoint,
+            lapack_dimension,
+            &mut work_query,
+            -1,
+            &mut real_work,
+            &mut integer_work,
+            &mut info,
+        );
+    }
+    check_info(info)?;
+    let work_length = workspace_length(work_query[0].re)?;
+    let mut work = vec![Complex64::new(0.0, 0.0); work_length];
+
+    // zgesdd overwrites its input, so restore the column-major matrix after
+    // the workspace query before the actual decomposition.
+    matrix = (0..dimension)
+        .flat_map(|column| {
+            (0..dimension).map(move |row| row_major_entries[row * dimension + column])
+        })
+        .collect();
+    // SAFETY: zgesdd receives square column-major buffers and its queried
+    // complex workspace plus documented real and integer work allocations.
+    unsafe {
+        lapack::zgesdd(
+            b'A',
+            lapack_dimension,
+            lapack_dimension,
+            &mut matrix,
+            lapack_dimension,
+            &mut singular_values,
+            &mut left_vectors,
+            lapack_dimension,
+            &mut right_vectors_adjoint,
+            lapack_dimension,
+            &mut work,
+            i32::try_from(work_length).map_err(|_| Error::InvalidWorkspace)?,
+            &mut real_work,
+            &mut integer_work,
+            &mut info,
+        );
+    }
+    check_info(info)?;
+    let left_vectors_column_major = left_vectors;
+    let right_vectors_adjoint_column_major = right_vectors_adjoint;
+    let left_vectors = (0..dimension)
+        .flat_map(|row| {
+            let left_vectors_column_major = &left_vectors_column_major;
+            (0..dimension).map(move |column| left_vectors_column_major[row + column * dimension])
+        })
+        .collect();
+    let right_vectors_adjoint = (0..dimension)
+        .flat_map(|row| {
+            let right_vectors_adjoint_column_major = &right_vectors_adjoint_column_major;
+            (0..dimension)
+                .map(move |column| right_vectors_adjoint_column_major[row + column * dimension])
+        })
+        .collect();
+    Ok(ComplexSvd {
+        left_vectors,
+        singular_values,
+        right_vectors_adjoint,
+    })
+}
+
 fn workspace_length(value: f64) -> Result<usize, Error> {
     if !value.is_finite() || value < 1.0 || value > i32::MAX.into() {
         return Err(Error::InvalidWorkspace);
@@ -407,6 +554,31 @@ mod tests {
                     .sum::<Complex64>();
                 let expected = if row == column { 1.0 } else { 0.0 };
                 assert!((overlap - Complex64::new(expected, 0.0)).norm() < 1.0e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn divide_and_conquer_svd_reconstructs_a_complex_matrix() {
+        let matrix = [
+            Complex64::new(1.0, 2.0),
+            Complex64::new(3.0, -1.0),
+            Complex64::new(-2.0, 0.5),
+            Complex64::new(0.0, 4.0),
+        ];
+        let decomposition = complex_svd(2, &matrix).unwrap();
+        let left = decomposition.left_vectors_row_major();
+        let right_adjoint = decomposition.right_vectors_adjoint_row_major();
+        for row in 0..2 {
+            for column in 0..2 {
+                let reconstructed = (0..2)
+                    .map(|inner| {
+                        left[row * 2 + inner]
+                            * decomposition.singular_values()[inner]
+                            * right_adjoint[inner * 2 + column]
+                    })
+                    .sum::<Complex64>();
+                assert!((reconstructed - matrix[row * 2 + column]).norm() < 1.0e-12);
             }
         }
     }

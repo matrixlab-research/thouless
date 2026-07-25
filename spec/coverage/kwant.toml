@@ -65,15 +65,16 @@ source_entries = [
   "modes",
   "selfenergy",
   "square_selfenergy",
+  "setup_linsys",
   "phs_symmetrization",
   "PropagatingModes",
   "StabilizedModes",
 ]
 compat_entry = "python/kwant/physics"
 rust_capability = "transport.propagating_modes, transport.lead_self_energy, transport.steady_state, and symmetry.particle_hole_basis"
-public_test = "pinned low-level lead protocol and sparse-solver workflow plus regular-chain mode and rectangular or singular self-energy boundaries with Python eigensolvers disabled"
-source_test = "low-level modes/self-energy lead replacement, sparse-solver modes, self-energy, singular-lead, and precalculation workflows, plus 21 pinned lead-module tests including randomized and degenerate TRIM particle-hole bases, all single-block discrete symmetry classes, chiral modes, identical and symmetry-related blocks, and square, singular, rectangular, rotated, complex, and unequal-size conservation blocks; complete physics lead module not yet selected"
-actual_result = "scale-invariant regular and degenerate propagating modes, general square, rectangular, and rank-deficient retarded self-energies, particle-hole-, time-reversal-, and chiral-adapted mode gauges, independent Rust-native conservation-law blocks, and exact construction of symmetry-related blocks now work; 21 lead-module, 1 low-level lead-protocol, and 16 sparse-solver source tests passed; explicit stabilization variants, stabilized evanescent modes, the bearded-ribbon missing channel, setup_linsys, and the remainder of the physics lead module remain missing"
+public_test = "pinned low-level lead protocol and sparse-solver workflow plus regular-chain mode, stable linear-system, and rectangular or singular self-energy boundaries with Python eigensolvers disabled"
+source_test = "low-level modes/self-energy lead replacement, sparse-solver modes, self-energy, singular-lead, and precalculation workflows, plus 22 pinned lead-module tests including stabilized-linear-system dtype selection, randomized and degenerate TRIM particle-hole bases, all single-block discrete symmetry classes, chiral modes, identical and symmetry-related blocks, and square, singular, rectangular, rotated, complex, and unequal-size conservation blocks; complete physics lead module not yet selected"
+actual_result = "scale-invariant regular and degenerate propagating modes, stable regular or generalized lead pencils with Rust-owned wave-function extraction, general square, rectangular, and rank-deficient retarded self-energies, particle-hole-, time-reversal-, and chiral-adapted mode gauges, independent Rust-native conservation-law blocks, and exact construction of symmetry-related blocks now work; 22 lead-module, 1 low-level lead-protocol, and 16 sparse-solver source tests passed; a cross-backend canonical gauge for degenerate explicit SVD stabilization, stabilized evanescent modes, the bearded-ribbon missing channel, and the remainder of the physics lead module remain missing"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
