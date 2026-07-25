@@ -1,5 +1,6 @@
 """Kwant 1.5 compatibility layer backed by the Thouless Rust core."""
 
+import importlib
 import sys
 
 from . import (
@@ -31,6 +32,14 @@ from .solvers import (
 
 __version__ = "1.5.0+thouless"
 
+
+def __getattr__(name):
+    if name == "continuum":
+        module = importlib.import_module(".continuum", __name__)
+        globals()[name] = module
+        return module
+    raise AttributeError(name)
+
 # Kwant exposes the lead routines as ``kwant.physics.leads``. The compatibility
 # module is intentionally a single thin boundary, so the package-style name
 # resolves to the same object.
@@ -50,6 +59,7 @@ __all__ = [
     "TranslationalSymmetry",
     "UserCodeError",
     "builder",
+    "continuum",
     "digest",
     "gauge",
     "graph",

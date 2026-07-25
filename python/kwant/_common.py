@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import inspect
+import warnings
 
 import numpy as np
 
@@ -46,4 +48,22 @@ def get_parameters(function):
     return tuple(result)
 
 
-__all__ = ["KwantDeprecationWarning", "ensure_rng", "get_parameters"]
+@contextmanager
+def reraise_warnings(level=3):
+    """Re-emit warnings with a stack level that points to the public caller."""
+    with warnings.catch_warnings(record=True) as caught:
+        yield
+    for warning in caught:
+        warnings.warn(
+            warning.message,
+            warning.category,
+            stacklevel=level,
+        )
+
+
+__all__ = [
+    "KwantDeprecationWarning",
+    "ensure_rng",
+    "get_parameters",
+    "reraise_warnings",
+]

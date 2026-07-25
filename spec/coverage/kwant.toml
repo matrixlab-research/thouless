@@ -44,8 +44,8 @@ source_entries = ["smatrix", "greens_function", "wave_function", "ldos"]
 compat_entry = "python/kwant/solvers"
 rust_capability = "transport.steady_state"
 public_test = "compat-tests/test_kwant_api.py"
-source_test = "complete pinned sparse-solver parametrization: scattering matrices, Green functions, wave functions, LDOS, singular leads, mixed self-energy leads, and multi-terminal conductance"
-actual_result = "16 sparse-solver source tests and entry-point smoke passed"
+source_test = "complete pinned sparse-solver parametrization plus the pinned quantum Hall comprehensive workflow: scattering matrices, Green functions, wave functions, LDOS, singular leads, mixed self-energy leads, multi-terminal conductance, precalculation, and quantized Hall plateaus"
+actual_result = "16 sparse-solver source tests, the quantum Hall comprehensive workflow, and entry-point smoke passed; Rust exposes self-energy-only boundary evaluation so compatibility solvers do not perform discarded dense device factorizations"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
@@ -186,10 +186,10 @@ name = "optional sparse direct solver backend"
 source_entries = ["linalg.mumps"]
 compat_entry = "python/kwant/linalg/mumps"
 rust_capability = "sparse direct-solver backend not yet designed"
-public_test = "not implemented"
-source_test = "pinned MUMPS module"
-actual_result = "not selected"
-status = "missing"
+public_test = "complete pinned MUMPS module"
+source_test = "dense and sparse right-hand sides, Schur complement, analysis-reuse warning, and a realistic graphene factorization"
+actual_result = "4 source tests passed through a protocol-compatible SuperLU fallback; a Rust-native sparse direct-solver backend and MUMPS-specific statistics remain open"
+status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/5"
 
 [[interface]]
@@ -287,12 +287,11 @@ source_entries = [
   "continuum.LandauLattice",
 ]
 compat_entry = "python/kwant/continuum"
-rust_capability = "symbolic continuum discretization not yet implemented"
-public_test = "not implemented"
-source_test = "pinned continuum common, discretizer, and Landau-level modules"
-actual_result = "not selected"
-status = "missing"
-issue = "https://github.com/matrixlab-research/thouless/issues/5"
+rust_capability = "continuum.finite_difference and model.structure"
+public_test = "Rust ordered-operator, half-grid divergence-form, grid-shortening, Landau truncation, and field-orientation invariants"
+source_test = "complete pinned continuum common, discretizer, and Landau-level modules: symbolic parsing and compilation, ordered finite differences, scalar and matrix templates, parameters and coordinate functions, orthogonal grids, Landau projection, analytical spectrum, and Builder fill"
+actual_result = "104 source tests passed; SymPy is a thin expression frontend over the Rust-native ordered stencil and Landau ladder cores, and generated models use the Rust-backed Kwant Builder"
+status = "implemented"
 
 [[interface]]
 name = "deterministic random-access variates"

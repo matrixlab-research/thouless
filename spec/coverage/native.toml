@@ -55,6 +55,13 @@ test = "src/interpolation.rs linearity, compact support, padded-border, and curr
 status = "implemented"
 
 [[capability]]
+id = "continuum.finite_difference"
+description = "Symbolic-frontend-independent centered finite-difference stencils for ordered coefficient and momentum products, plus truncated Landau ladder matrix elements"
+native_api = "thouless::continuum::{finite_difference_stencil,landau_ladder_coefficient,DifferentialFactor,DifferentialStencilTerm,ShiftedCoefficient,RationalShift}"
+test = "src/continuum.rs nearest-neighbor grid shortening, half-grid divergence-form, operator ordering, Landau truncation, and magnetic-field orientation properties plus complete pinned Kwant continuum common, discretizer, and Landau-level modules"
+status = "implemented"
+
+[[capability]]
 id = "geometry.reciprocal_sampling"
 description = "Metric-aware reciprocal paths and meshes"
 native_api = "thouless::geometry::ReciprocalPath"
@@ -89,8 +96,8 @@ issue = "https://github.com/matrixlab-research/thouless/issues/3"
 [[capability]]
 id = "transport.steady_state"
 description = "Leads, modes, self-energies, Green functions, scattering, and local observables"
-native_api = "thouless::transport::{LeadContact,surface_green_function,solve_open_system}"
-test = "tests/native_transport.rs and single-/multi-channel Kwant transport compatibility contracts"
+native_api = "thouless::transport::{LeadContact,surface_green_function,open_system_self_energies,solve_open_system}"
+test = "tests/native_transport.rs and single-/multi-channel Kwant transport compatibility contracts, including the pinned quantum Hall comprehensive workflow"
 status = "partial"
 issue = "https://github.com/matrixlab-research/thouless/issues/3"
 

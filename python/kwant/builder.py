@@ -851,8 +851,28 @@ class Builder:
             if not self.symmetry.num_directions:
                 candidates = [site]
             else:
+                translation_vectors = np.asarray(
+                    [
+                        np.asarray(
+                            self.symmetry.act(
+                                tuple(
+                                    int(axis == direction)
+                                    for axis in range(
+                                        self.symmetry.num_directions
+                                    )
+                                ),
+                                site,
+                            ).pos,
+                            dtype=float,
+                        )
+                        - site_position
+                        for direction in range(
+                            self.symmetry.num_directions
+                        )
+                    ]
+                )
                 coefficients = np.linalg.lstsq(
-                    self.symmetry.periods.T,
+                    translation_vectors.T,
                     position - site_position,
                     rcond=None,
                 )[0]

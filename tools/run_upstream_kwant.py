@@ -80,6 +80,11 @@ def main() -> int:
         str(checkout / "kwant" / "graph" / "tests")
     ]
     sys.modules["kwant.graph.tests"] = graph_tests_package
+    continuum_tests_package = types.ModuleType("kwant.continuum.tests")
+    continuum_tests_package.__path__ = [
+        str(checkout / "kwant" / "continuum" / "tests")
+    ]
+    sys.modules["kwant.continuum.tests"] = continuum_tests_package
 
     test_nodes = [str(checkout / node) for node in manifest["strict_test_nodes"]]
     counter = ResultCounter()

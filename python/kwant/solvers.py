@@ -202,12 +202,12 @@ def _conductance_matrix(result):
 
 def _solution(syst, energy, args, params, channel_counts=None):
     device, leads = syst._transport_data(args=args, params=params)
-    _, narrow_selfenergies, _, _ = _core.open_system_solution(
+    narrow_selfenergies = _core.open_system_embedded_self_energies(
         device.tolist(),
         leads,
         float(energy),
     )
-    _, wider_selfenergies, _, _ = _core.open_system_solution(
+    wider_selfenergies = _core.open_system_embedded_self_energies(
         device.tolist(),
         leads,
         float(energy),

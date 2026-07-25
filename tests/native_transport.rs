@@ -1,7 +1,7 @@
 use thouless::transport::{
-    partition_shot_noise, regularize_retarded_self_energy, retarded_lead_self_energy,
-    solve_open_system, square_lattice_self_energy, surface_green_function, LeadContact,
-    SurfaceGreenOptions,
+    open_system_self_energies, partition_shot_noise, regularize_retarded_self_energy,
+    retarded_lead_self_energy, solve_open_system, square_lattice_self_energy,
+    surface_green_function, LeadContact, SurfaceGreenOptions,
 };
 use thouless::{Complex64, ComplexMatrix};
 
@@ -116,13 +116,11 @@ fn matched_one_site_device_has_unit_ballistic_transmission() {
     let hopping = ComplexMatrix::scalar(Complex64::new(-1.0, 0.0));
     let coupling = ComplexMatrix::scalar(Complex64::new(-1.0, 0.0));
     let contact = LeadContact::new(onsite.clone(), hopping, coupling).unwrap();
-    let solution = solve_open_system(
-        &onsite,
-        &[contact.clone(), contact],
-        0.0,
-        Default::default(),
-    )
-    .unwrap();
+    let contacts = [contact.clone(), contact];
+    let self_energies =
+        open_system_self_energies(&onsite, &contacts, 0.0, Default::default()).unwrap();
+    let solution = solve_open_system(&onsite, &contacts, 0.0, Default::default()).unwrap();
+    assert_eq!(self_energies, solution.self_energies());
     assert!((solution.transmission(1, 0).unwrap() - 1.0).abs() < 2.0e-6);
     assert!((solution.transmission(0, 1).unwrap() - 1.0).abs() < 2.0e-6);
 }

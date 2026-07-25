@@ -468,13 +468,17 @@ fn self_energy_at_broadening(
     from_backend(&self_energy)
 }
 
-/// Solves the retarded Green function of a finite device with periodic leads.
-pub fn solve_open_system(
+/// Computes embedded retarded self-energies without factoring the finite device.
+///
+/// This is the reusable boundary-condition step of [`solve_open_system`].
+/// Callers that provide their own sparse or structured device solver can use
+/// these matrices without paying for an unnecessary dense device inverse.
+pub fn open_system_self_energies(
     device_hamiltonian: &ComplexMatrix,
     leads: &[LeadContact],
     energy: f64,
     options: SurfaceGreenOptions,
-) -> Result<ScatteringSolution, TransportError> {
+) -> Result<Vec<ComplexMatrix>, TransportError> {
     let device_count = device_hamiltonian.rows();
     if device_count == 0 || device_hamiltonian.columns() != device_count {
         return Err(TransportError::InvalidDeviceShape);
@@ -490,14 +494,6 @@ pub fn solve_open_system(
     }
 
     let mut embedded_self_energies = Vec::with_capacity(leads.len());
-    let mut broadenings = Vec::with_capacity(leads.len());
-    // The lead self-energies provide the retarded boundary condition. The
-    // finite device must not receive the surface-decimation broadening again:
-    // doing so would introduce artificial absorption proportional to device
-    // length and violate current conservation.
-    let mut inverse_green = DMatrix::<Complex64>::identity(device_count, device_count)
-        * Complex64::new(energy, 0.0)
-        - to_backend(device_hamiltonian);
     for lead in leads {
         let surface = surface_green_function(
             lead.cell_hamiltonian(),
@@ -507,9 +503,33 @@ pub fn solve_open_system(
         )?;
         let coupling = to_backend(lead.coupling());
         let self_energy = &coupling * to_backend(&surface) * coupling.adjoint();
+        embedded_self_energies.push(from_backend(&self_energy)?);
+    }
+    Ok(embedded_self_energies)
+}
+
+/// Solves the retarded Green function of a finite device with periodic leads.
+pub fn solve_open_system(
+    device_hamiltonian: &ComplexMatrix,
+    leads: &[LeadContact],
+    energy: f64,
+    options: SurfaceGreenOptions,
+) -> Result<ScatteringSolution, TransportError> {
+    let device_count = device_hamiltonian.rows();
+    let embedded_self_energies =
+        open_system_self_energies(device_hamiltonian, leads, energy, options)?;
+    let mut broadenings = Vec::with_capacity(leads.len());
+    // The lead self-energies provide the retarded boundary condition. The
+    // finite device must not receive the surface-decimation broadening again:
+    // doing so would introduce artificial absorption proportional to device
+    // length and violate current conservation.
+    let mut inverse_green = DMatrix::<Complex64>::identity(device_count, device_count)
+        * Complex64::new(energy, 0.0)
+        - to_backend(device_hamiltonian);
+    for self_energy in &embedded_self_energies {
+        let self_energy = to_backend(self_energy);
         inverse_green -= &self_energy;
         let broadening = (self_energy.clone() - self_energy.adjoint()) * Complex64::new(0.0, 1.0);
-        embedded_self_energies.push(from_backend(&self_energy)?);
         broadenings.push(from_backend(&broadening)?);
     }
     let retarded_green = inverse_green

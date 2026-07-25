@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bands;
+pub mod continuum;
 pub mod decomposition;
 pub mod differentiation;
 pub mod digest;

@@ -1,6 +1,6 @@
 """Kwant linear-algebra compatibility modules."""
 
-from . import lll
+from . import lll, mumps
 from .decomp_schur import (
     convert_r2c_gen_schur,
     convert_r2c_schur,
@@ -19,6 +19,7 @@ __all__ = [
     "evecs_from_schur",
     "gen_schur",
     "lll",
+    "mumps",
     "order_gen_schur",
     "order_schur",
     "schur",

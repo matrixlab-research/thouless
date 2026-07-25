@@ -9,10 +9,10 @@ license = "BSD-2-Clause"
 test_root = "kwant"
 test_modules = 24
 static_test_functions = 241
-collection_status = "blocked"
-collection_blocker = "The source test suite imports compiled Cython extensions before collection."
-strict_tests = 289
-strict_passes = 289
+collection_status = "complete"
+collected_tests = 398
+strict_tests = 398
+strict_passes = 398
 strict_skips = 0
 strict_test_nodes = [
   "kwant/tests/test_lattice.py::test_closest",
@@ -119,5 +119,10 @@ strict_test_nodes = [
   "kwant/tests/test_wraparound.py",
   "kwant/tests/test_plotter.py",
   "kwant/tests/test_qsymm.py",
+  "kwant/continuum/tests/test_common.py",
+  "kwant/continuum/tests/test_discretizer.py",
+  "kwant/continuum/tests/test_landau_levels.py",
+  "kwant/tests/test_comprehensive.py",
+  "kwant/linalg/tests/test_mumps.py",
 ]
 gap_issue = "https://github.com/matrixlab-research/thouless/issues/5"

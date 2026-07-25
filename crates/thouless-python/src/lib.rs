@@ -2,6 +2,9 @@ use pyo3::create_exception;
 use pyo3::exceptions::{PyIndexError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use thouless::bands::PeriodicBands;
+use thouless::continuum::{
+    finite_difference_stencil, landau_ladder_coefficient, DifferentialFactor,
+};
 use thouless::decomposition::{
     complexify_generalized_schur, complexify_schur, eigenvectors_from_generalized_schur,
     eigenvectors_from_schur, generalized_schur, reorder_generalized_schur, reorder_schur, schur,
@@ -53,8 +56,9 @@ use thouless::topology::{
 };
 use thouless::transform::{change_nonperiodic_vector, make_supercell, remove_orbitals};
 use thouless::transport::{
-    partition_shot_noise, regularize_retarded_self_energy, retarded_lead_self_energy,
-    solve_open_system, square_lattice_self_energy, LeadContact, SurfaceGreenOptions,
+    open_system_self_energies, partition_shot_noise, regularize_retarded_self_energy,
+    retarded_lead_self_energy, solve_open_system, square_lattice_self_energy, LeadContact,
+    SurfaceGreenOptions,
 };
 use thouless::{Complex64, ComplexMatrix};
 
@@ -91,6 +95,14 @@ type PeriodicTermInput = (MatrixRows, Vec<i64>, bool);
 type LatticeReductionOutput = (Vec<Vec<f64>>, Vec<Vec<i64>>);
 type GaugeQuadratureOutput = (Vec<Vec<f64>>, Vec<Vec<f64>>);
 type RegularFieldOutput = (Vec<f64>, Vec<usize>, usize, Vec<(f64, f64)>);
+type ContinuumStencilInput = (Option<usize>, usize, usize);
+type ContinuumCoefficientOutput = (usize, Vec<(i32, u32)>);
+type ContinuumStencilOutput = (
+    Vec<i32>,
+    Complex64,
+    Vec<u32>,
+    Vec<ContinuumCoefficientOutput>,
+);
 type SchurOutput = (MatrixRows, MatrixRows, Vec<Complex64>);
 type GeneralizedSchurOutput = (
     MatrixRows,
@@ -1704,6 +1716,34 @@ fn open_system_transmissions(
 }
 
 #[pyfunction(signature = (device_hamiltonian, leads, energy, broadening=None))]
+fn open_system_embedded_self_energies(
+    device_hamiltonian: Vec<Vec<Complex64>>,
+    leads: Vec<LeadInput>,
+    energy: f64,
+    broadening: Option<f64>,
+) -> PyResult<Vec<Vec<Vec<Complex64>>>> {
+    let device_hamiltonian = matrix_from_rows(device_hamiltonian)?;
+    let leads = leads
+        .into_iter()
+        .map(|(cell, hopping, coupling)| {
+            LeadContact::new(
+                matrix_from_rows(cell)?,
+                matrix_from_rows(hopping)?,
+                matrix_from_rows(coupling)?,
+            )
+            .map_err(value_error)
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let mut options = SurfaceGreenOptions::default();
+    if let Some(broadening) = broadening {
+        options.broadening = broadening;
+    }
+    open_system_self_energies(&device_hamiltonian, &leads, energy, options)
+        .map(|values| values.iter().map(matrix_to_rows).collect())
+        .map_err(value_error)
+}
+
+#[pyfunction(signature = (device_hamiltonian, leads, energy, broadening=None))]
 fn open_system_solution(
     device_hamiltonian: Vec<Vec<Complex64>>,
     leads: Vec<LeadInput>,
@@ -2237,6 +2277,63 @@ fn interpolate_current_field(
     .map_err(value_error)
 }
 
+#[pyfunction]
+fn continuum_finite_difference_stencil(
+    dimension: usize,
+    factors: Vec<ContinuumStencilInput>,
+) -> PyResult<Vec<ContinuumStencilOutput>> {
+    let factors = factors
+        .into_iter()
+        .map(|(axis, value, power)| {
+            if let Some(axis) = axis {
+                Ok(DifferentialFactor::Momentum { axis, power })
+            } else if power == 1 {
+                Ok(DifferentialFactor::Coefficient(value))
+            } else {
+                Err(PyValueError::new_err(
+                    "coefficient factors must have unit descriptor power",
+                ))
+            }
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    finite_difference_stencil(dimension, &factors)
+        .map(|terms| {
+            terms
+                .into_iter()
+                .map(|term| {
+                    (
+                        term.wave_offset().to_vec(),
+                        term.weight(),
+                        term.inverse_spacing_powers().to_vec(),
+                        term.coefficients()
+                            .iter()
+                            .map(|coefficient| {
+                                (
+                                    coefficient.id(),
+                                    coefficient
+                                        .shifts()
+                                        .iter()
+                                        .map(|shift| (shift.numerator(), shift.denominator()))
+                                        .collect(),
+                                )
+                            })
+                            .collect(),
+                    )
+                })
+                .collect()
+        })
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn continuum_landau_ladder_coefficient(
+    ladder_powers: Vec<i32>,
+    initial_level: usize,
+    magnetic_field: f64,
+) -> PyResult<f64> {
+    landau_ladder_coefficient(&ladder_powers, initial_level, magnetic_field).map_err(value_error)
+}
+
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add(
@@ -2308,6 +2405,10 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(momentum_derivatives, module)?)?;
     module.add_function(wrap_pyfunction!(finite_difference, module)?)?;
     module.add_function(wrap_pyfunction!(open_system_transmissions, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        open_system_embedded_self_energies,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(open_system_solution, module)?)?;
     module.add_function(wrap_pyfunction!(wilson_phase, module)?)?;
     module.add_function(wrap_pyfunction!(berry_flux, module)?)?;
@@ -2343,5 +2444,13 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(gauge_peierls_phases, module)?)?;
     module.add_function(wrap_pyfunction!(interpolate_density_field, module)?)?;
     module.add_function(wrap_pyfunction!(interpolate_current_field, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        continuum_finite_difference_stencil,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        continuum_landau_ladder_coefficient,
+        module
+    )?)?;
     Ok(())
 }
