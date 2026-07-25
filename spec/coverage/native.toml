@@ -87,6 +87,13 @@ test = "src/lattice_reduction.rs property tests, repository Voronoi contract, an
 status = "implemented"
 
 [[capability]]
+id = "graph.compressed"
+description = "Mutable directed graph assembly and immutable compressed outgoing and incoming adjacency"
+native_api = "thouless::graph::{DirectedGraphBuilder,CompressedGraph,CompressionOptions}"
+test = "src/graph.rs property tests, repository large-graph contract, and complete pinned Kwant graph core module"
+status = "implemented"
+
+[[capability]]
 id = "validation.held_out"
 description = "Evaluator-owned tests on unseen models and workflows"
 native_api = "not applicable"

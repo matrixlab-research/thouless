@@ -1,7 +1,11 @@
-use pyo3::exceptions::PyValueError;
+use pyo3::create_exception;
+use pyo3::exceptions::{PyIndexError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use thouless::differentiation::{finite_difference_uniform, DifferenceScheme};
 use thouless::geometry::ReciprocalPath;
+use thouless::graph::{
+    CompressedGraph, CompressionOptions, DirectedEdge, DirectedGraphBuilder, GraphError, NodeId,
+};
 use thouless::lattice_reduction::{
     closest_lattice_vectors, gram_schmidt, gram_schmidt_coefficient, is_c_reduced, lll_reduce,
     voronoi_neighbors,
@@ -18,6 +22,10 @@ use thouless::topology::{
 use thouless::transform::{change_nonperiodic_vector, make_supercell, remove_orbitals};
 use thouless::transport::{solve_open_system, LeadContact, SurfaceGreenOptions};
 use thouless::{Complex64, ComplexMatrix};
+
+create_exception!(thouless_python, NodeDoesNotExistError, PyIndexError);
+create_exception!(thouless_python, EdgeDoesNotExistError, PyIndexError);
+create_exception!(thouless_python, DisabledFeatureError, PyRuntimeError);
 
 type HoppingInput = (usize, usize, Vec<i32>, Vec<Vec<Complex64>>);
 type LeadInput = (
@@ -52,6 +60,236 @@ type DiscreteSymmetryOutput = (
 
 fn value_error(error: impl std::fmt::Display) -> PyErr {
     PyValueError::new_err(error.to_string())
+}
+
+fn graph_error(error: GraphError) -> PyErr {
+    match error {
+        GraphError::NodeDoesNotExist(_) => NodeDoesNotExistError::new_err(error.to_string()),
+        GraphError::EdgeDoesNotExist => EdgeDoesNotExistError::new_err(error.to_string()),
+        GraphError::FeatureDisabled(_) => DisabledFeatureError::new_err(error.to_string()),
+        GraphError::NegativeNodesDisabled
+        | GraphError::DoublyDanglingEdge
+        | GraphError::NodeCountCannotDecrease { .. }
+        | GraphError::ReverseIndexRequiredForDanglingTail => {
+            PyValueError::new_err(error.to_string())
+        }
+    }
+}
+
+fn graph_index(value: i64) -> Result<usize, GraphError> {
+    usize::try_from(value).map_err(|_| GraphError::EdgeDoesNotExist)
+}
+
+#[pyclass(name = "_GraphBuilder")]
+struct PyGraphBuilder {
+    inner: DirectedGraphBuilder,
+}
+
+#[pymethods]
+impl PyGraphBuilder {
+    #[new]
+    #[pyo3(signature = (allow_negative_nodes=false))]
+    fn new(allow_negative_nodes: bool) -> Self {
+        Self {
+            inner: if allow_negative_nodes {
+                DirectedGraphBuilder::allowing_dangling_nodes()
+            } else {
+                DirectedGraphBuilder::new()
+            },
+        }
+    }
+
+    #[getter]
+    fn allow_negative_nodes(&self) -> bool {
+        self.inner.allows_dangling_nodes()
+    }
+
+    #[getter]
+    fn num_nodes(&self) -> usize {
+        self.inner.node_count()
+    }
+
+    #[setter]
+    fn set_num_nodes(&mut self, value: i64) -> PyResult<()> {
+        let value = usize::try_from(value)
+            .map_err(|_| PyValueError::new_err("number of nodes cannot be negative"))?;
+        self.inner.set_node_count(value).map_err(graph_error)
+    }
+
+    fn reserve(&mut self, capacity: usize) {
+        self.inner
+            .reserve_edges(capacity.saturating_sub(self.inner.edge_count()));
+    }
+
+    fn add_edge(&mut self, tail: NodeId, head: NodeId) -> PyResult<usize> {
+        self.inner
+            .add_edge(DirectedEdge::new(tail, head))
+            .map_err(graph_error)
+    }
+
+    fn add_edges(&mut self, edges: Vec<(NodeId, NodeId)>) -> PyResult<usize> {
+        self.inner
+            .extend_edges(
+                edges
+                    .into_iter()
+                    .map(|(tail, head)| DirectedEdge::new(tail, head)),
+            )
+            .map_err(graph_error)
+    }
+
+    #[pyo3(signature = (
+        twoway=false,
+        edge_nr_translation=false,
+        allow_lost_edges=false
+    ))]
+    fn compressed(
+        &self,
+        twoway: bool,
+        edge_nr_translation: bool,
+        allow_lost_edges: bool,
+    ) -> PyResult<PyCompressedGraph> {
+        self.inner
+            .compress(CompressionOptions {
+                reverse_index: twoway,
+                edge_number_map: edge_nr_translation,
+                allow_discarded_edges: allow_lost_edges,
+            })
+            .map(|inner| PyCompressedGraph { inner })
+            .map_err(graph_error)
+    }
+
+    fn edges(&self) -> Vec<(NodeId, NodeId)> {
+        self.inner
+            .edges()
+            .iter()
+            .map(|edge| (edge.tail(), edge.head()))
+            .collect()
+    }
+
+    fn dot(&self) -> String {
+        let mut result = String::from("digraph g {\n");
+        for edge in self.inner.edges() {
+            result.push_str(&format!("  {} -> {};\n", edge.tail(), edge.head()));
+        }
+        result.push_str("}\n");
+        result
+    }
+}
+
+#[pyclass(name = "_CompressedGraph")]
+struct PyCompressedGraph {
+    inner: CompressedGraph,
+}
+
+#[pymethods]
+impl PyCompressedGraph {
+    #[getter]
+    fn twoway(&self) -> bool {
+        self.inner.has_reverse_index()
+    }
+
+    #[getter]
+    fn edge_nr_translation(&self) -> bool {
+        self.inner.has_edge_number_map()
+    }
+
+    #[getter]
+    fn num_nodes(&self) -> usize {
+        self.inner.node_count()
+    }
+
+    #[getter]
+    fn num_edges(&self) -> usize {
+        self.inner.edge_count()
+    }
+
+    #[getter]
+    fn num_px_edges(&self) -> usize {
+        self.inner.outgoing_edge_count()
+    }
+
+    #[getter]
+    fn num_xp_edges(&self) -> usize {
+        self.inner.incoming_edge_count()
+    }
+
+    fn has_dangling_edges(&self) -> bool {
+        self.inner.has_dangling_edges()
+    }
+
+    fn out_neighbors(&self, node: NodeId) -> PyResult<Vec<NodeId>> {
+        self.inner
+            .outgoing_neighbors(node)
+            .map(<[NodeId]>::to_vec)
+            .map_err(graph_error)
+    }
+
+    fn out_edge_ids(&self, node: NodeId) -> PyResult<Vec<usize>> {
+        self.inner
+            .outgoing_edge_ids(node)
+            .map(|edge_ids| edge_ids.collect())
+            .map_err(graph_error)
+    }
+
+    fn in_neighbors(&self, node: NodeId) -> PyResult<Vec<NodeId>> {
+        self.inner
+            .incoming_neighbors(node)
+            .map(<[NodeId]>::to_vec)
+            .map_err(graph_error)
+    }
+
+    fn in_edge_ids(&self, node: NodeId) -> PyResult<Vec<usize>> {
+        self.inner
+            .incoming_edge_ids(node)
+            .map(<[usize]>::to_vec)
+            .map_err(graph_error)
+    }
+
+    fn has_edge(&self, tail: NodeId, head: NodeId) -> PyResult<bool> {
+        self.inner.contains_edge(tail, head).map_err(graph_error)
+    }
+
+    fn edge_id(&self, edge_number: i64) -> PyResult<usize> {
+        self.inner
+            .edge_id_from_number(graph_index(edge_number).map_err(graph_error)?)
+            .map_err(graph_error)
+    }
+
+    fn first_edge_id(&self, tail: NodeId, head: NodeId) -> PyResult<usize> {
+        self.inner.first_edge_id(tail, head).map_err(graph_error)
+    }
+
+    fn all_edge_ids(&self, tail: NodeId, head: NodeId) -> PyResult<Vec<usize>> {
+        self.inner.all_edge_ids(tail, head).map_err(graph_error)
+    }
+
+    fn tail(&self, edge_id: i64) -> PyResult<Option<NodeId>> {
+        self.inner
+            .tail(graph_index(edge_id).map_err(graph_error)?)
+            .map_err(graph_error)
+    }
+
+    fn head(&self, edge_id: i64) -> PyResult<NodeId> {
+        self.inner
+            .head(graph_index(edge_id).map_err(graph_error)?)
+            .map_err(graph_error)
+    }
+
+    fn edges(&self) -> Vec<(NodeId, NodeId)> {
+        self.inner
+            .edges()
+            .map(|edge| (edge.tail(), edge.head()))
+            .collect()
+    }
+
+    fn dot(&self) -> String {
+        let mut result = String::from("digraph g {\n");
+        for edge in self.inner.edges() {
+            result.push_str(&format!("  {} -> {};\n", edge.tail(), edge.head()));
+        }
+        result.push_str("}\n");
+        result
+    }
 }
 
 fn symmetry_class(name: &str) -> PyResult<SymmetryClass> {
@@ -824,6 +1062,20 @@ fn lattice_voronoi(
 
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add(
+        "NodeDoesNotExistError",
+        module.py().get_type::<NodeDoesNotExistError>(),
+    )?;
+    module.add(
+        "EdgeDoesNotExistError",
+        module.py().get_type::<EdgeDoesNotExistError>(),
+    )?;
+    module.add(
+        "DisabledFeatureError",
+        module.py().get_type::<DisabledFeatureError>(),
+    )?;
+    module.add_class::<PyGraphBuilder>()?;
+    module.add_class::<PyCompressedGraph>()?;
     module.add_function(wrap_pyfunction!(hamiltonian, module)?)?;
     module.add_function(wrap_pyfunction!(eigensystem, module)?)?;
     module.add_function(wrap_pyfunction!(remove_model_orbitals, module)?)?;

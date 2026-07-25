@@ -107,7 +107,7 @@ PYTHONPATH=python python -m pytest -q -ra compat-tests
 ```
 
 The Kwant ballistic smoke contract executes through the Rust transport core,
-and a strict 99-test upstream slice validates the compatibility layer;
+and a strict 107-test upstream slice validates the compatibility layer;
 remaining Kwant gaps are tracked in issue #5. The strict PythTB runner executes
 all 98 collected source tests through the repository-built extension. Broader
 PythTB public-interface inventory work remains tracked in issue #4. A skip

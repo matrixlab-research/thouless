@@ -62,6 +62,12 @@ def main() -> int:
         str(checkout / "kwant" / "linalg" / "tests")
     ]
     sys.modules["kwant.linalg.tests"] = linalg_tests_package
+    kwant.graph.__path__ = []
+    graph_tests_package = types.ModuleType("kwant.graph.tests")
+    graph_tests_package.__path__ = [
+        str(checkout / "kwant" / "graph" / "tests")
+    ]
+    sys.modules["kwant.graph.tests"] = graph_tests_package
 
     test_nodes = [str(checkout / node) for node in manifest["strict_test_nodes"]]
     return pytest.main(["-q", "-ra", *test_nodes])

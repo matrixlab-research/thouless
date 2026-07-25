@@ -215,3 +215,35 @@ def test_lattice_reduction_exposes_voronoi_geometry() -> None:
         (1, 0),
         (1, 1),
     }
+
+
+def test_compressed_graph_generalizes_to_parallel_and_dangling_edges() -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    import pickle
+
+    node_count = 257
+    edges = [
+        (node, (37 * node + offset) % node_count)
+        for node in range(node_count)
+        for offset in range(4)
+    ]
+    edges.extend([(17, 19), (17, 19), (41, -3), (-7, 43)])
+
+    graph = kwant.graph.Graph(allow_negative_nodes=True)
+    graph.num_nodes = node_count
+    assert graph.add_edges(edges) == 0
+    compressed = graph.compressed(twoway=True, edge_nr_translation=True)
+
+    assert compressed.num_nodes == node_count
+    assert compressed.num_edges == len(edges)
+    assert tuple(compressed.all_edge_ids(17, 19))
+    assert compressed.has_edge(41, -3)
+    assert compressed.has_edge(-7, 43)
+    assert compressed.tail(compressed.edge_id(len(edges) - 1)) is None
+    with pytest.raises(kwant.graph.EdgeDoesNotExistError):
+        compressed.head(-1)
+
+    restored = pickle.loads(pickle.dumps(compressed))
+    assert restored.__getstate__() == compressed.__getstate__()
+    assert list(restored) == list(compressed)
+    assert tuple(restored.in_neighbors(43)) == tuple(compressed.in_neighbors(43))

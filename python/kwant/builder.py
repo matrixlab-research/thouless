@@ -12,6 +12,7 @@ from functools import total_ordering, update_wrapper
 import numpy as np
 
 from thouless import _core
+from .graph import Graph as _MutableGraph
 
 
 class UserCodeError(RuntimeError):
@@ -468,28 +469,25 @@ class ModesLead:
         return stabilized.selfenergy()
 
 
-class _Graph:
-    def __init__(self, node_count, undirected_edges):
-        self.num_nodes = int(node_count)
-        self._edges = []
-        self._edge_ids = {}
-        for first, second in undirected_edges:
-            for edge in ((first, second), (second, first)):
-                self._edge_ids[edge] = len(self._edges)
-                self._edges.append(edge)
-        self.num_edges = len(self._edges)
+def _make_finalized_graph(node_count, undirected_edges, edge_values):
+    graph = _MutableGraph()
+    graph.num_nodes = int(node_count)
+    directed_edges = []
+    insertion_values = []
+    for (first, second), value in zip(
+        undirected_edges,
+        edge_values,
+        strict=True,
+    ):
+        directed_edges.extend(((first, second), (second, first)))
+        insertion_values.extend(((value, None), (Other, None)))
+    graph.add_edges(directed_edges)
 
-    def __iter__(self):
-        return iter(self._edges)
-
-    def out_neighbors(self, node):
-        return iter(second for first, second in self._edges if first == node)
-
-    def has_edge(self, first, second):
-        return (first, second) in self._edge_ids
-
-    def first_edge_id(self, first, second):
-        return self._edge_ids[(first, second)]
+    indexed = graph.compressed(edge_nr_translation=True)
+    ordered_values = [None] * len(insertion_values)
+    for edge_number, value in enumerate(insertion_values):
+        ordered_values[indexed.edge_id(edge_number)] = value
+    return graph.compressed(), ordered_values
 
 
 def _site_ranges(sites):
@@ -1258,14 +1256,14 @@ class InfiniteSystem:
                 ) from error
             undirected_edges.append(edge)
             edge_values.append(value)
-        self.graph = _Graph(len(self.sites), undirected_edges)
+        self.graph, self.hoppings = _make_finalized_graph(
+            len(self.sites),
+            undirected_edges,
+            edge_values,
+        )
         self.onsites = [
             (builder._sites[site], None) for site in self.sites[: self.cell_size]
         ]
-        self.hoppings = []
-        for value in edge_values:
-            self.hoppings.append((value, None))
-            self.hoppings.append((Other, None))
 
     def hamiltonian(self, first, second, *args, params=None):
         if args and params is not None:
@@ -1499,15 +1497,18 @@ class FiniteSystem:
             for first, second in builder.hoppings()
             if first in self.id_by_site and second in self.id_by_site
         ]
-        self.graph = _Graph(len(self.sites), undirected_edges)
+        edge_values = [
+            value
+            for (first, second), value in builder.hopping_value_pairs()
+            if first in self.id_by_site and second in self.id_by_site
+        ]
+        self.graph, self.hoppings = _make_finalized_graph(
+            len(self.sites),
+            undirected_edges,
+            edge_values,
+        )
         self.site_ranges = _site_ranges(self.sites)
         self.onsites = [(builder._sites[site], None) for site in self.sites]
-        self.hoppings = []
-        for (first, second), value in builder.hopping_value_pairs():
-            if first not in self.id_by_site or second not in self.id_by_site:
-                continue
-            self.hoppings.append((value, None))
-            self.hoppings.append((Other, None))
         finalized_leads = []
         lead_interfaces = []
         lead_paddings = []

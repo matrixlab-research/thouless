@@ -11,7 +11,7 @@ test_modules = 24
 static_test_functions = 241
 collection_status = "blocked"
 collection_blocker = "The source test suite imports compiled Cython extensions before collection."
-strict_tests = 99
+strict_tests = 107
 strict_test_nodes = [
   "kwant/tests/test_lattice.py::test_closest",
   "kwant/tests/test_lattice.py::test_general",
@@ -85,5 +85,6 @@ strict_test_nodes = [
   "kwant/physics/tests/test_symmetry.py",
   "kwant/tests/test_rmt.py",
   "kwant/linalg/tests/test_lll.py",
+  "kwant/graph/tests/test_core.py",
 ]
 gap_issue = "https://github.com/matrixlab-research/thouless/issues/5"

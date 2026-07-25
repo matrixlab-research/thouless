@@ -129,6 +129,22 @@ actual_result = "2 source tests passed"
 status = "implemented"
 
 [[interface]]
+name = "compressed directed graphs"
+source_entries = [
+  "graph.Graph",
+  "graph.CGraph",
+  "graph.NodeDoesNotExistError",
+  "graph.EdgeDoesNotExistError",
+  "graph.DisabledFeatureError",
+]
+compat_entry = "python/kwant/graph"
+rust_capability = "graph.compressed"
+public_test = "repository large graph, parallel-edge, dangling-node, reverse-index, and serialization contract"
+source_test = "complete pinned graph core module"
+actual_result = "8 source tests passed"
+status = "implemented"
+
+[[interface]]
 name = "matrix decompositions and optional sparse backends"
 source_entries = [
   "linalg.schur",
