@@ -70,11 +70,10 @@ status = "implemented"
 
 [[capability]]
 id = "geometry.topology"
-description = "Berry geometry, Wilson loops, and topological invariants"
-native_api = "thouless::topology link, Wilson-loop, principal unitary-power, connection, flux, first-Chern, and Kubo second-Chern functions"
-test = "tests/native_topology.rs, including holonomy-root reconstruction, and pinned PythTB topology/link tests"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/2"
+description = "Berry geometry, Wilson loops, reduced polarization, hybrid Wannier centers, first and second Chern invariants, and two-dimensional time-reversal Z2 flow"
+native_api = "thouless::topology link, Wilson-loop, hybrid-Wannier, polarization, largest-gap Z2, principal unitary-power, connection, flux, first-Chern, and Kubo second-Chern functions"
+test = "tests/native_topology.rs gauge and basis invariants, atomic polarization, analytic tensors, quantized first and second Chern models, synthetic even/odd partner switching, mesh-stable quantum-spin-Hall Z2 classification, holonomy-root reconstruction, and pinned PythTB topology/link tests"
+status = "implemented"
 
 [[capability]]
 id = "geometry.quantum_geometric_tensor"

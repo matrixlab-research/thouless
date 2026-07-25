@@ -672,7 +672,7 @@ impl UniformGridChernNumbers {
 }
 
 /// Errors raised while evaluating a Chern number on a uniform grid.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ChernNumberError {
     /// The mesh does not provide one size per periodic direction.
@@ -917,7 +917,7 @@ fn ravel_index(index: &[usize], shape: &[usize]) -> usize {
 fn occupied_frame(
     eigenvectors: &ComplexMatrix,
     occupied_states: &[usize],
-) -> Result<ComplexMatrix, ChernNumberError> {
+) -> Result<ComplexMatrix, TopologyError> {
     let basis_count = eigenvectors.rows();
     let mut values = Vec::with_capacity(occupied_states.len() * basis_count);
     for &state in occupied_states {
@@ -930,7 +930,7 @@ fn occupied_frame(
         }
     }
     ComplexMatrix::new(occupied_states.len(), basis_count, values)
-        .map_err(|_| TopologyError::IncompatibleFrames.into())
+        .map_err(|_| TopologyError::IncompatibleFrames)
 }
 
 fn sampled_frame(
@@ -946,6 +946,14 @@ fn sampled_frame(
     if crossed_axes.is_empty() {
         return Ok(frame.clone());
     }
+    Ok(boundary_shifted_frame(model, frame, crossed_axes)?)
+}
+
+fn boundary_shifted_frame(
+    model: &TightBindingModel,
+    frame: &ComplexMatrix,
+    crossed_axes: &[usize],
+) -> Result<ComplexMatrix, TopologyError> {
     let mut basis_phases = Vec::with_capacity(model.state_count());
     for orbital in model.orbitals() {
         let phase_argument = crossed_axes
@@ -965,7 +973,7 @@ fn sampled_frame(
         }
     }
     ComplexMatrix::new(frame.rows(), frame.columns(), values)
-        .map_err(|_| TopologyError::IncompatibleFrames.into())
+        .map_err(|_| TopologyError::IncompatibleFrames)
 }
 
 fn offset_frame(
@@ -1004,6 +1012,430 @@ fn offset_frame_pair(
         }
     }
     sampled_frame(model, frames, samples, &index, &crossed)
+}
+
+/// Errors raised while evaluating hybrid Wannier centers on a model loop.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HybridWannierError {
+    /// A loop needs at least two samples before its closure frame.
+    InsufficientLoopSamples,
+    /// The fixed momentum has the wrong periodic dimension or is nonfinite.
+    InvalidMomentum,
+    /// The loop axis is outside the periodic momentum space.
+    InvalidLoopAxis,
+    /// At least one occupied state is required.
+    EmptyOccupiedSubspace,
+    /// An occupied-state index is invalid or repeated.
+    InvalidOccupiedState,
+    /// The selected subspace touches its complement on the sampled loop.
+    ClosedSubspaceGap {
+        /// Zero-based momentum sample where the gap closes.
+        sample: usize,
+    },
+    /// Model assembly or diagonalization failed.
+    Model(ModelSolveError),
+    /// A sampled overlap or Wilson-loop operation failed.
+    Topology(TopologyError),
+}
+
+impl std::fmt::Display for HybridWannierError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InsufficientLoopSamples => {
+                write!(
+                    formatter,
+                    "a hybrid-Wannier loop requires at least two samples"
+                )
+            }
+            Self::InvalidMomentum => write!(
+                formatter,
+                "hybrid-Wannier fixed momentum must match the periodic dimension and be finite"
+            ),
+            Self::InvalidLoopAxis => {
+                write!(
+                    formatter,
+                    "hybrid-Wannier loop axis is outside the periodic space"
+                )
+            }
+            Self::EmptyOccupiedSubspace => {
+                write!(formatter, "hybrid Wannier centers require occupied states")
+            }
+            Self::InvalidOccupiedState => {
+                write!(formatter, "occupied states must be unique valid indices")
+            }
+            Self::ClosedSubspaceGap { sample } => write!(
+                formatter,
+                "selected and complementary bands touch at loop sample {sample}"
+            ),
+            Self::Model(error) => error.fmt(formatter),
+            Self::Topology(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for HybridWannierError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Model(error) => Some(error),
+            Self::Topology(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<ModelSolveError> for HybridWannierError {
+    fn from(error: ModelSolveError) -> Self {
+        Self::Model(error)
+    }
+}
+
+impl From<TopologyError> for HybridWannierError {
+    fn from(error: TopologyError) -> Self {
+        Self::Topology(error)
+    }
+}
+
+/// Returns hybrid Wannier centers for one closed reciprocal-space loop.
+///
+/// `fixed_momentum` supplies all reduced coordinates; the selected loop
+/// component is replaced by a uniform sampling of `[0, 1)`. The closure frame
+/// includes the localized-orbital embedding gauge. Centers are sorted in the
+/// half-open reduced cell `[0, 1)`.
+pub fn hybrid_wannier_centers_on_loop(
+    model: &TightBindingModel,
+    loop_sample_count: usize,
+    loop_axis: usize,
+    fixed_momentum: &[f64],
+    occupied_states: &[usize],
+) -> Result<Vec<f64>, HybridWannierError> {
+    let periodic_dimension = model.lattice().periodic_dimension();
+    if loop_sample_count < 2 {
+        return Err(HybridWannierError::InsufficientLoopSamples);
+    }
+    if fixed_momentum.len() != periodic_dimension
+        || fixed_momentum.iter().any(|value| !value.is_finite())
+    {
+        return Err(HybridWannierError::InvalidMomentum);
+    }
+    if loop_axis >= periodic_dimension {
+        return Err(HybridWannierError::InvalidLoopAxis);
+    }
+    validate_hybrid_occupied_states(model, occupied_states)?;
+
+    let occupied_set = occupied_states
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    let empty_states = (0..model.state_count())
+        .filter(|state| !occupied_set.contains(state))
+        .collect::<Vec<_>>();
+    let mut frames = Vec::with_capacity(loop_sample_count + 1);
+    for sample in 0..loop_sample_count {
+        let mut momentum = fixed_momentum.to_vec();
+        momentum[loop_axis] = sample as f64 / loop_sample_count as f64;
+        let eigensystem = model.eigensystem(&momentum)?;
+        if occupied_states.iter().any(|occupied| {
+            empty_states.iter().any(|empty| {
+                (eigensystem.eigenvalues()[*occupied] - eigensystem.eigenvalues()[*empty]).abs()
+                    <= 1.0e-10
+            })
+        }) {
+            return Err(HybridWannierError::ClosedSubspaceGap { sample });
+        }
+        frames.push(occupied_frame(eigensystem.eigenvectors(), occupied_states)?);
+    }
+    frames.push(boundary_shifted_frame(model, &frames[0], &[loop_axis])?);
+    let mut centers = wilson_loop_eigenphases(&frames)?
+        .into_iter()
+        .map(|phase| (phase / std::f64::consts::TAU).rem_euclid(1.0))
+        .collect::<Vec<_>>();
+    centers.sort_by(f64::total_cmp);
+    Ok(centers)
+}
+
+fn validate_hybrid_occupied_states(
+    model: &TightBindingModel,
+    occupied_states: &[usize],
+) -> Result<(), HybridWannierError> {
+    if occupied_states.is_empty() {
+        return Err(HybridWannierError::EmptyOccupiedSubspace);
+    }
+    let mut unique = std::collections::HashSet::new();
+    if occupied_states
+        .iter()
+        .any(|state| *state >= model.state_count() || !unique.insert(*state))
+    {
+        return Err(HybridWannierError::InvalidOccupiedState);
+    }
+    Ok(())
+}
+
+/// Returns geometric polarization in lattice-vector units, modulo one.
+///
+/// This is the sum of hybrid Wannier centers. Multiplication by the carrier
+/// charge and real-space lattice vector is intentionally left to the caller.
+pub fn reduced_polarization_on_loop(
+    model: &TightBindingModel,
+    loop_sample_count: usize,
+    loop_axis: usize,
+    fixed_momentum: &[f64],
+    occupied_states: &[usize],
+) -> Result<f64, HybridWannierError> {
+    Ok(hybrid_wannier_centers_on_loop(
+        model,
+        loop_sample_count,
+        loop_axis,
+        fixed_momentum,
+        occupied_states,
+    )?
+    .iter()
+    .sum::<f64>()
+    .rem_euclid(1.0))
+}
+
+/// Wilson-loop flow and its two-dimensional time-reversal `Z₂` index.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Z2Invariant {
+    value: u8,
+    crossing_count: usize,
+    wannier_centers: Vec<Vec<f64>>,
+    largest_gap_centers: Vec<f64>,
+}
+
+impl Z2Invariant {
+    /// Returns zero for the trivial class and one for the topological class.
+    #[must_use]
+    pub const fn value(&self) -> u8 {
+        self.value
+    }
+
+    /// Returns the discrete largest-gap crossing count before reduction mod 2.
+    #[must_use]
+    pub const fn crossing_count(&self) -> usize {
+        self.crossing_count
+    }
+
+    /// Returns normalized hybrid Wannier centers on every half-torus line.
+    #[must_use]
+    pub fn wannier_centers(&self) -> &[Vec<f64>] {
+        &self.wannier_centers
+    }
+
+    /// Returns the center of the largest Wannier-center gap on every line.
+    #[must_use]
+    pub fn largest_gap_centers(&self) -> &[f64] {
+        &self.largest_gap_centers
+    }
+}
+
+/// Errors raised while evaluating a two-dimensional time-reversal `Z₂` index.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Z2InvariantError {
+    /// At least two half-torus lines are required.
+    InsufficientFlowSamples,
+    /// Every line must contain the same nonzero even number of finite centers.
+    InvalidWannierCenterFlow,
+    /// Endpoint centers do not form Kramers-degenerate pairs.
+    UnpairedTimeReversalEndpoint {
+        /// Endpoint line: zero is the first and one is the last.
+        endpoint: usize,
+    },
+    /// Pairing tolerance must be finite and positive.
+    InvalidPairingTolerance,
+    /// The model must have exactly two periodic axes and a valid axis order.
+    InvalidTwoDimensionalPlane,
+    /// Hybrid-Wannier evaluation failed.
+    HybridWannier(HybridWannierError),
+}
+
+impl std::fmt::Display for Z2InvariantError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InsufficientFlowSamples => {
+                write!(formatter, "Z2 flow requires at least two half-torus lines")
+            }
+            Self::InvalidWannierCenterFlow => write!(
+                formatter,
+                "Z2 flow requires equally sized lines with a nonzero even number of finite centers"
+            ),
+            Self::UnpairedTimeReversalEndpoint { endpoint } => write!(
+                formatter,
+                "Wannier centers at time-reversal endpoint {endpoint} do not form Kramers pairs"
+            ),
+            Self::InvalidPairingTolerance => {
+                write!(
+                    formatter,
+                    "Kramers-pairing tolerance must be finite and positive"
+                )
+            }
+            Self::InvalidTwoDimensionalPlane => write!(
+                formatter,
+                "uniform Z2 evaluation requires two distinct axes spanning a two-dimensional model"
+            ),
+            Self::HybridWannier(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for Z2InvariantError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::HybridWannier(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<HybridWannierError> for Z2InvariantError {
+    fn from(error: HybridWannierError) -> Self {
+        Self::HybridWannier(error)
+    }
+}
+
+/// Computes a `Z₂` index from hybrid Wannier centers on half a torus.
+///
+/// The algorithm follows the largest-gap crossing construction: on every
+/// line it places a reference point at the center of the largest gap, then
+/// counts centers lying between consecutive reference points. The crossing
+/// parity is gauge invariant. This is the discrete construction in Appendix B
+/// of [Gresch et al.](https://arxiv.org/abs/1610.08983). Callers remain
+/// responsible for verifying convergence under denser loop and transverse
+/// sampling.
+pub fn z2_from_wannier_centers(
+    wannier_centers: &[Vec<f64>],
+    pairing_tolerance: f64,
+) -> Result<Z2Invariant, Z2InvariantError> {
+    if wannier_centers.len() < 2 {
+        return Err(Z2InvariantError::InsufficientFlowSamples);
+    }
+    if !pairing_tolerance.is_finite() || pairing_tolerance <= 0.0 {
+        return Err(Z2InvariantError::InvalidPairingTolerance);
+    }
+    let center_count = wannier_centers[0].len();
+    if center_count == 0
+        || center_count % 2 != 0
+        || wannier_centers
+            .iter()
+            .any(|line| line.len() != center_count || line.iter().any(|center| !center.is_finite()))
+    {
+        return Err(Z2InvariantError::InvalidWannierCenterFlow);
+    }
+    let normalized = wannier_centers
+        .iter()
+        .map(|line| {
+            let mut values = line
+                .iter()
+                .map(|center| center.rem_euclid(1.0))
+                .collect::<Vec<_>>();
+            values.sort_by(f64::total_cmp);
+            values
+        })
+        .collect::<Vec<_>>();
+    for (endpoint, line) in [normalized.first(), normalized.last()]
+        .into_iter()
+        .enumerate()
+    {
+        if !has_kramers_pairing(line.expect("flow endpoints exist"), pairing_tolerance) {
+            return Err(Z2InvariantError::UnpairedTimeReversalEndpoint { endpoint });
+        }
+    }
+
+    let largest_gap_centers = normalized
+        .iter()
+        .map(|line| largest_circular_gap_center(line))
+        .collect::<Vec<_>>();
+    let crossing_count = largest_gap_centers
+        .windows(2)
+        .zip(normalized.iter().skip(1))
+        .map(|(gaps, next_line)| {
+            let lower = gaps[0].min(gaps[1]);
+            let upper = gaps[0].max(gaps[1]);
+            next_line
+                .iter()
+                .filter(|center| lower <= **center && **center < upper)
+                .count()
+        })
+        .sum::<usize>();
+    Ok(Z2Invariant {
+        value: (crossing_count % 2) as u8,
+        crossing_count,
+        wannier_centers: normalized,
+        largest_gap_centers,
+    })
+}
+
+/// Samples Wilson loops on half of a two-dimensional Brillouin torus.
+pub fn z2_invariant_on_uniform_grid(
+    model: &TightBindingModel,
+    loop_sample_count: usize,
+    transverse_sample_count: usize,
+    axes: [usize; 2],
+    occupied_states: &[usize],
+    pairing_tolerance: f64,
+) -> Result<Z2Invariant, Z2InvariantError> {
+    let dimension = model.lattice().periodic_dimension();
+    let [loop_axis, transverse_axis] = axes;
+    if dimension != 2
+        || loop_axis == transverse_axis
+        || loop_axis >= dimension
+        || transverse_axis >= dimension
+    {
+        return Err(Z2InvariantError::InvalidTwoDimensionalPlane);
+    }
+    if transverse_sample_count < 2 {
+        return Err(Z2InvariantError::InsufficientFlowSamples);
+    }
+    let mut flow = Vec::with_capacity(transverse_sample_count);
+    for transverse_sample in 0..transverse_sample_count {
+        let mut momentum = vec![0.0; dimension];
+        momentum[transverse_axis] =
+            0.5 * transverse_sample as f64 / (transverse_sample_count - 1) as f64;
+        flow.push(hybrid_wannier_centers_on_loop(
+            model,
+            loop_sample_count,
+            loop_axis,
+            &momentum,
+            occupied_states,
+        )?);
+    }
+    z2_from_wannier_centers(&flow, pairing_tolerance)
+}
+
+fn largest_circular_gap_center(centers: &[f64]) -> f64 {
+    let mut largest_gap = -1.0;
+    let mut gap_start = 0.0;
+    for index in 0..centers.len() {
+        let start = centers[index];
+        let end = if index + 1 == centers.len() {
+            centers[0] + 1.0
+        } else {
+            centers[index + 1]
+        };
+        let gap = end - start;
+        if gap > largest_gap {
+            largest_gap = gap;
+            gap_start = start;
+        }
+    }
+    (gap_start + 0.5 * largest_gap).rem_euclid(1.0)
+}
+
+fn has_kramers_pairing(centers: &[f64], tolerance: f64) -> bool {
+    let direct = centers
+        .chunks_exact(2)
+        .all(|pair| circular_distance(pair[0], pair[1]) <= tolerance);
+    let cyclic = circular_distance(centers[centers.len() - 1], centers[0]) <= tolerance
+        && (1..(centers.len() - 1))
+            .step_by(2)
+            .all(|first| circular_distance(centers[first], centers[first + 1]) <= tolerance);
+    direct || cyclic
+}
+
+fn circular_distance(first: f64, second: f64) -> f64 {
+    let distance = (first - second).abs();
+    distance.min(1.0 - distance)
 }
 
 /// Computes the Abelian phase of a discrete Wilson line.

@@ -2,9 +2,9 @@ use thouless::model::{Lattice, ModelBuilder};
 use thouless::topology::{
     chern_numbers_on_uniform_grid, connection_from_link, local_chern_marker_from_hamiltonian,
     local_chern_marker_from_projector, parallel_transport_link, plaquette_flux,
-    quantum_geometric_tensor_from_hamiltonian_derivatives,
+    quantum_geometric_tensor_from_hamiltonian_derivatives, reduced_polarization_on_loop,
     second_chern_from_hamiltonian_derivatives, unitary_matrix_power, wilson_line_phase,
-    wilson_loop_eigenphases,
+    wilson_loop_eigenphases, z2_from_wannier_centers, z2_invariant_on_uniform_grid,
 };
 use thouless::{Complex64, ComplexMatrix};
 
@@ -431,6 +431,139 @@ fn kubo_second_chern_recovers_four_dimensional_dirac_topology() {
         "expected unit second Chern magnitude, got {}",
         result.value()
     );
+}
+
+fn block_diagonal(first: &ComplexMatrix, second: &ComplexMatrix) -> ComplexMatrix {
+    let dimension = first.rows();
+    let mut result = ComplexMatrix::zeros(2 * dimension, 2 * dimension);
+    for row in 0..dimension {
+        for column in 0..dimension {
+            result
+                .set(row, column, first.get(row, column).unwrap())
+                .unwrap();
+            result
+                .set(
+                    dimension + row,
+                    dimension + column,
+                    second.get(row, column).unwrap(),
+                )
+                .unwrap();
+        }
+    }
+    result
+}
+
+fn quantum_spin_hall_model(mass: f64) -> thouless::model::TightBindingModel {
+    let lattice = Lattice::new(vec![vec![1.0, 0.0], vec![0.0, 1.0]], vec![0, 1]).unwrap();
+    let mut builder = ModelBuilder::new(lattice);
+    let orbital = builder
+        .add_orbital_with_dof("spinful-orbital", [0.0, 0.0], 4)
+        .unwrap();
+    let sigma_x = ComplexMatrix::new(
+        2,
+        2,
+        vec![
+            Complex64::new(0.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+        ],
+    )
+    .unwrap();
+    let sigma_y = ComplexMatrix::new(
+        2,
+        2,
+        vec![
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, -1.0),
+            Complex64::new(0.0, 1.0),
+            Complex64::new(0.0, 0.0),
+        ],
+    )
+    .unwrap();
+    let sigma_z = ComplexMatrix::new(
+        2,
+        2,
+        vec![
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(-1.0, 0.0),
+        ],
+    )
+    .unwrap();
+    let onsite = scaled(&sigma_z, mass);
+    let up_x = add_scaled(&sigma_z, 0.5, &sigma_x, Complex64::new(0.0, -0.5));
+    let down_x = add_scaled(&sigma_z, 0.5, &sigma_x, Complex64::new(0.0, 0.5));
+    let y_hopping = add_scaled(&sigma_z, 0.5, &sigma_y, Complex64::new(0.0, -0.5));
+    builder
+        .set_onsite_block(orbital, block_diagonal(&onsite, &onsite))
+        .unwrap();
+    builder
+        .add_hopping_block(orbital, orbital, [1, 0], block_diagonal(&up_x, &down_x))
+        .unwrap();
+    builder
+        .add_hopping_block(
+            orbital,
+            orbital,
+            [0, 1],
+            block_diagonal(&y_hopping, &y_hopping),
+        )
+        .unwrap();
+    builder.build().unwrap()
+}
+
+#[test]
+fn atomic_wannier_center_is_the_reduced_polarization() {
+    let lattice = Lattice::new(vec![vec![1.0]], vec![0]).unwrap();
+    let mut builder = ModelBuilder::new(lattice);
+    let orbital = builder.add_orbital("atomic", [0.3]).unwrap();
+    builder.set_onsite(orbital, -1.0).unwrap();
+    let model = builder.build().unwrap();
+
+    let polarization = reduced_polarization_on_loop(&model, 8, 0, &[0.0], &[0]).unwrap();
+    assert!((polarization - 0.3).abs() < 1.0e-12);
+}
+
+#[test]
+fn largest_gap_flow_distinguishes_even_and_odd_partner_switching() {
+    let odd = z2_from_wannier_centers(
+        &[
+            vec![0.0, 0.0],
+            vec![0.2, 0.8],
+            vec![0.4, 0.6],
+            vec![0.5, 0.5],
+        ],
+        1.0e-10,
+    )
+    .unwrap();
+    let even = z2_from_wannier_centers(&[vec![0.0, 0.0], vec![0.1, 0.9], vec![0.0, 0.0]], 1.0e-10)
+        .unwrap();
+    assert_eq!(odd.value(), 1);
+    assert_eq!(odd.crossing_count() % 2, 1);
+    assert_eq!(even.value(), 0);
+}
+
+#[test]
+fn quantum_spin_hall_z2_is_stable_under_mesh_refinement() {
+    let topological = quantum_spin_hall_model(-1.0);
+    let coarse =
+        z2_invariant_on_uniform_grid(&topological, 31, 21, [0, 1], &[0, 1], 1.0e-7).unwrap();
+    let refined =
+        z2_invariant_on_uniform_grid(&topological, 51, 31, [0, 1], &[0, 1], 1.0e-7).unwrap();
+    let trivial = z2_invariant_on_uniform_grid(
+        &quantum_spin_hall_model(-3.0),
+        31,
+        21,
+        [0, 1],
+        &[0, 1],
+        1.0e-7,
+    )
+    .unwrap();
+
+    assert_eq!(coarse.value(), 1);
+    assert_eq!(refined.value(), 1);
+    assert_eq!(trivial.value(), 0);
 }
 
 fn scaled(matrix: &ComplexMatrix, factor: f64) -> ComplexMatrix {

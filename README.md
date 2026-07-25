@@ -16,7 +16,8 @@ The repository currently implements reusable model construction, dense
 Hermitian assembly, eigensolvers, momentum derivatives, discrete Wilson phases,
 Berry fluxes and uniform-grid Chern numbers, metric-aware reciprocal paths and
 uniform meshes with explicit quadrature measures, parallel transport,
-local-observable projection, and structure-preserving model
+hybrid Wannier centers, reduced polarization, mesh-converged time-reversal
+`Z2` classification, local-observable projection, and structure-preserving model
 transformations in Rust. It also provides discrete-symmetry validation and all
 ten Altland--Zirnbauer Gaussian and circular random-matrix ensembles through
 the native core, together with LLL lattice reduction, closest-vector search,
