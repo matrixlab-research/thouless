@@ -115,6 +115,15 @@ Prefer a minimal complete set of stable scientific abstractions over a large
 common framework. Add an abstraction only when a real workflow, invariant, or
 backend boundary requires it.
 
+The accepted cross-language target is defined in
+[`docs/native-language-api-design.md`](../docs/native-language-api-design.md).
+Maintain
+[`spec/api/thouless-native-languages.toml`](../spec/api/thouless-native-languages.toml)
+as the executable mapping from every Rust scientific capability to its target
+Rust, Python, and Julia namespaces. Python must use the PyO3 extension without
+making the private `_core` module the user API. Julia must use a versioned C ABI
+and must not require Python or C++ as an intermediate runtime.
+
 ## 5. Implement One Reusable Scientific Core
 
 Identify and implement shared:

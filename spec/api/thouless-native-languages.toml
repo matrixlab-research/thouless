@@ -1,0 +1,164 @@
+schema_version = 1
+contract_version = "0.1-draft"
+status = "design"
+description = "Target namespaces for the stable Rust, Python, and Julia scientific workflows"
+
+[languages]
+rust = "thouless"
+python = "thouless"
+julia = "Thouless"
+
+[[workflow]]
+id = "model.structure"
+rust = "thouless::model"
+python = "thouless.model"
+julia = "Thouless.Model"
+
+[[workflow]]
+id = "spectrum.periodic"
+rust = "thouless::model; thouless::spectrum"
+python = "thouless.spectrum"
+julia = "Thouless.Spectrum"
+
+[[workflow]]
+id = "spectrum.kernel_polynomial"
+rust = "thouless::linear_operator; thouless::kpm"
+python = "thouless.kpm"
+julia = "Thouless.KPM"
+
+[[workflow]]
+id = "spectrum.lead_bands"
+rust = "thouless::bands"
+python = "thouless.spectrum"
+julia = "Thouless.Spectrum"
+
+[[workflow]]
+id = "geometry.finite"
+rust = "thouless::transform"
+python = "thouless.geometry"
+julia = "Thouless.Geometry"
+
+[[workflow]]
+id = "geometry.periodic_folding"
+rust = "thouless::periodic"
+python = "thouless.geometry"
+julia = "Thouless.Geometry"
+
+[[workflow]]
+id = "visualization.regular_field"
+rust = "thouless::interpolation"
+python = "thouless.visualization"
+julia = "Thouless.Visualization"
+
+[[workflow]]
+id = "continuum.finite_difference"
+rust = "thouless::continuum"
+python = "thouless.continuum"
+julia = "Thouless.Continuum"
+
+[[workflow]]
+id = "geometry.reciprocal_sampling"
+rust = "thouless::geometry"
+python = "thouless.geometry"
+julia = "Thouless.Geometry"
+
+[[workflow]]
+id = "geometry.topology"
+rust = "thouless::topology"
+python = "thouless.topology"
+julia = "Thouless.Topology"
+
+[[workflow]]
+id = "geometry.quantum_geometric_tensor"
+rust = "thouless::topology"
+python = "thouless.topology"
+julia = "Thouless.Topology"
+
+[[workflow]]
+id = "geometry.local_chern_marker"
+rust = "thouless::topology"
+python = "thouless.topology"
+julia = "Thouless.Topology"
+
+[[workflow]]
+id = "geometry.wannier"
+rust = "thouless::wannier"
+python = "thouless.wannier"
+julia = "Thouless.Wannier"
+
+[[workflow]]
+id = "response.intrinsic"
+rust = "thouless::response"
+python = "thouless.response"
+julia = "Thouless.Response"
+
+[[workflow]]
+id = "observables.local"
+rust = "thouless::observables"
+python = "thouless.observables"
+julia = "Thouless.Observables"
+
+[[workflow]]
+id = "transport.steady_state"
+rust = "thouless::transport"
+python = "thouless.transport"
+julia = "Thouless.Transport"
+
+[[workflow]]
+id = "transport.propagating_modes"
+rust = "thouless::lead_modes"
+python = "thouless.transport"
+julia = "Thouless.Transport"
+
+[[workflow]]
+id = "transport.lead_self_energy"
+rust = "thouless::transport"
+python = "thouless.transport"
+julia = "Thouless.Transport"
+
+[[workflow]]
+id = "symmetry.discrete"
+rust = "thouless::symmetry"
+python = "thouless.symmetry"
+julia = "Thouless.Symmetry"
+
+[[workflow]]
+id = "symmetry.particle_hole_basis"
+rust = "thouless::symmetry"
+python = "thouless.symmetry"
+julia = "Thouless.Symmetry"
+
+[[workflow]]
+id = "ensembles.random_matrix"
+rust = "thouless::random_matrix"
+python = "thouless.random"
+julia = "Thouless.Random"
+
+[[workflow]]
+id = "utility.random_access_variates"
+rust = "thouless::digest"
+python = "thouless.random"
+julia = "Thouless.Random"
+
+[[workflow]]
+id = "geometry.lattice_reduction"
+rust = "thouless::lattice_reduction"
+python = "thouless.geometry"
+julia = "Thouless.Geometry"
+
+[[workflow]]
+id = "graph.compressed"
+rust = "thouless::graph"
+python = "thouless.graph"
+julia = "Thouless.Graph"
+
+[[workflow]]
+id = "algebra.dense_decomposition"
+rust = "thouless::decomposition"
+python = "thouless.linalg"
+julia = "Thouless.LinearAlgebra"
+[[workflow]]
+id = "algebra.sparse_direct"
+rust = "thouless::sparse_direct"
+python = "thouless.linalg"
+julia = "Thouless.LinearAlgebra"

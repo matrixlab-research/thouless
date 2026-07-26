@@ -10,7 +10,8 @@ interfaces while calling the same Rust core.
 
 ## Current status
 
-**Public implementation complete; isolated held-out validation pending.**
+**Rust scientific implementation and source compatibility complete;
+language-native product APIs and isolated held-out validation pending.**
 
 The repository currently implements reusable model construction, dense
 Hermitian assembly, eigensolvers, momentum derivatives, discrete Wilson phases,
@@ -98,6 +99,15 @@ Rust caller        -> native Rust API ------------------+
 
 The compatibility layers may convert data, map state, and translate errors.
 They must not contain separate scientific algorithms.
+
+The target first-class Rust, Python, and Julia interfaces are specified in
+[`docs/native-language-api-design.md`](docs/native-language-api-design.md).
+The design keeps PyO3 as the Python boundary, adds a stable C ABI for Julia,
+and requires all three language surfaces to cover the same scientific
+workflows. The machine-readable namespace mapping is
+[`spec/api/thouless-native-languages.toml`](spec/api/thouless-native-languages.toml).
+This is a target contract: the public Python-native API, C ABI, Julia package,
+and their artifact and parity CI remain unimplemented.
 
 The first native module is:
 
