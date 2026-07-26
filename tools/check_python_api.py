@@ -34,6 +34,12 @@ def require_attributes(
         fail(f"{description} is missing {missing}")
 
 
+def is_source_compatibility_manifest(path: Path) -> bool:
+    with path.open("rb") as source:
+        document = tomllib.load(source)
+    return "upstream_manifest" in document
+
+
 def check_manifest(path: Path) -> tuple[int, int]:
     with path.open("rb") as source:
         document = tomllib.load(source)
@@ -89,7 +95,11 @@ def main() -> None:
     manifests = (
         [path.resolve() for path in arguments.manifests]
         if arguments.manifests
-        else sorted(API_ROOT.glob("*.toml"))
+        else [
+            path
+            for path in sorted(API_ROOT.glob("*.toml"))
+            if is_source_compatibility_manifest(path)
+        ]
     )
     if not manifests:
         fail("no API manifests found")
