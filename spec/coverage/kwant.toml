@@ -205,11 +205,10 @@ source_entries = [
 ]
 compat_entry = "python/kwant/kpm"
 rust_capability = "spectrum.kernel_polynomial"
-public_test = "repository trace-sum, explicit-bound, zero-response, local-basis, and Python-eigensolver-disabled contracts"
+public_test = "repository trace-sum, explicit-bound, zero-response, local-basis, Python-eigensolver-disabled, and 20000-dimensional no-dense-materialization contracts"
 source_test = "complete pinned KPM module: spectral density, scalar and vector-valued operators, random and local vectors, custom vector factories, bounds, energy resolution, incremental moments and vectors, convergence, integration, correlation, and conductivity"
-actual_result = "26 source tests passed through Rust-native rescaling, Chebyshev recurrence, moment reconstruction, kernels, quadrature, Kubo-Bastin response, and velocity operators; dense materialization remains a scientific-scale limitation"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/5"
+actual_result = "26 source tests passed through canonical Rust CSR storage, matrix-free Lanczos rescaling and Chebyshev recurrence, sparse operator moments and velocity commutators, kernels, quadrature, and Kubo-Bastin response; a 20000-dimensional compatibility contract rejects dense materialization"
+status = "implemented"
 
 [[interface]]
 name = "periodic boundary folding"

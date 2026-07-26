@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import scipy.sparse
 
 from conftest import require_compat_module
 
@@ -303,6 +304,39 @@ def test_kpm_trace_sum_uses_the_rust_recurrence(monkeypatch) -> None:
     )
     integrated = density.integrate()
     np.testing.assert_allclose(integrated, [1.0, 1.0], atol=1e-10)
+
+
+def test_kpm_sparse_path_does_not_materialize_dense_matrices() -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+
+    class NoDenseCsr(scipy.sparse.csr_matrix):
+        def toarray(self, *args, **kwargs):
+            del args, kwargs
+            raise AssertionError("KPM attempted dense materialization")
+
+    dimension = 20_000
+    hamiltonian = NoDenseCsr(
+        scipy.sparse.diags(
+            (
+                -np.ones(dimension - 1),
+                np.zeros(dimension),
+                -np.ones(dimension - 1),
+            ),
+            (-1, 0, 1),
+            format="csr",
+        )
+    )
+    identity = NoDenseCsr(scipy.sparse.identity(dimension, format="csr"))
+    density = kwant.kpm.SpectralDensity(
+        hamiltonian,
+        operator=identity,
+        num_vectors=1,
+        num_moments=8,
+        bounds=(-2.0, 2.0),
+        rng=7,
+    )
+    assert density._rescaled_operator.nnz == 2 * (dimension - 1)
+    np.testing.assert_allclose(density.integrate(), dimension, atol=1e-8)
 
 
 def test_wraparound_recovers_the_cosine_chain() -> None:

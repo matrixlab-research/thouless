@@ -21,6 +21,7 @@ pub mod interpolation;
 pub mod kpm;
 pub mod lattice_reduction;
 pub mod lead_modes;
+pub mod linear_operator;
 pub mod matrix;
 pub mod model;
 pub mod observables;

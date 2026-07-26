@@ -29,8 +29,9 @@ use thouless::kpm::{
     correlation_integral_factor, correlation_moments, correlation_response,
     evaluate as kpm_evaluate_native, fermi_distribution as kpm_fermi_distribution_native,
     integrate as kpm_integrate_native, kernel_weights, reconstruct as kpm_reconstruct_native,
-    reconstruct_stabilized, rescale_hamiltonian, scalar_moments, velocity_operator, Kernel,
-    SpectralScale,
+    reconstruct_stabilized, rescale_hamiltonian, rescale_sparse_hamiltonian, scalar_moments,
+    scalar_moments_with_operator, sparse_velocity_operator, velocity_operator, Kernel,
+    RescaledLinearOperator, SpectralScale,
 };
 use thouless::lattice_reduction::{
     closest_lattice_vectors, gram_schmidt, gram_schmidt_coefficient, is_c_reduced, lll_reduce,
@@ -42,6 +43,7 @@ use thouless::lead_modes::{
     reexpress_modes_in_singular_hopping_basis_from_svd, setup_lead_linear_system,
     setup_lead_linear_system_from_svd, LeadLinearSystem, LeadLinearSystemOptions,
 };
+use thouless::linear_operator::{CsrMatrix, LinearOperator};
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
 use thouless::observables::{
     bond_currents, local_densities, local_sources, pauli_coefficients, project_diagonal_observable,
@@ -163,6 +165,91 @@ type DiscreteSymmetryOutput = (
     Option<MatrixRows>,
     Option<MatrixRows>,
 );
+
+fn csr_from_parts(
+    rows: usize,
+    columns: usize,
+    row_offsets: Vec<usize>,
+    column_indices: Vec<usize>,
+    values: Vec<Complex64>,
+) -> PyResult<CsrMatrix> {
+    CsrMatrix::new(rows, columns, row_offsets, column_indices, values).map_err(value_error)
+}
+
+#[pyclass(name = "_KpmCsrOperator")]
+struct PyKpmCsrOperator {
+    inner: CsrMatrix,
+}
+
+#[pymethods]
+impl PyKpmCsrOperator {
+    #[getter]
+    fn shape(&self) -> (usize, usize) {
+        self.inner.shape()
+    }
+
+    #[getter]
+    fn nnz(&self) -> usize {
+        self.inner.nnz()
+    }
+
+    fn matvec(&self, vector: Vec<Complex64>) -> PyResult<Vec<Complex64>> {
+        self.inner.apply(&vector).map_err(value_error)
+    }
+
+    fn apply_to_chebyshev(&self, chebyshev: ComplexTensor3) -> PyResult<ComplexTensor3> {
+        apply_operator_to_chebyshev(&self.inner, &chebyshev).map_err(value_error)
+    }
+
+    fn scalar_moments(
+        &self,
+        initial_vectors: Vec<Vec<Complex64>>,
+        chebyshev: ComplexTensor3,
+    ) -> PyResult<ComplexTensor3> {
+        scalar_moments_with_operator(&initial_vectors, &chebyshev, Some(&self.inner))
+            .map_err(value_error)
+    }
+}
+
+#[pyclass(name = "_KpmHamiltonian")]
+struct PyKpmHamiltonian {
+    inner: RescaledLinearOperator<CsrMatrix>,
+}
+
+#[pymethods]
+impl PyKpmHamiltonian {
+    #[getter]
+    fn shape(&self) -> (usize, usize) {
+        self.inner.shape()
+    }
+
+    #[getter]
+    fn nnz(&self) -> usize {
+        self.inner.operator().nnz()
+    }
+
+    #[getter]
+    fn half_width(&self) -> f64 {
+        self.inner.scale().half_width()
+    }
+
+    #[getter]
+    fn center(&self) -> f64 {
+        self.inner.scale().center()
+    }
+
+    fn matvec(&self, vector: Vec<Complex64>) -> PyResult<Vec<Complex64>> {
+        self.inner.apply(&vector).map_err(value_error)
+    }
+
+    fn chebyshev_vectors(
+        &self,
+        initial_vectors: Vec<Vec<Complex64>>,
+        moment_count: usize,
+    ) -> PyResult<ComplexTensor3> {
+        chebyshev_vectors(&self.inner, &initial_vectors, moment_count).map_err(value_error)
+    }
+}
 
 fn value_error(error: impl std::fmt::Display) -> PyErr {
     PyValueError::new_err(error.to_string())
@@ -746,6 +833,57 @@ fn kpm_rescale_hamiltonian(
         rescaled.scale().half_width(),
         rescaled.scale().center(),
     ))
+}
+
+#[pyfunction]
+fn kpm_csr_operator(
+    shape: (usize, usize),
+    row_offsets: Vec<usize>,
+    column_indices: Vec<usize>,
+    values: Vec<Complex64>,
+) -> PyResult<PyKpmCsrOperator> {
+    Ok(PyKpmCsrOperator {
+        inner: csr_from_parts(shape.0, shape.1, row_offsets, column_indices, values)?,
+    })
+}
+
+#[pyfunction(signature = (
+    shape,
+    row_offsets,
+    column_indices,
+    values,
+    initial_vector,
+    strict_margin=0.05,
+    bounds=None
+))]
+fn kpm_rescale_csr_hamiltonian(
+    shape: (usize, usize),
+    row_offsets: Vec<usize>,
+    column_indices: Vec<usize>,
+    values: Vec<Complex64>,
+    initial_vector: Vec<Complex64>,
+    strict_margin: f64,
+    bounds: Option<(f64, f64)>,
+) -> PyResult<PyKpmHamiltonian> {
+    let hamiltonian = csr_from_parts(shape.0, shape.1, row_offsets, column_indices, values)?;
+    let inner = rescale_sparse_hamiltonian(hamiltonian, strict_margin, bounds, &initial_vector)
+        .map_err(value_error)?;
+    Ok(PyKpmHamiltonian { inner })
+}
+
+#[pyfunction]
+fn kpm_sparse_velocity_operator(
+    shape: (usize, usize),
+    row_offsets: Vec<usize>,
+    column_indices: Vec<usize>,
+    values: Vec<Complex64>,
+    positions: Vec<Vec<f64>>,
+    direction: usize,
+) -> PyResult<PyKpmCsrOperator> {
+    let hamiltonian = csr_from_parts(shape.0, shape.1, row_offsets, column_indices, values)?;
+    let inner =
+        sparse_velocity_operator(&hamiltonian, &positions, direction).map_err(value_error)?;
+    Ok(PyKpmCsrOperator { inner })
 }
 
 #[pyfunction]
@@ -2759,12 +2897,17 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyGraphBuilder>()?;
     module.add_class::<PyCompressedGraph>()?;
     module.add_class::<PyLeadLinearSystem>()?;
+    module.add_class::<PyKpmCsrOperator>()?;
+    module.add_class::<PyKpmHamiltonian>()?;
     module.add_function(wrap_pyfunction!(validate_periodic_bands, module)?)?;
     module.add_function(wrap_pyfunction!(lead_band_evaluation, module)?)?;
     module.add_function(wrap_pyfunction!(reflection_shot_noise, module)?)?;
     module.add_function(wrap_pyfunction!(digest_uniform_pair, module)?)?;
     module.add_function(wrap_pyfunction!(digest_gaussian, module)?)?;
     module.add_function(wrap_pyfunction!(kpm_rescale_hamiltonian, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_csr_operator, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_rescale_csr_hamiltonian, module)?)?;
+    module.add_function(wrap_pyfunction!(kpm_sparse_velocity_operator, module)?)?;
     module.add_function(wrap_pyfunction!(kpm_chebyshev_vectors, module)?)?;
     module.add_function(wrap_pyfunction!(kpm_scalar_moments, module)?)?;
     module.add_function(wrap_pyfunction!(kpm_apply_operator, module)?)?;

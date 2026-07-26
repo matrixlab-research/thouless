@@ -9,6 +9,9 @@ use std::error::Error;
 use std::f64::consts::PI;
 use std::fmt;
 
+use nalgebra::{DMatrix, SymmetricEigen};
+
+use crate::linear_operator::{CsrMatrix, LinearOperator, LinearOperatorError};
 use crate::spectrum::hermitian_eigensystem;
 use crate::{Complex64, ComplexMatrix};
 
@@ -74,6 +77,90 @@ impl RescaledHamiltonian {
     pub const fn scale(&self) -> SpectralScale {
         self.scale
     }
+}
+
+/// A matrix-free Hamiltonian transformed into the Chebyshev interval.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RescaledLinearOperator<O> {
+    operator: O,
+    scale: SpectralScale,
+}
+
+impl<O: LinearOperator> RescaledLinearOperator<O> {
+    /// Creates an affine view `(H - center I) / half_width`.
+    pub fn new(operator: O, scale: SpectralScale) -> Result<Self, KpmError> {
+        validate_operator_square(&operator)?;
+        Ok(Self { operator, scale })
+    }
+
+    /// Original, unscaled operator.
+    #[must_use]
+    pub const fn operator(&self) -> &O {
+        &self.operator
+    }
+
+    /// Physical-to-rescaled energy transformation.
+    #[must_use]
+    pub const fn scale(&self) -> SpectralScale {
+        self.scale
+    }
+}
+
+impl<O: LinearOperator> LinearOperator for RescaledLinearOperator<O> {
+    fn rows(&self) -> usize {
+        self.operator.rows()
+    }
+
+    fn columns(&self) -> usize {
+        self.operator.columns()
+    }
+
+    fn apply_into(
+        &self,
+        input: &[Complex64],
+        output: &mut [Complex64],
+    ) -> Result<(), LinearOperatorError> {
+        self.operator.apply_into(input, output)?;
+        for (value, input_value) in output.iter_mut().zip(input) {
+            *value = (*value - *input_value * self.scale.center()) / self.scale.half_width();
+        }
+        if output
+            .iter()
+            .any(|value| !value.re.is_finite() || !value.im.is_finite())
+        {
+            Err(LinearOperatorError::NonFiniteValue)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Controls the matrix-free Lanczos estimate of extremal eigenvalues.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LanczosOptions {
+    /// Maximum Krylov-subspace dimension.
+    pub max_iterations: usize,
+    /// Relative residual required for both extremal Ritz pairs.
+    pub relative_tolerance: f64,
+}
+
+/// Extremal Ritz values and their final Lanczos residuals.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpectralBounds {
+    /// Smallest estimated eigenvalue.
+    pub lower: f64,
+    /// Largest estimated eigenvalue.
+    pub upper: f64,
+    /// Residual norm of the smallest Ritz pair.
+    pub lower_residual: f64,
+    /// Residual norm of the largest Ritz pair.
+    pub upper_residual: f64,
+    /// Krylov-subspace dimension used.
+    pub iterations: usize,
+    /// Whether both residuals reached the requested tolerance.
+    pub converged: bool,
+    /// Whether the recurrence terminated in a proper invariant subspace.
+    pub breakdown: bool,
 }
 
 /// A reconstructed spectral function.
@@ -173,6 +260,10 @@ pub enum KpmError {
     EigensystemFailure,
     /// A numerical input is not finite.
     NonFiniteValue,
+    /// A matrix-free operator could not be constructed or applied.
+    LinearOperator(LinearOperatorError),
+    /// Lanczos options do not define a finite, nonempty iteration.
+    InvalidLanczosOptions,
 }
 
 impl fmt::Display for KpmError {
@@ -211,11 +302,24 @@ impl fmt::Display for KpmError {
             ),
             Self::EigensystemFailure => write!(formatter, "Hamiltonian eigensystem failed"),
             Self::NonFiniteValue => write!(formatter, "KPM input contains a non-finite value"),
+            Self::LinearOperator(error) => write!(formatter, "linear-operator failure: {error}"),
+            Self::InvalidLanczosOptions => {
+                write!(
+                    formatter,
+                    "Lanczos options must define a positive finite iteration"
+                )
+            }
         }
     }
 }
 
 impl Error for KpmError {}
+
+impl From<LinearOperatorError> for KpmError {
+    fn from(error: LinearOperatorError) -> Self {
+        Self::LinearOperator(error)
+    }
+}
 
 /// Rescales a dense Hermitian Hamiltonian into the open Chebyshev interval.
 pub fn rescale_hamiltonian(
@@ -256,12 +360,7 @@ pub fn rescale_hamiltonian(
             )
         }
     };
-    let width = upper - lower;
-    let tolerance = strict_margin * (upper + lower).abs().max(1.0) / 4.0;
-    if width <= tolerance {
-        return Err(KpmError::SingleEigenvalue);
-    }
-    let scale = SpectralScale::new(width / (2.0 - strict_margin), (upper + lower) / 2.0)?;
+    let scale = spectral_scale(lower, upper, strict_margin)?;
     let data = hamiltonian
         .as_slice()
         .iter()
@@ -281,13 +380,143 @@ pub fn rescale_hamiltonian(
     Ok(RescaledHamiltonian { matrix, scale })
 }
 
+/// Estimates the spectral extremes of a Hermitian matrix-free operator.
+///
+/// The implementation stores only the three recurrence vectors and the small
+/// real symmetric tridiagonal projection. It therefore scales with the
+/// operator storage rather than with the square of its dimension.
+pub fn estimate_spectral_bounds<O: LinearOperator + ?Sized>(
+    operator: &O,
+    initial_vector: &[Complex64],
+    options: LanczosOptions,
+) -> Result<SpectralBounds, KpmError> {
+    let dimension = validate_operator_square(operator)?;
+    if options.max_iterations == 0
+        || !options.relative_tolerance.is_finite()
+        || options.relative_tolerance <= 0.0
+    {
+        return Err(KpmError::InvalidLanczosOptions);
+    }
+    validate_vectors(&[initial_vector.to_vec()], dimension)?;
+    let initial_norm = norm(initial_vector);
+    if !initial_norm.is_finite() || initial_norm == 0.0 {
+        return Err(KpmError::NonFiniteValue);
+    }
+
+    let maximum = options.max_iterations.min(dimension);
+    let mut previous = vec![Complex64::new(0.0, 0.0); dimension];
+    let mut current = initial_vector
+        .iter()
+        .map(|value| *value / initial_norm)
+        .collect::<Vec<_>>();
+    let mut beta_previous = 0.0;
+    let mut alphas = Vec::with_capacity(maximum);
+    let mut betas = Vec::with_capacity(maximum.saturating_sub(1));
+    let mut latest = None;
+
+    for iteration in 0..maximum {
+        let mut next = operator.apply(&current)?;
+        if iteration > 0 {
+            for (value, old) in next.iter_mut().zip(&previous) {
+                *value -= *old * beta_previous;
+            }
+        }
+        let alpha_complex = inner(&current, &next);
+        let scale = norm(&next).max(1.0);
+        if alpha_complex.im.abs() > HERMITIAN_TOLERANCE * scale {
+            return Err(KpmError::NonHermitianHamiltonian);
+        }
+        let alpha = alpha_complex.re;
+        for (value, basis) in next.iter_mut().zip(&current) {
+            *value -= *basis * alpha;
+        }
+        let beta = norm(&next);
+        alphas.push(alpha);
+
+        let may_stop_on_residual = maximum < dimension;
+        let recurrence_scale = alpha.abs().max(beta_previous).max(1.0);
+        let breakdown = beta <= f64::EPSILON.sqrt() * recurrence_scale;
+        let final_iteration = iteration + 1 == maximum;
+        let inspect_residual = may_stop_on_residual && (iteration + 1) % 8 == 0;
+        if breakdown || final_iteration || inspect_residual {
+            let projection = tridiagonal_extremes(&alphas, &betas, beta)?;
+            let spectral_scale = projection.lower.abs().max(projection.upper.abs()).max(1.0);
+            let converged = projection.lower_residual
+                <= options.relative_tolerance * spectral_scale
+                && projection.upper_residual <= options.relative_tolerance * spectral_scale;
+            latest = Some(SpectralBounds {
+                iterations: iteration + 1,
+                converged,
+                breakdown,
+                ..projection
+            });
+            if (may_stop_on_residual && converged) || breakdown || final_iteration {
+                break;
+            }
+        }
+
+        betas.push(beta);
+        previous = current;
+        current = next.into_iter().map(|value| value / beta).collect();
+        beta_previous = beta;
+    }
+
+    latest.ok_or(KpmError::EigensystemFailure)
+}
+
+/// Rescales a canonical CSR Hermitian Hamiltonian without dense materialization.
+///
+/// Explicit bounds are used verbatim. Otherwise a Lanczos estimate is used
+/// when its extremal residuals converge; a conservative Gershgorin enclosure
+/// is the deterministic fallback.
+pub fn rescale_sparse_hamiltonian(
+    hamiltonian: CsrMatrix,
+    strict_margin: f64,
+    bounds: Option<(f64, f64)>,
+    initial_vector: &[Complex64],
+) -> Result<RescaledLinearOperator<CsrMatrix>, KpmError> {
+    let dimension = validate_operator_square(&hamiltonian)?;
+    if !hamiltonian.is_hermitian(HERMITIAN_TOLERANCE)? {
+        return Err(KpmError::NonHermitianHamiltonian);
+    }
+    if !strict_margin.is_finite() || strict_margin <= 0.0 || strict_margin >= 2.0 {
+        return Err(KpmError::InvalidMargin);
+    }
+    let (lower, upper) = match bounds {
+        Some((lower, upper)) if lower.is_finite() && upper.is_finite() && lower < upper => {
+            (lower, upper)
+        }
+        Some(_) => return Err(KpmError::InvalidBounds),
+        None => {
+            let estimate = estimate_spectral_bounds(
+                &hamiltonian,
+                initial_vector,
+                LanczosOptions {
+                    max_iterations: dimension.min(256),
+                    relative_tolerance: strict_margin / 4.0,
+                },
+            )?;
+            if (estimate.converged && !estimate.breakdown) || estimate.iterations == dimension {
+                (
+                    estimate.lower - estimate.lower_residual,
+                    estimate.upper + estimate.upper_residual,
+                )
+            } else {
+                hamiltonian.gershgorin_bounds()?
+            }
+        }
+    };
+    let scale = spectral_scale(lower, upper, strict_margin)?;
+    RescaledLinearOperator::new(hamiltonian, scale)
+}
+
 /// Generates `T_n(H)|r>` for each initial vector.
-pub fn chebyshev_vectors(
-    rescaled_hamiltonian: &ComplexMatrix,
+pub fn chebyshev_vectors<O: LinearOperator + ?Sized>(
+    rescaled_hamiltonian: &O,
     initial_vectors: &[Vec<Complex64>],
     moment_count: usize,
 ) -> Result<Vec<Vec<Vec<Complex64>>>, KpmError> {
-    let dimension = validate_square(rescaled_hamiltonian)?;
+    let dimension = validate_operator_square(rescaled_hamiltonian)?;
     if moment_count == 0 {
         return Err(KpmError::NoMoments);
     }
@@ -300,12 +529,12 @@ pub fn chebyshev_vectors(
         let mut moments = Vec::with_capacity(moment_count);
         moments.push(initial.clone());
         if moment_count > 1 {
-            moments.push(apply_matrix(rescaled_hamiltonian, initial));
+            moments.push(rescaled_hamiltonian.apply(initial)?);
         }
         while moments.len() < moment_count {
             let current = moments.last().expect("at least one moment");
             let previous = &moments[moments.len() - 2];
-            let applied = apply_matrix(rescaled_hamiltonian, current);
+            let applied = rescaled_hamiltonian.apply(current)?;
             moments.push(
                 applied
                     .into_iter()
@@ -325,6 +554,15 @@ pub fn scalar_moments(
     chebyshev: &[Vec<Vec<Complex64>>],
     operator: Option<&ComplexMatrix>,
 ) -> Result<Vec<Vec<Vec<Complex64>>>, KpmError> {
+    scalar_moments_with_operator(initial_vectors, chebyshev, operator)
+}
+
+/// Computes scalar moments with any matrix-free observation operator.
+pub fn scalar_moments_with_operator<O: LinearOperator + ?Sized>(
+    initial_vectors: &[Vec<Complex64>],
+    chebyshev: &[Vec<Vec<Complex64>>],
+    operator: Option<&O>,
+) -> Result<Vec<Vec<Vec<Complex64>>>, KpmError> {
     let (vector_count, moment_count, dimension) = validate_chebyshev(chebyshev)?;
     validate_vectors(initial_vectors, dimension)?;
     if initial_vectors.len() != vector_count {
@@ -343,7 +581,7 @@ pub fn scalar_moments(
     for vector in 0..vector_count {
         for moment in 0..moment_count {
             let ket = if let Some(operator) = operator {
-                apply_matrix(operator, &chebyshev[vector][moment])
+                operator.apply(&chebyshev[vector][moment])?
             } else {
                 chebyshev[vector][moment].clone()
             };
@@ -353,9 +591,9 @@ pub fn scalar_moments(
     Ok(result)
 }
 
-/// Applies a dense operator to each vector in a Chebyshev-vector collection.
-pub fn apply_operator_to_chebyshev(
-    operator: &ComplexMatrix,
+/// Applies a linear operator to each vector in a Chebyshev-vector collection.
+pub fn apply_operator_to_chebyshev<O: LinearOperator + ?Sized>(
+    operator: &O,
     chebyshev: &[Vec<Vec<Complex64>>],
 ) -> Result<Vec<Vec<Vec<Complex64>>>, KpmError> {
     let (_, _, dimension) = validate_chebyshev(chebyshev)?;
@@ -366,15 +604,15 @@ pub fn apply_operator_to_chebyshev(
             columns: operator.columns(),
         });
     }
-    Ok(chebyshev
+    chebyshev
         .iter()
         .map(|moments| {
             moments
                 .iter()
-                .map(|vector| apply_matrix(operator, vector))
-                .collect()
+                .map(|vector| operator.apply(vector).map_err(KpmError::from))
+                .collect::<Result<Vec<_>, _>>()
         })
-        .collect())
+        .collect::<Result<Vec<_>, _>>()
 }
 
 /// Reconstructs a spectral function from raw vector-resolved moments.
@@ -735,13 +973,108 @@ pub fn velocity_operator(
     ComplexMatrix::new(dimension, dimension, data).map_err(|_| KpmError::NonFiniteValue)
 }
 
-fn validate_square(matrix: &ComplexMatrix) -> Result<usize, KpmError> {
-    let (rows, columns) = matrix.shape();
+/// Constructs `i [H, X_direction]` while preserving CSR sparsity.
+pub fn sparse_velocity_operator(
+    hamiltonian: &CsrMatrix,
+    positions: &[Vec<f64>],
+    direction: usize,
+) -> Result<CsrMatrix, KpmError> {
+    let dimension = validate_operator_square(hamiltonian)?;
+    validate_positions(positions, dimension, direction)?;
+    let mut values = Vec::with_capacity(hamiltonian.nnz());
+    for row in 0..dimension {
+        for entry in hamiltonian.row_offsets()[row]..hamiltonian.row_offsets()[row + 1] {
+            let column = hamiltonian.column_indices()[entry];
+            let displacement = positions[column][direction] - positions[row][direction];
+            values.push(hamiltonian.values()[entry] * Complex64::new(0.0, displacement));
+        }
+    }
+    CsrMatrix::new(
+        dimension,
+        dimension,
+        hamiltonian.row_offsets().to_vec(),
+        hamiltonian.column_indices().to_vec(),
+        values,
+    )
+    .map_err(KpmError::from)
+}
+
+fn spectral_scale(lower: f64, upper: f64, strict_margin: f64) -> Result<SpectralScale, KpmError> {
+    if !strict_margin.is_finite() || strict_margin <= 0.0 || strict_margin >= 2.0 {
+        return Err(KpmError::InvalidMargin);
+    }
+    if !lower.is_finite() || !upper.is_finite() || lower >= upper {
+        return Err(KpmError::InvalidBounds);
+    }
+    let width = upper - lower;
+    let tolerance = strict_margin * (upper + lower).abs().max(1.0) / 4.0;
+    if width <= tolerance {
+        return Err(KpmError::SingleEigenvalue);
+    }
+    SpectralScale::new(width / (2.0 - strict_margin), (upper + lower) / 2.0)
+}
+
+fn tridiagonal_extremes(
+    alphas: &[f64],
+    betas: &[f64],
+    next_beta: f64,
+) -> Result<SpectralBounds, KpmError> {
+    let dimension = alphas.len();
+    if dimension == 0 || betas.len() + 1 != dimension {
+        return Err(KpmError::EigensystemFailure);
+    }
+    let mut matrix = DMatrix::<f64>::zeros(dimension, dimension);
+    for (index, alpha) in alphas.iter().copied().enumerate() {
+        matrix[(index, index)] = alpha;
+    }
+    for (index, beta) in betas.iter().copied().enumerate() {
+        matrix[(index, index + 1)] = beta;
+        matrix[(index + 1, index)] = beta;
+    }
+    let decomposition = SymmetricEigen::new(matrix);
+    let (lower_index, &lower) = decomposition
+        .eigenvalues
+        .iter()
+        .enumerate()
+        .min_by(|(_, left), (_, right)| left.total_cmp(right))
+        .ok_or(KpmError::EigensystemFailure)?;
+    let (upper_index, &upper) = decomposition
+        .eigenvalues
+        .iter()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+        .ok_or(KpmError::EigensystemFailure)?;
+    if !lower.is_finite() || !upper.is_finite() || !next_beta.is_finite() {
+        return Err(KpmError::NonFiniteValue);
+    }
+    Ok(SpectralBounds {
+        lower,
+        upper,
+        lower_residual: next_beta.abs()
+            * decomposition.eigenvectors[(dimension - 1, lower_index)].abs(),
+        upper_residual: next_beta.abs()
+            * decomposition.eigenvectors[(dimension - 1, upper_index)].abs(),
+        iterations: dimension,
+        converged: false,
+        breakdown: false,
+    })
+}
+
+fn norm(vector: &[Complex64]) -> f64 {
+    vector.iter().map(Complex64::norm_sqr).sum::<f64>().sqrt()
+}
+
+fn validate_operator_square<O: LinearOperator + ?Sized>(operator: &O) -> Result<usize, KpmError> {
+    let (rows, columns) = operator.shape();
     if rows == 0 || rows != columns {
         Err(KpmError::InvalidHamiltonianShape { rows, columns })
     } else {
         Ok(rows)
     }
+}
+
+fn validate_square(matrix: &ComplexMatrix) -> Result<usize, KpmError> {
+    validate_operator_square(matrix)
 }
 
 fn validate_vectors(vectors: &[Vec<Complex64>], dimension: usize) -> Result<(), KpmError> {
@@ -760,6 +1093,25 @@ fn validate_vectors(vectors: &[Vec<Complex64>], dimension: usize) -> Result<(), 
         }
     }
     Ok(())
+}
+
+fn validate_positions(
+    positions: &[Vec<f64>],
+    dimension: usize,
+    direction: usize,
+) -> Result<(), KpmError> {
+    if positions.len() != dimension
+        || positions
+            .iter()
+            .any(|position| direction >= position.len() || !position[direction].is_finite())
+    {
+        Err(KpmError::VectorDimension {
+            expected: dimension,
+            actual: positions.len(),
+        })
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_chebyshev(values: &[Vec<Vec<Complex64>>]) -> Result<(usize, usize, usize), KpmError> {
@@ -802,17 +1154,6 @@ fn validate_stabilized_moments(
         return Err(KpmError::RaggedData);
     }
     Ok((moments, channels, components))
-}
-
-fn apply_matrix(matrix: &ComplexMatrix, vector: &[Complex64]) -> Vec<Complex64> {
-    let dimension = matrix.rows();
-    (0..dimension)
-        .map(|row| {
-            (0..dimension)
-                .map(|column| matrix.as_slice()[row * dimension + column] * vector[column])
-                .sum()
-        })
-        .collect()
 }
 
 fn inner(left: &[Complex64], right: &[Complex64]) -> Complex64 {
@@ -935,6 +1276,27 @@ mod tests {
         matrix
     }
 
+    fn sparse_chain(dimension: usize) -> CsrMatrix {
+        let mut offsets = Vec::with_capacity(dimension + 1);
+        let mut columns = Vec::with_capacity(3 * dimension);
+        let mut values = Vec::with_capacity(3 * dimension);
+        offsets.push(0);
+        for row in 0..dimension {
+            if row > 0 {
+                columns.push(row - 1);
+                values.push(Complex64::new(-1.0, 0.0));
+            }
+            columns.push(row);
+            values.push(Complex64::new(0.1 * (row % 3) as f64, 0.0));
+            if row + 1 < dimension {
+                columns.push(row + 1);
+                values.push(Complex64::new(-1.0, 0.0));
+            }
+            offsets.push(values.len());
+        }
+        CsrMatrix::new(dimension, dimension, offsets, columns, values).unwrap()
+    }
+
     #[test]
     fn rescaling_places_spectrum_strictly_inside_interval() {
         let rescaled = rescale_hamiltonian(&diagonal(&[-2.0, 1.0, 4.0]), 0.05, None).unwrap();
@@ -1013,6 +1375,111 @@ mod tests {
         let velocity = velocity_operator(&hamiltonian, &[vec![0.0], vec![2.0]], 0).unwrap();
         assert_eq!(velocity.as_slice()[1], Complex64::new(0.0, -2.0));
         assert_eq!(velocity.as_slice()[2], Complex64::new(0.0, 2.0));
+        assert!(velocity.is_hermitian(1.0e-12).unwrap());
+    }
+
+    #[test]
+    fn sparse_and_dense_recurrences_are_equivalent() {
+        let dense = ComplexMatrix::new(
+            4,
+            4,
+            vec![
+                0.2.into(),
+                (-1.0).into(),
+                0.0.into(),
+                Complex64::new(0.0, 0.3),
+                (-1.0).into(),
+                (-0.1).into(),
+                (-0.7).into(),
+                0.0.into(),
+                0.0.into(),
+                (-0.7).into(),
+                0.4.into(),
+                (-0.2).into(),
+                Complex64::new(0.0, -0.3),
+                0.0.into(),
+                (-0.2).into(),
+                0.6.into(),
+            ],
+        )
+        .unwrap();
+        let sparse = CsrMatrix::from_dense(&dense, 0.0).unwrap();
+        let initial = vec![
+            Complex64::new(1.0, 0.2),
+            Complex64::new(-0.4, 0.7),
+            Complex64::new(0.3, -0.1),
+            Complex64::new(-0.2, -0.5),
+        ];
+        let dense_scaled = rescale_hamiltonian(&dense, 0.05, None).unwrap();
+        let sparse_scaled = rescale_sparse_hamiltonian(sparse, 0.05, None, &initial).unwrap();
+        assert!(
+            (dense_scaled.scale().half_width() - sparse_scaled.scale().half_width()).abs()
+                < 1.0e-10
+        );
+        assert!((dense_scaled.scale().center() - sparse_scaled.scale().center()).abs() < 1.0e-10);
+        let dense_vectors =
+            chebyshev_vectors(dense_scaled.matrix(), std::slice::from_ref(&initial), 32).unwrap();
+        let sparse_vectors = chebyshev_vectors(&sparse_scaled, &[initial], 32).unwrap();
+        for (dense_vector, sparse_vector) in dense_vectors[0]
+            .iter()
+            .flatten()
+            .zip(sparse_vectors[0].iter().flatten())
+        {
+            assert!((*dense_vector - *sparse_vector).norm() < 1.0e-9);
+        }
+    }
+
+    #[test]
+    fn early_lanczos_breakdown_uses_safe_sparse_bounds() {
+        let dense = diagonal(&[-10.0, 0.0, 7.0]);
+        let sparse = CsrMatrix::from_dense(&dense, 0.0).unwrap();
+        let scaled = rescale_sparse_hamiltonian(
+            sparse,
+            0.05,
+            None,
+            &[
+                Complex64::new(0.0, 0.0),
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.0, 0.0),
+            ],
+        )
+        .unwrap();
+        for eigenvalue in [-10.0, 0.0, 7.0] {
+            assert!(scaled.scale().rescale(eigenvalue).abs() < 1.0);
+        }
+    }
+
+    #[test]
+    fn large_sparse_recurrence_never_requires_dense_storage() {
+        let dimension = 100_000;
+        let sparse = sparse_chain(dimension);
+        assert!(sparse.nnz() < 3 * dimension);
+        let scaled = rescale_sparse_hamiltonian(
+            sparse,
+            0.05,
+            Some((-2.1, 2.3)),
+            &vec![Complex64::new(1.0, 0.0); dimension],
+        )
+        .unwrap();
+        let mut initial = vec![Complex64::new(0.0, 0.0); dimension];
+        initial[dimension / 2] = Complex64::new(1.0, 0.0);
+        let vectors = chebyshev_vectors(&scaled, &[initial], 8).unwrap();
+        assert_eq!(vectors[0].len(), 8);
+        assert_eq!(vectors[0][0].len(), dimension);
+        assert!(vectors[0]
+            .iter()
+            .flatten()
+            .all(|value| value.re.is_finite() && value.im.is_finite()));
+    }
+
+    #[test]
+    fn sparse_velocity_preserves_the_hamiltonian_sparsity_pattern() {
+        let sparse = sparse_chain(5);
+        let positions = (0..5).map(|index| vec![index as f64]).collect::<Vec<_>>();
+        let velocity = sparse_velocity_operator(&sparse, &positions, 0).unwrap();
+        assert_eq!(velocity.row_offsets(), sparse.row_offsets());
+        assert_eq!(velocity.column_indices(), sparse.column_indices());
+        assert_eq!(velocity.nnz(), sparse.nnz());
         assert!(velocity.is_hermitian(1.0e-12).unwrap());
     }
 

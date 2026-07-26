@@ -6,6 +6,7 @@ import math
 from collections.abc import Iterable
 
 import numpy as np
+import scipy.sparse
 
 from thouless import _core
 
@@ -20,20 +21,36 @@ def _is_system(value):
     return hasattr(value, "hamiltonian_submatrix") and hasattr(value, "sites")
 
 
-def _dense_matrix(value, params=None):
+def _csr_matrix(value, params=None):
     if _is_system(value):
-        value = value.hamiltonian_submatrix(params=params, sparse=False)
-    elif hasattr(value, "toarray"):
-        value = value.toarray()
+        value = value.hamiltonian_submatrix(params=params, sparse=True)
     try:
-        matrix = np.asarray(value, dtype=complex)
+        matrix = scipy.sparse.csr_matrix(value, dtype=complex)
     except Exception as error:
         raise ValueError(
             "'hamiltonian' is neither a matrix nor a Kwant system."
         ) from error
     if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
         raise ValueError("'hamiltonian' must be a square matrix")
+    matrix.sum_duplicates()
+    matrix.sort_indices()
+    matrix.eliminate_zeros()
+    matrix.sort_indices()
     return matrix
+
+
+def _csr_parts(matrix):
+    matrix = _csr_matrix(matrix)
+    return (
+        tuple(int(size) for size in matrix.shape),
+        matrix.indptr.astype(np.uintp, copy=False).tolist(),
+        matrix.indices.astype(np.uintp, copy=False).tolist(),
+        matrix.data.tolist(),
+    )
+
+
+def _native_csr_operator(matrix):
+    return _core.kpm_csr_operator(*_csr_parts(matrix))
 
 
 def _real_if_close(value):
@@ -63,20 +80,18 @@ def _squeeze_integral(value, mean, output_shape=()):
 
 
 class _RescaledOperator:
-    """Small compatibility wrapper around a Rust-owned rescaled matrix."""
+    """Compatibility wrapper around a Rust-owned sparse rescaled operator."""
 
-    def __init__(self, matrix):
-        self._matrix = np.asarray(matrix, dtype=complex)
-        self.shape = self._matrix.shape
-        self.dtype = self._matrix.dtype
+    def __init__(self, native):
+        self._native = native
+        self.shape = tuple(native.shape)
+        self.dtype = np.dtype(complex)
 
     def matvec(self, vector):
-        values = _core.kpm_chebyshev_vectors(
-            self._matrix,
-            [np.asarray(vector, dtype=complex)],
-            2,
+        return np.asarray(
+            self._native.matvec(np.asarray(vector, dtype=complex)),
+            dtype=complex,
         )
-        return np.asarray(values[0][1], dtype=complex)
 
     def dot(self, vector):
         return self.matvec(vector)
@@ -146,7 +161,7 @@ class _VectorFactory:
 
 def _orbital_indices(syst, where):
     if not _is_system(syst):
-        matrix = _dense_matrix(syst)
+        matrix = _csr_matrix(syst)
         if where is None:
             return matrix.shape[0], list(range(matrix.shape[0]))
         return matrix.shape[0], [int(index) for index in where]
@@ -250,9 +265,7 @@ class SpectralDensity:
             raise ValueError("'eps' must be positive")
         self.eps = eps
         self.mean = bool(mean)
-        self._source_hamiltonian = hamiltonian
-        dense_hamiltonian = _dense_matrix(hamiltonian, params=params)
-        self._dense_hamiltonian = dense_hamiltonian
+        sparse_hamiltonian = _csr_matrix(hamiltonian, params=params)
 
         if operator is None:
             self.operator = None
@@ -269,8 +282,13 @@ class SpectralDensity:
             self._operator_kind = "callback"
             self._operator_matrix = None
             self._operator_output_shape = None
+        elif isinstance(operator, _MatrixOperator):
+            self._operator_matrix = operator.native
+            self.operator = operator
+            self._operator_kind = "matrix"
+            self._operator_output_shape = ()
         elif hasattr(operator, "dot"):
-            self._operator_matrix = _dense_matrix(operator)
+            self._operator_matrix = _native_csr_operator(operator)
             self.operator = operator
             self._operator_kind = "matrix"
             self._operator_output_shape = ()
@@ -281,15 +299,17 @@ class SpectralDensity:
 
         rng = ensure_rng(rng)
         self._v0 = np.exp(
-            2j * np.pi * rng.random_sample(dense_hamiltonian.shape[0])
+            2j * np.pi * rng.random_sample(sparse_hamiltonian.shape[0])
         )
-        rescaled, self._a, self._b = _core.kpm_rescale_hamiltonian(
-            dense_hamiltonian,
+        self._rescaled_operator = _core.kpm_rescale_csr_hamiltonian(
+            *_csr_parts(sparse_hamiltonian),
+            self._v0,
             eps,
             bounds,
         )
-        self._rescaled_matrix = np.asarray(rescaled, dtype=complex)
-        self.hamiltonian = _RescaledOperator(self._rescaled_matrix)
+        self._a = self._rescaled_operator.half_width
+        self._b = self._rescaled_operator.center
+        self.hamiltonian = _RescaledOperator(self._rescaled_operator)
         self.bounds = (self._b - self._a, self._b + self._a)
 
         if energy_resolution:
@@ -301,7 +321,7 @@ class SpectralDensity:
         self.num_moments = int(num_moments)
 
         if vector_factory is None:
-            vector_factory = RandomVectors(dense_hamiltonian, rng=rng)
+            vector_factory = RandomVectors(sparse_hamiltonian, rng=rng)
         elif not isinstance(vector_factory, Iterable):
             raise TypeError("vector_factory must be iterable")
         else:
@@ -346,10 +366,9 @@ class SpectralDensity:
             )
         if self._operator_kind == "matrix":
             return np.asarray(
-                _core.kpm_scalar_moments(
+                self._operator_matrix.scalar_moments(
                     self._initial_vectors,
                     chebyshev,
-                    self._operator_matrix,
                 ),
                 dtype=complex,
             )
@@ -372,8 +391,7 @@ class SpectralDensity:
 
     def _recalculate(self):
         chebyshev = np.asarray(
-            _core.kpm_chebyshev_vectors(
-                self._rescaled_matrix,
+            self._rescaled_operator.chebyshev_vectors(
                 self._initial_vectors,
                 self.num_moments,
             ),
@@ -558,8 +576,18 @@ class SpectralDensity:
 
 
 class _MatrixOperator:
-    def __init__(self, matrix):
-        self.matrix = np.asarray(matrix, dtype=complex)
+    def __init__(self, matrix=None, *, native=None):
+        self.native = native if native is not None else _native_csr_operator(matrix)
+
+    @property
+    def shape(self):
+        return tuple(self.native.shape)
+
+    def dot(self, vector):
+        return np.asarray(
+            self.native.matvec(np.asarray(vector, dtype=complex)),
+            dtype=complex,
+        )
 
 
 def _normalize_operator(operator, params):
@@ -567,10 +595,12 @@ def _normalize_operator(operator, params):
         return None
     if isinstance(operator, _LocalOperator):
         return operator.bind(params=params)
+    if isinstance(operator, _MatrixOperator):
+        return operator
     if callable(operator):
         return operator
     if hasattr(operator, "dot"):
-        return _MatrixOperator(_dense_matrix(operator))
+        return _MatrixOperator(operator)
     raise TypeError(
         "The operators must have a '.dot' attribute or must be callable."
     )
@@ -582,7 +612,7 @@ def _apply_to_vectors(operator, vectors):
         return values
     if isinstance(operator, _MatrixOperator):
         return np.asarray(
-            _core.kpm_apply_operator(operator.matrix, values),
+            operator.native.apply_to_chebyshev(values),
             dtype=complex,
         )
     transformed = [
@@ -628,8 +658,7 @@ class Correlator:
         psi = _apply_to_vectors(self.operator2, right_chebyshev)
         left_initial = self._initial_after_operator()
         omega = np.asarray(
-            _core.kpm_chebyshev_vectors(
-                self._spectrum_R._rescaled_matrix,
+            self._spectrum_R._rescaled_operator.chebyshev_vectors(
                 left_initial,
                 self.num_moments,
             ),
@@ -702,7 +731,7 @@ def _velocity(hamiltonian, params, operator, positions):
         direction = directions[operator]
     except KeyError as error:
         raise ValueError(f"{operator} is not an allowed direction.") from error
-    dense = _dense_matrix(hamiltonian, params=params)
+    sparse = _csr_matrix(hamiltonian, params=params)
     if _is_system(hamiltonian):
         positions = _orbital_positions(hamiltonian)
     if positions is None:
@@ -710,9 +739,12 @@ def _velocity(hamiltonian, params, operator, positions):
     positions = np.asarray(positions, dtype=float)
     if positions.ndim != 2 or direction >= positions.shape[1]:
         raise ValueError(f"{operator} is not an allowed direction.")
-    return np.asarray(
-        _core.kpm_velocity_operator(dense, positions, direction),
-        dtype=complex,
+    return _MatrixOperator(
+        native=_core.kpm_sparse_velocity_operator(
+            *_csr_parts(sparse),
+            positions,
+            direction,
+        )
     )
 
 
@@ -768,13 +800,16 @@ def lorentz_kernel(moments, l=4):
 
 def _rescale(hamiltonian, eps, v0, bounds):
     """Return the Rust-rescaled Hamiltonian and affine energy scale."""
-    del v0
-    matrix, half_width, center = _core.kpm_rescale_hamiltonian(
-        _dense_matrix(hamiltonian),
+    matrix = _csr_matrix(hamiltonian)
+    if v0 is None:
+        v0 = np.ones(matrix.shape[0], dtype=complex)
+    native = _core.kpm_rescale_csr_hamiltonian(
+        *_csr_parts(matrix),
+        np.asarray(v0, dtype=complex),
         eps,
         bounds,
     )
-    return _RescaledOperator(matrix), (half_width, center)
+    return _RescaledOperator(native), (native.half_width, native.center)
 
 
 def _chebyshev_nodes(n_sampling):

@@ -21,14 +21,18 @@ hybrid Wannier centers, reduced polarization, mesh-converged time-reversal
 sources, local-observable projection, and structure-preserving model
 transformations in Rust. Arbitrary finite site selections provide open
 boundaries, incomplete cells, vacancies, and onsite disorder while preserving
-source-site provenance. It also provides discrete-symmetry validation and all
-ten Altland--Zirnbauer Gaussian and circular random-matrix ensembles through
-the native core, together with LLL lattice reduction, closest-vector search,
-Voronoi neighbors, gauge-covariant Wannier projection, sampled-frame overlaps,
-multidimensional FFTs, spread decomposition, and periodic matrix
-interpolation, including a native multidimensional maximal-localization
-optimizer and fixed-rank SMV disentanglement with frozen subspaces. The native
-response core additionally evaluates band-resolved Kubo Berry curvature,
+source-site provenance. Kernel-polynomial spectra and Kubo-Bastin responses use
+canonical CSR operators, matrix-free Lanczos rescaling, Chebyshev recurrences,
+sparse observation operators, and sparsity-preserving velocity commutators;
+scientific-scale paths never construct a dense Hamiltonian. It also provides
+discrete-symmetry validation and all ten Altland--Zirnbauer Gaussian and
+circular random-matrix ensembles through the native core, together with LLL
+lattice reduction, closest-vector search, Voronoi neighbors, gauge-covariant
+Wannier projection, sampled-frame overlaps, multidimensional FFTs, spread
+decomposition, and periodic matrix interpolation, including a native
+multidimensional maximal-localization optimizer and fixed-rank SMV
+disentanglement with frozen subspaces. The native response core additionally
+evaluates band-resolved Kubo Berry curvature,
 occupation-weighted Hall geometry, and finite-temperature Berry-curvature
 dipoles from explicit Hamiltonian derivatives and quadrature weights. The Python
 extension and compatibility layers pass all 98 pinned PythTB 2.0 tests and all

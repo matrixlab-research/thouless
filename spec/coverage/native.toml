@@ -18,10 +18,9 @@ status = "implemented"
 [[capability]]
 id = "spectrum.kernel_polynomial"
 description = "Kernel-polynomial spectral densities, operator-resolved moments, quadrature, and Kubo-Bastin two-operator response"
-native_api = "thouless::kpm::{rescale_hamiltonian,chebyshev_vectors,scalar_moments,reconstruct,correlation_moments,correlation_integral_factor,correlation_response}"
-test = "src/kpm.rs, tests/native_kpm.rs, compatibility boundary with Python eigensolvers disabled, and complete pinned Kwant KPM module"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/5"
+native_api = "thouless::linear_operator::{LinearOperator,CsrMatrix} and thouless::kpm::{rescale_sparse_hamiltonian,estimate_spectral_bounds,chebyshev_vectors,scalar_moments_with_operator,reconstruct,sparse_velocity_operator,correlation_moments,correlation_integral_factor,correlation_response}"
+test = "src/kpm.rs dense-versus-CSR equivalence, 100000-dimensional O(nnz) recurrence, sparse velocity, trace-sum, rescaling, and response invariants; tests/native_kpm.rs; no-dense compatibility boundary; and complete pinned Kwant KPM module"
+status = "implemented"
 
 [[capability]]
 id = "spectrum.lead_bands"
