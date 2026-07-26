@@ -17,6 +17,10 @@ except ModuleNotFoundError:  # Python 3.10 and older
 ROOT = Path(__file__).resolve().parents[1]
 COVERAGE = ROOT / "spec" / "coverage"
 UPSTREAM = ROOT / "spec" / "upstream"
+NATIVE_LANGUAGE_CONTRACT = (
+    ROOT / "spec" / "api" / "thouless-native-languages.toml"
+)
+NATIVE_LANGUAGE_DESIGN = ROOT / "docs" / "native-language-api-design.md"
 AGENT_ENTRYPOINT = ROOT / "AGENTS.md"
 AGENT_INSTRUCTION = ROOT / "instructions" / "scientific-software-reimplementation.md"
 AGENT_INSTRUCTION_REFERENCE = "instructions/scientific-software-reimplementation.md"
@@ -141,8 +145,73 @@ def check_agent_instructions() -> None:
         fail(f"agent instruction is missing required terms: {missing_terms}")
 
 
+def check_native_language_contract() -> None:
+    if not NATIVE_LANGUAGE_DESIGN.is_file():
+        fail(f"{NATIVE_LANGUAGE_DESIGN.relative_to(ROOT)} is missing")
+    if not NATIVE_LANGUAGE_CONTRACT.is_file():
+        fail(f"{NATIVE_LANGUAGE_CONTRACT.relative_to(ROOT)} is missing")
+
+    instruction = AGENT_INSTRUCTION.read_text(encoding="utf-8")
+    for reference in (
+        "../docs/native-language-api-design.md",
+        "../spec/api/thouless-native-languages.toml",
+    ):
+        if reference not in instruction:
+            fail(f"agent instruction does not reference {reference}")
+
+    with NATIVE_LANGUAGE_CONTRACT.open("rb") as source:
+        contract = tomllib.load(source)
+    if contract.get("status") != "design":
+        fail("native language contract must remain an explicit design")
+    if not contract.get("contract_version"):
+        fail("native language contract has no version")
+    if set(contract.get("languages", {})) != {"rust", "python", "julia"}:
+        fail("native language contract must name Rust, Python, and Julia")
+    tracking = contract.get("tracking", {})
+    expected_tracking = {
+        "rust_contract",
+        "python_native",
+        "julia_native",
+        "cross_language_ci",
+    }
+    if set(tracking) != expected_tracking:
+        fail("native language contract has incomplete issue tracking")
+    for issue in tracking.values():
+        if not ISSUE_PATTERN.match(issue):
+            fail("native language contract has an invalid gap issue")
+
+    workflows = contract.get("workflow", [])
+    identifiers = [workflow.get("id") for workflow in workflows]
+    if len(identifiers) != len(set(identifiers)):
+        fail("native language contract contains duplicate workflow identifiers")
+    for index, workflow in enumerate(workflows, start=1):
+        for language in ("rust", "python", "julia"):
+            if not workflow.get(language):
+                fail(
+                    "native language contract workflow "
+                    f"{index} has no {language} namespace"
+                )
+
+    with (COVERAGE / "native.toml").open("rb") as source:
+        native = tomllib.load(source)
+    expected = {
+        capability["id"]
+        for capability in native.get("capability", [])
+        if capability["id"] != "validation.held_out"
+    }
+    actual = set(identifiers)
+    if expected != actual:
+        missing = sorted(expected - actual)
+        unexpected = sorted(actual - expected)
+        fail(
+            "native language contract does not match native capabilities: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+
+
 def main() -> None:
     check_agent_instructions()
+    check_native_language_contract()
     matrices = sorted(COVERAGE.glob("*.toml"))
     if not matrices:
         fail("no coverage matrices found")
@@ -162,8 +231,9 @@ def main() -> None:
         check_compatibility_test(test)
 
     print(
-        f"validated agent instructions, {len(matrices)} coverage matrices, "
-        f"{len(manifests)} upstream manifests, and {len(tests)} test modules"
+        "validated agent instructions, native language design, "
+        f"{len(matrices)} coverage matrices, {len(manifests)} upstream "
+        f"manifests, and {len(tests)} test modules"
     )
 
 
