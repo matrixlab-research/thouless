@@ -32,6 +32,77 @@ def test_builder_and_finalized_system_contract() -> None:
     np.testing.assert_allclose(sparse_hamiltonian.toarray(), hamiltonian)
 
 
+def test_mixed_orbital_submatrices_use_the_rust_block_assembler(
+    monkeypatch,
+) -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    two_orbitals = kwant.lattice.chain(norbs=2, name="two")
+    one_orbital = kwant.lattice.chain(norbs=1, name="one")
+    first = two_orbitals(0)
+    second = one_orbital(1)
+    onsite = np.asarray([[1.0, 0.25j], [-0.25j, 2.0]])
+    neighbor_onsite = np.asarray([[3.0]])
+    hopping = np.asarray([[4.0 + 0.5j], [5.0 - 0.75j]])
+    builder = kwant.Builder()
+    builder[first] = onsite
+    builder[second] = neighbor_onsite
+    builder[first, second] = hopping
+    finalized = builder.finalized()
+    first_index = finalized.id_by_site[first]
+    second_index = finalized.id_by_site[second]
+
+    calls = []
+    original = kwant.system._core.block_hamiltonian_csr
+
+    def traced(*args, **kwargs):
+        calls.append((args[2], args[3]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        kwant.system._core,
+        "block_hamiltonian_csr",
+        traced,
+    )
+
+    def forbidden_periodic_assembler(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError(
+            "finite-system assembly used the periodic dense model path"
+        )
+
+    monkeypatch.setattr(
+        kwant.builder._core,
+        "hamiltonian",
+        forbidden_periodic_assembler,
+    )
+    rows = [second_index, first_index, second_index]
+    columns = [first_index, second_index]
+    dense, row_norbs, column_norbs = finalized.hamiltonian_submatrix(
+        to_sites=rows,
+        from_sites=columns,
+        return_norb=True,
+    )
+    sparse = finalized.hamiltonian_submatrix(
+        to_sites=rows,
+        from_sites=columns,
+        sparse=True,
+    )
+    expected = np.block(
+        [
+            [hopping.conj().T, neighbor_onsite],
+            [onsite, hopping],
+            [hopping.conj().T, neighbor_onsite],
+        ]
+    )
+
+    np.testing.assert_allclose(dense, expected)
+    np.testing.assert_allclose(sparse.toarray(), expected)
+    np.testing.assert_array_equal(row_norbs, [1, 2, 1])
+    np.testing.assert_array_equal(column_norbs, [2, 1])
+    assert sparse.format == "coo"
+    assert calls == [(rows, columns), (rows, columns)]
+
+
 def test_low_level_system_protocol_and_plotter_iterators() -> None:
     kwant = require_compat_module("kwant", ISSUE_URL)
     lattice = kwant.lattice.chain(norbs=1)

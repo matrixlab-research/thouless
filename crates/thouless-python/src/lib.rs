@@ -2,6 +2,7 @@ use pyo3::create_exception;
 use pyo3::exceptions::{PyIndexError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use thouless::bands::PeriodicBands;
+use thouless::block_system::{assemble_block_csr, SiteBlock};
 use thouless::continuum::{
     finite_difference_stencil, landau_ladder_coefficient, DifferentialFactor,
 };
@@ -88,6 +89,8 @@ type LeadInput = (
     Vec<Vec<Complex64>>,
 );
 type LocalizedSelfEnergyInput = (Vec<usize>, MatrixRows);
+type SiteBlockInput = (usize, usize, MatrixRows);
+type BlockCsrOutput = ((usize, usize), Vec<usize>, Vec<usize>, Vec<Complex64>);
 type OpenSystemOutput = (
     Vec<Vec<Complex64>>,
     Vec<Vec<Vec<Complex64>>>,
@@ -1808,6 +1811,29 @@ fn hamiltonian(
 }
 
 #[pyfunction]
+fn block_hamiltonian_csr(
+    site_dofs: Vec<usize>,
+    blocks: Vec<SiteBlockInput>,
+    row_sites: Vec<usize>,
+    column_sites: Vec<usize>,
+) -> PyResult<BlockCsrOutput> {
+    let blocks = blocks
+        .into_iter()
+        .map(|(row, column, matrix)| {
+            matrix_from_rows(matrix).map(|matrix| SiteBlock::new(row, column, matrix))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let assembled =
+        assemble_block_csr(&site_dofs, &blocks, &row_sites, &column_sites).map_err(value_error)?;
+    Ok((
+        assembled.shape(),
+        assembled.row_offsets().to_vec(),
+        assembled.column_indices().to_vec(),
+        assembled.values().to_vec(),
+    ))
+}
+
+#[pyfunction]
 fn eigensystem(
     primitive_vectors: Vec<Vec<f64>>,
     periodic_axes: Vec<usize>,
@@ -3249,6 +3275,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(hamiltonian, module)?)?;
+    module.add_function(wrap_pyfunction!(block_hamiltonian_csr, module)?)?;
     module.add_function(wrap_pyfunction!(eigensystem, module)?)?;
     module.add_function(wrap_pyfunction!(remove_model_orbitals, module)?)?;
     module.add_function(wrap_pyfunction!(change_model_nonperiodic_vector, module)?)?;

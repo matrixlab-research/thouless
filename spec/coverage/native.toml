@@ -3,9 +3,9 @@ overall_status = "Incomplete"
 
 [[capability]]
 id = "model.structure"
-description = "Shared periodic or finite lattice, orbital, onsite, and hopping representation"
-native_api = "thouless::model"
-test = "tests/native_model.rs scalar, block-orbital, finite, embedded periodic, invalid-structure, and 16 generated multiorbital model families"
+description = "Shared periodic or finite lattice, orbital, onsite, and hopping representation, including direct variable-orbital finite-system block assembly"
+native_api = "thouless::model and thouless::block_system::{assemble_block_csr,SiteBlock,BlockCsrMatrix}"
+test = "tests/native_model.rs scalar, block-orbital, finite, embedded periodic, invalid-structure, and 16 generated multiorbital model families; src/block_system.rs mixed-orbital, selected, repeated, rectangular, empty, duplicate-contribution, and invalid-block contracts"
 status = "implemented"
 
 [[capability]]

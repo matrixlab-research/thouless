@@ -7,6 +7,8 @@ import copy
 
 import numpy as np
 
+from thouless import _core
+
 
 def _block(value, rows, columns):
     array = np.asarray(value, dtype=complex)
@@ -14,6 +16,8 @@ def _block(value, rows, columns):
         if rows != columns:
             raise ValueError("A scalar Hamiltonian block must be square")
         return np.eye(rows, dtype=complex) * array
+    if array.ndim == 1 and array.size == rows * columns:
+        return array.reshape(rows, columns).copy()
     if array.shape != (rows, columns):
         raise ValueError(
             f"Hamiltonian block has shape {array.shape}, "
@@ -22,7 +26,7 @@ def _block(value, rows, columns):
     return array
 
 
-def _orbital_counts(system, args, params):
+def _onsite_blocks(system, args, params):
     ranges = getattr(system, "site_ranges", None)
     if ranges:
         counts = np.empty(system.graph.num_nodes, dtype=int)
@@ -34,19 +38,32 @@ def _orbital_counts(system, args, params):
             counts[int(start) : int(stop)] = int(norbs)
     else:
         counts = np.ones(system.graph.num_nodes, dtype=int)
+    blocks = []
     for index in range(system.graph.num_nodes):
         onsite = np.asarray(
-            system.hamiltonian(index, index, *args, params=params)
+            system.hamiltonian(index, index, *args, params=params),
+            dtype=complex,
         )
         if onsite.ndim == 0:
-            continue
-        if onsite.ndim != 2 or onsite.shape[0] != onsite.shape[1]:
+            block = np.eye(int(counts[index]), dtype=complex) * onsite
+        elif (
+            onsite.ndim == 1
+            and onsite.size == int(counts[index]) ** 2
+        ):
+            block = onsite.reshape(
+                int(counts[index]),
+                int(counts[index]),
+            )
+        elif onsite.ndim != 2 or onsite.shape[0] != onsite.shape[1]:
             raise ValueError(
                 f"Onsite Hamiltonian block has shape {onsite.shape}, "
                 "expected a square matrix"
             )
-        counts[index] = onsite.shape[0]
-    return counts
+        else:
+            counts[index] = onsite.shape[0]
+            block = onsite
+        blocks.append(block)
+    return counts, blocks
 
 
 class System(metaclass=abc.ABCMeta):
@@ -83,148 +100,77 @@ class System(metaclass=abc.ABCMeta):
             if from_sites is None
             else list(from_sites)
         )
-        counts = _orbital_counts(self, args, params)
-        row_offsets = np.cumsum([0, *(int(counts[index]) for index in rows)])
-        column_offsets = np.cumsum(
-            [0, *(int(counts[index]) for index in columns)]
-        )
-        if sparse:
-            from scipy import sparse as scipy_sparse
-
-            row_positions = {}
-            for position, site in enumerate(rows):
-                row_positions.setdefault(int(site), []).append(position)
-            column_positions = {}
-            for position, site in enumerate(columns):
-                column_positions.setdefault(int(site), []).append(position)
-            data = []
-            row_indices = []
-            column_indices = []
-
-            def append_block(row_site, column_site, value):
-                block = _block(
-                    value,
-                    int(counts[row_site]),
-                    int(counts[column_site]),
-                )
-                for row_position in row_positions.get(row_site, ()):
-                    row_start = int(row_offsets[row_position])
-                    for column_position in column_positions.get(
-                        column_site, ()
-                    ):
-                        column_start = int(
-                            column_offsets[column_position]
-                        )
-                        for local_row, local_column in zip(
-                            *np.nonzero(block), strict=True
-                        ):
-                            data.append(
-                                block[local_row, local_column]
-                            )
-                            row_indices.append(
-                                row_start + int(local_row)
-                            )
-                            column_indices.append(
-                                column_start + int(local_column)
-                            )
-
-            for site in row_positions.keys() & column_positions.keys():
-                append_block(
-                    site,
-                    site,
-                    self.hamiltonian(
-                        site, site, *args, params=params
-                    ),
-                )
-
-            try:
-                graph_edges = iter(self.graph)
-            except TypeError:
-                graph_edges = (
-                    (row_site, column_site)
-                    for row_site in row_positions
-                    for column_site in column_positions
-                    if row_site != column_site
-                    and self.graph.has_edge(row_site, column_site)
-                )
-            seen = set()
-            for row_site, column_site in graph_edges:
-                row_site = int(row_site)
-                column_site = int(column_site)
-                edge = row_site, column_site
-                if (
-                    edge in seen
-                    or row_site not in row_positions
-                    or column_site not in column_positions
-                ):
-                    continue
-                seen.add(edge)
-                try:
-                    value = self.hamiltonian(
-                        row_site,
-                        column_site,
-                        *args,
-                        params=params,
-                    )
-                except KeyError:
-                    continue
-                append_block(row_site, column_site, value)
-
-            output = scipy_sparse.coo_matrix(
-                (data, (row_indices, column_indices)),
-                shape=(
-                    int(row_offsets[-1]),
-                    int(column_offsets[-1]),
-                ),
-                dtype=complex,
+        counts, onsite_blocks = _onsite_blocks(self, args, params)
+        row_sites = {int(site) for site in rows}
+        column_sites = {int(site) for site in columns}
+        blocks = [
+            (site, site, onsite_blocks[site].tolist())
+            for site in row_sites & column_sites
+        ]
+        try:
+            graph_edges = iter(self.graph)
+        except TypeError:
+            graph_edges = (
+                (row_site, column_site)
+                for row_site in row_sites
+                for column_site in column_sites
+                if row_site != column_site
+                and self.graph.has_edge(row_site, column_site)
             )
-            if return_norb:
-                return (
-                    output,
-                    counts[np.asarray(rows, dtype=int)],
-                    counts[np.asarray(columns, dtype=int)],
+        seen = set()
+        for row_site, column_site in graph_edges:
+            row_site = int(row_site)
+            column_site = int(column_site)
+            edge = row_site, column_site
+            if (
+                edge in seen
+                or row_site not in row_sites
+                or column_site not in column_sites
+            ):
+                continue
+            seen.add(edge)
+            try:
+                value = self.hamiltonian(
+                    row_site,
+                    column_site,
+                    *args,
+                    params=params,
                 )
-            return output
+            except KeyError:
+                continue
+            block = _block(
+                value,
+                int(counts[row_site]),
+                int(counts[column_site]),
+            )
+            blocks.append((row_site, column_site, block.tolist()))
 
-        matrix = np.zeros(
-            (int(row_offsets[-1]), int(column_offsets[-1])),
-            dtype=complex,
+        from scipy import sparse as scipy_sparse
+
+        shape, row_offsets, column_indices, values = (
+            _core.block_hamiltonian_csr(
+                counts.tolist(),
+                blocks,
+                rows,
+                columns,
+            )
         )
-        for row_position, row_site in enumerate(rows):
-            for column_position, column_site in enumerate(columns):
-                if row_site != column_site:
-                    try:
-                        if not self.graph.has_edge(row_site, column_site):
-                            continue
-                    except AttributeError:
-                        pass
-                try:
-                    value = self.hamiltonian(
-                        row_site,
-                        column_site,
-                        *args,
-                        params=params,
-                    )
-                except KeyError:
-                    continue
-                block = _block(
-                    value,
-                    int(counts[row_site]),
-                    int(counts[column_site]),
-                )
-                matrix[
-                    row_offsets[row_position] : row_offsets[row_position + 1],
-                    column_offsets[
-                        column_position
-                    ] : column_offsets[column_position + 1],
-                ] = block
+        matrix = scipy_sparse.csr_matrix(
+            (
+                np.asarray(values, dtype=complex),
+                np.asarray(column_indices, dtype=int),
+                np.asarray(row_offsets, dtype=int),
+            ),
+            shape=shape,
+        )
+        output = matrix.tocoo() if sparse else matrix.toarray()
         if return_norb:
             return (
-                matrix,
+                output,
                 counts[np.asarray(rows, dtype=int)],
                 counts[np.asarray(columns, dtype=int)],
             )
-        return matrix
+        return output
 
     def __str__(self):
         return (

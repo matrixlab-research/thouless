@@ -1621,86 +1621,15 @@ class FiniteSystem(system_module.FiniteSystem):
         *,
         params=None,
     ):
-        if sparse:
-            return system_module.System.hamiltonian_submatrix(
-                self,
-                args=args,
-                to_sites=to_sites,
-                from_sites=from_sites,
-                sparse=True,
-                return_norb=return_norb,
-                params=params,
-            )
-        onsite_values = self._evaluated_onsites(args, params)
-        dofs = [
-            _onsite_dimension(value, site.family.norbs)
-            for site, value in zip(self.sites, onsite_values, strict=True)
-        ]
-        offsets = [0]
-        for count in dofs:
-            offsets.append(offsets[-1] + count)
-        site_positions = []
-        for site in self.sites:
-            try:
-                position = np.asarray(site.pos, dtype=float)
-            except AttributeError:
-                position = np.empty(0, dtype=float)
-            site_positions.append(position)
-        dimension = max((len(position) for position in site_positions), default=0)
-        primitive = np.eye(dimension)
-        positions = [
-            np.pad(position, (0, dimension - len(position)))
-            for position in site_positions
-        ]
-        onsites = []
-        for value, count in zip(onsite_values, dofs, strict=True):
-            onsites.append(_block(value, count, count, onsite=True).tolist())
-        hoppings = []
-        for (first, second), value in self._builder._hoppings.items():
-            if first not in self.id_by_site or second not in self.id_by_site:
-                continue
-            evaluated = _evaluate(value, (first, second), args, params)
-            block = _block(
-                evaluated,
-                dofs[self.id_by_site[first]],
-                dofs[self.id_by_site[second]],
-            )
-            hoppings.append(
-                (
-                    self.id_by_site[first],
-                    self.id_by_site[second],
-                    [0] * dimension,
-                    block.tolist(),
-                )
-            )
-        matrix = np.asarray(
-            _core.hamiltonian(
-                primitive.tolist(),
-                [],
-                [position.tolist() for position in positions],
-                dofs,
-                onsites,
-                hoppings,
-                [],
-            ),
-            dtype=complex,
+        return system_module.System.hamiltonian_submatrix(
+            self,
+            args=args,
+            to_sites=to_sites,
+            from_sites=from_sites,
+            sparse=sparse,
+            return_norb=return_norb,
+            params=params,
         )
-        selected_rows = list(range(len(self.sites))) if to_sites is None else list(to_sites)
-        selected_columns = (
-            list(range(len(self.sites))) if from_sites is None else list(from_sites)
-        )
-        row_basis = np.concatenate(
-            [np.arange(offsets[index], offsets[index + 1]) for index in selected_rows]
-        )
-        column_basis = np.concatenate(
-            [np.arange(offsets[index], offsets[index + 1]) for index in selected_columns]
-        )
-        result = matrix[np.ix_(row_basis, column_basis)]
-        if return_norb:
-            return result, np.asarray([dofs[index] for index in selected_rows]), np.asarray(
-                [dofs[index] for index in selected_columns]
-            )
-        return result
 
     def _transport_data(
         self,

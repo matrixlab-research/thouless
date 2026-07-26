@@ -21,11 +21,10 @@ source_entries = [
 ]
 compat_entry = "python/kwant"
 rust_capability = "model.structure"
-public_test = "compat-tests/test_kwant_api.py"
-source_test = "complete pinned builder module: construction, key validation, symmetry operators, finalization, Hamiltonian, parameter binding and renaming, low-level and automatically attached leads, lead padding, Peierls phase insertion, sparse-submatrix, pickling, fill, dangling, and hopping-kind behavior"
-actual_result = "33 source tests passed"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/5"
+public_test = "compat-tests/test_kwant_api.py mixed-orbital reordered and repeated dense/sparse submatrix contract through a traced Rust entry point, with the prior periodic dense assembler disabled"
+source_test = "complete pinned builder and low-level system modules: construction, key validation, symmetry operators, finalization, Hamiltonian, parameter binding and renaming, low-level and automatically attached leads, lead padding, Peierls phase insertion, dense and sparse submatrices, pickling, fill, dangling, and hopping-kind behavior"
+actual_result = "32 builder and 2 low-level system source tests passed; Rust owns variable-orbital selected block assembly, duplicate accumulation, canonical CSR construction, and rectangular or empty submatrix dimensions for both dense and sparse compatibility calls; Python retains source object state, callback evaluation, argument validation, and NumPy/SciPy conversion"
+status = "implemented"
 
 [[interface]]
 name = "lattice families"
