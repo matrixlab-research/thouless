@@ -248,7 +248,7 @@ def test_steady_state_solver_uses_the_rust_open_system_core(
     finalized = system.finalized()
 
     called = []
-    original = kwant.solvers._core.open_system_from_self_energies
+    original = kwant.solvers._core.sparse_open_system
 
     def traced(*args, **kwargs):
         called.append(True)
@@ -256,7 +256,7 @@ def test_steady_state_solver_uses_the_rust_open_system_core(
 
     monkeypatch.setattr(
         kwant.solvers._core,
-        "open_system_from_self_energies",
+        "sparse_open_system",
         traced,
     )
 
@@ -282,6 +282,79 @@ def test_steady_state_solver_uses_the_rust_open_system_core(
     assert density.shape == (4,)
     assert states(0).shape == (1, 4)
     assert len(called) == 4
+
+
+def test_large_open_system_path_never_materializes_the_device_dense(
+    monkeypatch,
+) -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    dimension = 20_000
+    lattice = kwant.lattice.chain(norbs=1)
+    system = kwant.Builder()
+    system[(lattice(index) for index in range(dimension))] = 0.0
+    system[lattice.neighbors()] = -0.35
+
+    def selfenergy(energy, args=()):
+        del energy, args
+        return np.asarray([[-0.5j]])
+
+    system.leads.append(
+        kwant.builder.SelfEnergyLead(
+            selfenergy,
+            [lattice(0)],
+            (),
+        )
+    )
+    system.leads.append(
+        kwant.builder.SelfEnergyLead(
+            selfenergy,
+            [lattice(dimension - 1)],
+            (),
+        )
+    )
+    finalized = system.finalized()
+
+    def forbidden_dense_hamiltonian(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError(
+            "sparse transport materialized a dense device Hamiltonian"
+        )
+
+    monkeypatch.setattr(
+        kwant.builder._core,
+        "hamiltonian",
+        forbidden_dense_hamiltonian,
+    )
+    captured = {}
+    original = kwant.solvers._core.sparse_open_system
+
+    def traced(shape, row_offsets, column_indices, values, *args):
+        captured["shape"] = shape
+        captured["offsets"] = len(row_offsets)
+        captured["nnz"] = len(values)
+        result = original(
+            shape,
+            row_offsets,
+            column_indices,
+            values,
+            *args,
+        )
+        captured["solver_nnz"] = result.solver_nnz
+        return result
+
+    monkeypatch.setattr(
+        kwant.solvers._core,
+        "sparse_open_system",
+        traced,
+    )
+    green = kwant.greens_function(finalized, energy=2.0)
+
+    assert captured["shape"] == (dimension, dimension)
+    assert captured["offsets"] == dimension + 1
+    assert captured["nnz"] < 3 * dimension
+    assert captured["solver_nnz"] < 6 * dimension + 4
+    assert green.data.shape == (2, 2)
+    assert np.all(np.isfinite(green.data))
 
 
 def test_local_operators_execute_the_rust_continuity_core(monkeypatch) -> None:

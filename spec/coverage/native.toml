@@ -111,10 +111,9 @@ status = "implemented"
 [[capability]]
 id = "transport.steady_state"
 description = "Leads, modes, self-energies, Green functions, scattering, and local observables"
-native_api = "thouless::transport::{LeadContact,surface_green_function,open_system_self_energies,open_system_extrapolated_self_energies,solve_open_system_from_self_energies,solve_open_system,ScatteringSolution,ScatteringMatrix}"
-test = "tests/native_transport.rs analytic lead boundaries, ballistic transmission, arbitrary embedded-self-energy spectral identity, Fisher-Lee and Green-function agreement, generated multi-terminal probability conservation, scattering-state and LDOS invariants; a compatibility boundary with NumPy inversion, eigendecomposition, and pseudoinversion disabled; complete pinned sparse-solver tests; and the pinned quantum Hall comprehensive workflow"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/3"
+native_api = "thouless::transport::{LeadContact,LocalizedSelfEnergy,SparseOpenSystem,surface_green_function,open_system_self_energies,open_system_extrapolated_self_energies,solve_open_system_from_self_energies,solve_open_system,ScatteringSolution,ScatteringMatrix} and thouless::linear_operator::{gmres_with_right_preconditioner,Ilu0Preconditioner}"
+test = "tests/native_transport.rs analytic lead boundaries, ballistic transmission, arbitrary embedded-self-energy spectral identity, dense-versus-sparse Green, Fisher-Lee, transmission, scattering-state, channel, and LDOS equivalence, generated multi-terminal probability conservation, and a 100000-dimensional O(nnz) open chain; compat-tests/test_kwant_api.py 20000-dimensional no-dense-materialization boundary with NumPy inversion, eigendecomposition, and pseudoinversion disabled; complete pinned sparse-solver tests; and the pinned quantum Hall comprehensive workflow"
+status = "implemented"
 
 [[capability]]
 id = "transport.propagating_modes"

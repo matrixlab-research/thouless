@@ -43,7 +43,7 @@ use thouless::lead_modes::{
     reexpress_modes_in_singular_hopping_basis_from_svd, setup_lead_linear_system,
     setup_lead_linear_system_from_svd, LeadLinearSystem, LeadLinearSystemOptions,
 };
-use thouless::linear_operator::{CsrMatrix, LinearOperator};
+use thouless::linear_operator::{CsrMatrix, GmresOptions, LinearOperator};
 use thouless::model::{ModelBuilder, OrbitalId, TightBindingModel};
 use thouless::observables::{
     bond_currents, local_densities, local_sources, pauli_coefficients, project_diagonal_observable,
@@ -63,10 +63,12 @@ use thouless::topology::{
 };
 use thouless::transform::{change_nonperiodic_vector, make_supercell, remove_orbitals};
 use thouless::transport::{
+    extrapolated_lead_self_energy,
     open_system_extrapolated_self_energies as native_extrapolated_self_energies,
     open_system_self_energies, partition_shot_noise, regularize_retarded_self_energy,
     retarded_lead_self_energy, solve_open_system, solve_open_system_from_self_energies,
-    square_lattice_self_energy, LeadContact, ScatteringSolution, SurfaceGreenOptions,
+    square_lattice_self_energy, LeadContact, LocalizedSelfEnergy, ScatteringSolution,
+    SparseOpenSystem, SurfaceGreenOptions,
 };
 use thouless::wannier::{
     disentangle_subspace, interpolate_periodic_matrices, inverse_bloch_transform,
@@ -85,6 +87,7 @@ type LeadInput = (
     Vec<Vec<Complex64>>,
     Vec<Vec<Complex64>>,
 );
+type LocalizedSelfEnergyInput = (Vec<usize>, MatrixRows);
 type OpenSystemOutput = (
     Vec<Vec<Complex64>>,
     Vec<Vec<Vec<Complex64>>>,
@@ -255,6 +258,121 @@ impl PyKpmHamiltonian {
 #[pyclass(name = "_OpenSystemSolution")]
 struct PyOpenSystemSolution {
     inner: ScatteringSolution,
+}
+
+#[pyclass(name = "_SparseOpenSystem")]
+struct PySparseOpenSystem {
+    inner: SparseOpenSystem,
+}
+
+#[pymethods]
+impl PySparseOpenSystem {
+    #[getter]
+    fn dimension(&self) -> usize {
+        self.inner.dimension()
+    }
+
+    #[getter]
+    fn nnz(&self) -> usize {
+        self.inner.hamiltonian_nnz()
+    }
+
+    #[getter]
+    fn solver_nnz(&self) -> usize {
+        self.inner.solver_nnz()
+    }
+
+    #[getter]
+    fn self_energy_orbitals(&self) -> Vec<Vec<usize>> {
+        self.inner
+            .self_energies()
+            .iter()
+            .map(|contact| contact.orbitals().to_vec())
+            .collect()
+    }
+
+    #[getter]
+    fn self_energies(&self) -> MatrixGrid {
+        self.inner
+            .self_energies()
+            .iter()
+            .map(|contact| matrix_to_rows(contact.matrix()))
+            .collect()
+    }
+
+    #[getter]
+    fn broadenings(&self) -> MatrixGrid {
+        matrices_to_rows(self.inner.broadenings())
+    }
+
+    #[getter]
+    fn local_density_of_states(&self) -> PyResult<Vec<f64>> {
+        self.inner.local_density_of_states().map_err(value_error)
+    }
+
+    fn green_block(
+        &self,
+        drain_orbitals: Vec<usize>,
+        source_orbitals: Vec<usize>,
+    ) -> PyResult<MatrixRows> {
+        self.inner
+            .green_block(&drain_orbitals, &source_orbitals)
+            .map(|matrix| matrix_to_rows(&matrix))
+            .map_err(value_error)
+    }
+
+    #[pyo3(signature = (explicit, relative_tolerance=1.0e-10))]
+    fn channel_counts(
+        &self,
+        explicit: Vec<Option<usize>>,
+        relative_tolerance: f64,
+    ) -> PyResult<Vec<usize>> {
+        self.inner
+            .channel_counts(&explicit, relative_tolerance)
+            .map_err(value_error)
+    }
+
+    fn green_function_transmissions(&self, channel_counts: Vec<usize>) -> PyResult<Vec<Vec<f64>>> {
+        self.inner
+            .green_function_transmission_matrix(&channel_counts)
+            .map_err(value_error)
+    }
+
+    fn broadening_factor(&self, lead: usize, channel_count: usize) -> PyResult<MatrixRows> {
+        self.inner
+            .broadening_factor(lead, channel_count)
+            .map(|matrix| matrix_to_rows(&matrix))
+            .map_err(value_error)
+    }
+
+    fn scattering_states(&self, injection_factors: MatrixGrid) -> PyResult<MatrixGrid> {
+        let injection_factors = matrices_from_rows(injection_factors)?;
+        self.inner
+            .scattering_states(&injection_factors)
+            .map(|states| matrices_to_rows(&states))
+            .map_err(value_error)
+    }
+
+    #[pyo3(signature = (incoming_factors, outgoing_factors, relative_tolerance=1.0e-13))]
+    fn scattering_matrix(
+        &self,
+        incoming_factors: MatrixGrid,
+        outgoing_factors: MatrixGrid,
+        relative_tolerance: f64,
+    ) -> PyResult<(MatrixRows, Vec<usize>, Vec<Vec<f64>>)> {
+        let incoming_factors = matrices_from_rows(incoming_factors)?;
+        let outgoing_factors = matrices_from_rows(outgoing_factors)?;
+        self.inner
+            .scattering_matrix(&incoming_factors, &outgoing_factors, relative_tolerance)
+            .map(|scattering| {
+                (
+                    matrix_to_rows(scattering.matrix()),
+                    scattering.lead_offsets().to_vec(),
+                    scattering.transmission_matrix(),
+                )
+            })
+            .map_err(value_error)
+    }
 }
 
 #[pymethods]
@@ -2093,6 +2211,50 @@ fn open_system_extrapolated_self_energies(
         .map_err(value_error)
 }
 
+#[pyfunction(signature = (cell_hamiltonian, inter_cell_hopping, interface_coupling, energy, broadening=None))]
+fn extrapolated_contact_self_energy(
+    cell_hamiltonian: MatrixRows,
+    inter_cell_hopping: MatrixRows,
+    interface_coupling: MatrixRows,
+    energy: f64,
+    broadening: Option<f64>,
+) -> PyResult<MatrixRows> {
+    let contact = LeadContact::new(
+        matrix_from_rows(cell_hamiltonian)?,
+        matrix_from_rows(inter_cell_hopping)?,
+        matrix_from_rows(interface_coupling)?,
+    )
+    .map_err(value_error)?;
+    let mut options = SurfaceGreenOptions::default();
+    if let Some(broadening) = broadening {
+        options.broadening = broadening;
+    }
+    extrapolated_lead_self_energy(&contact, energy, options)
+        .map(|matrix| matrix_to_rows(&matrix))
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn sparse_open_system(
+    shape: (usize, usize),
+    row_offsets: Vec<usize>,
+    column_indices: Vec<usize>,
+    values: Vec<Complex64>,
+    self_energies: Vec<LocalizedSelfEnergyInput>,
+    energy: f64,
+) -> PyResult<PySparseOpenSystem> {
+    let hamiltonian = csr_from_parts(shape.0, shape.1, row_offsets, column_indices, values)?;
+    let self_energies = self_energies
+        .into_iter()
+        .map(|(orbitals, matrix)| {
+            LocalizedSelfEnergy::new(orbitals, matrix_from_rows(matrix)?).map_err(value_error)
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    SparseOpenSystem::new(hamiltonian, self_energies, energy, GmresOptions::default())
+        .map(|inner| PySparseOpenSystem { inner })
+        .map_err(value_error)
+}
+
 #[pyfunction]
 fn open_system_from_self_energies(
     device_hamiltonian: MatrixRows,
@@ -3038,6 +3200,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyKpmCsrOperator>()?;
     module.add_class::<PyKpmHamiltonian>()?;
     module.add_class::<PyOpenSystemSolution>()?;
+    module.add_class::<PySparseOpenSystem>()?;
     module.add_function(wrap_pyfunction!(validate_periodic_bands, module)?)?;
     module.add_function(wrap_pyfunction!(lead_band_evaluation, module)?)?;
     module.add_function(wrap_pyfunction!(reflection_shot_noise, module)?)?;
@@ -3105,6 +3268,8 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
         open_system_extrapolated_self_energies,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(extrapolated_contact_self_energy, module)?)?;
+    module.add_function(wrap_pyfunction!(sparse_open_system, module)?)?;
     module.add_function(wrap_pyfunction!(open_system_from_self_energies, module)?)?;
     module.add_function(wrap_pyfunction!(regularize_embedded_self_energy, module)?)?;
     module.add_function(wrap_pyfunction!(open_system_solution, module)?)?;

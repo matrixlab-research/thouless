@@ -45,9 +45,8 @@ compat_entry = "python/kwant/solvers"
 rust_capability = "transport.steady_state"
 public_test = "compat-tests/test_kwant_api.py"
 source_test = "complete pinned sparse-solver parametrization plus the pinned quantum Hall comprehensive workflow: scattering matrices, Green functions, wave functions, LDOS, singular leads, mixed self-energy leads, multi-terminal conductance, precalculation, and quantized Hall plateaus"
-actual_result = "16 sparse-solver source tests, the quantum Hall comprehensive workflow, and entry-point smoke passed; Rust owns arbitrary embedded-self-energy solves, Green functions, broadenings, Caroli and Fisher-Lee transmissions, scattering matrices and states, channel inference, and LDOS, with a compatibility test disabling NumPy inversion, eigendecomposition, and pseudoinversion; scientific-scale sparse device solves remain open"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/5"
+actual_result = "All 16 sparse-solver source tests, the quantum Hall comprehensive workflow, and the complete 398-test Kwant manifest passed; Rust owns contact-local self-energies, CSR open-system assembly, zero-fill incomplete-LU right preconditioning, restarted GMRES solves, Green blocks, broadenings, Caroli and Fisher-Lee transmissions, scattering matrices and states, channel inference, and LDOS; a 20000-dimensional compatibility contract disables dense Hamiltonian assembly and bounds Hamiltonian plus solver storage by O(nnz), while Green interface blocks are evaluated lazily when only transmissions are requested"
+status = "implemented"
 
 [[interface]]
 name = "periodic lead band dispersion"

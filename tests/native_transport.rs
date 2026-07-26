@@ -1,7 +1,9 @@
+use thouless::linear_operator::{CsrMatrix, GmresOptions};
 use thouless::transport::{
     open_system_self_energies, partition_shot_noise, regularize_retarded_self_energy,
     retarded_lead_self_energy, solve_open_system, solve_open_system_from_self_energies,
-    square_lattice_self_energy, surface_green_function, LeadContact, SurfaceGreenOptions,
+    square_lattice_self_energy, surface_green_function, LeadContact, LocalizedSelfEnergy,
+    SparseOpenSystem, SurfaceGreenOptions,
 };
 use thouless::{Complex64, ComplexMatrix};
 
@@ -311,4 +313,157 @@ fn generated_multiterminal_devices_conserve_scattering_probability() {
             assert!((total - 1.0).abs() < 1.0e-10);
         }
     }
+}
+
+#[test]
+fn sparse_open_system_matches_dense_green_and_scattering_algebra() {
+    let device = ComplexMatrix::new(
+        4,
+        4,
+        vec![
+            0.2.into(),
+            (-0.8).into(),
+            0.0.into(),
+            0.0.into(),
+            (-0.8).into(),
+            (-0.1).into(),
+            (-0.6).into(),
+            0.0.into(),
+            0.0.into(),
+            (-0.6).into(),
+            0.3.into(),
+            (-0.7).into(),
+            0.0.into(),
+            0.0.into(),
+            (-0.7).into(),
+            0.1.into(),
+        ],
+    )
+    .unwrap();
+    let gamma = 1.3;
+    let left_local = ComplexMatrix::scalar(Complex64::new(0.0, -gamma / 2.0));
+    let right_local = ComplexMatrix::scalar(Complex64::new(0.0, -gamma / 2.0));
+    let left = LocalizedSelfEnergy::new(vec![0], left_local.clone()).unwrap();
+    let right = LocalizedSelfEnergy::new(vec![3], right_local.clone()).unwrap();
+    let sparse = SparseOpenSystem::new(
+        CsrMatrix::from_dense(&device, 0.0).unwrap(),
+        vec![left, right],
+        0.15,
+        GmresOptions::default(),
+    )
+    .unwrap();
+
+    let mut left_dense = ComplexMatrix::zeros(4, 4);
+    left_dense.set(0, 0, left_local.get(0, 0).unwrap()).unwrap();
+    let mut right_dense = ComplexMatrix::zeros(4, 4);
+    right_dense
+        .set(3, 3, right_local.get(0, 0).unwrap())
+        .unwrap();
+    let dense =
+        solve_open_system_from_self_energies(&device, &[left_dense, right_dense], 0.15).unwrap();
+
+    let all = [0, 1, 2, 3];
+    let sparse_green = sparse.green_block(&all, &all).unwrap();
+    for (sparse, dense) in sparse_green
+        .as_slice()
+        .iter()
+        .zip(dense.retarded_green().as_slice())
+    {
+        assert!((*sparse - dense).norm() < 1.0e-10);
+    }
+    for (sparse, dense) in sparse
+        .local_density_of_states()
+        .unwrap()
+        .iter()
+        .zip(dense.local_density_of_states())
+    {
+        assert!((*sparse - dense).abs() < 1.0e-11);
+    }
+
+    let factor = |orbital| {
+        let mut value = ComplexMatrix::zeros(4, 1);
+        value
+            .set(orbital, 0, Complex64::new(gamma.sqrt(), 0.0))
+            .unwrap();
+        value
+    };
+    let factors = [factor(0), factor(3)];
+    let sparse_scattering = sparse
+        .scattering_matrix(&factors, &factors, 1.0e-13)
+        .unwrap();
+    let dense_scattering = dense
+        .scattering_matrix(&factors, &factors, 1.0e-13)
+        .unwrap();
+    for (sparse, dense) in sparse_scattering
+        .matrix()
+        .as_slice()
+        .iter()
+        .zip(dense_scattering.matrix().as_slice())
+    {
+        assert!((*sparse - dense).norm() < 1.0e-10);
+    }
+    let sparse_green_transmission = sparse.green_function_transmission_matrix(&[1, 1]).unwrap();
+    let dense_green_transmission = dense.green_function_transmission_matrix(&[1, 1]).unwrap();
+    for drain in 0..2 {
+        for source in 0..2 {
+            assert!(
+                (sparse_green_transmission[drain][source]
+                    - dense_green_transmission[drain][source])
+                    .abs()
+                    < 1.0e-10
+            );
+        }
+    }
+}
+
+#[test]
+fn sparse_open_system_scales_to_a_large_chain_without_dense_device_storage() {
+    let dimension = 100_000;
+    let mut offsets = Vec::with_capacity(dimension + 1);
+    let mut columns = Vec::with_capacity(3 * dimension);
+    let mut values = Vec::with_capacity(3 * dimension);
+    offsets.push(0);
+    for row in 0..dimension {
+        if row > 0 {
+            columns.push(row - 1);
+            values.push(Complex64::new(-0.35, 0.0));
+        }
+        columns.push(row);
+        values.push(Complex64::new(0.1, 0.0));
+        if row + 1 < dimension {
+            columns.push(row + 1);
+            values.push(Complex64::new(-0.35, 0.0));
+        }
+        offsets.push(values.len());
+    }
+    let hamiltonian = CsrMatrix::new(dimension, dimension, offsets, columns, values).unwrap();
+    let contacts = vec![
+        LocalizedSelfEnergy::new(vec![0], ComplexMatrix::scalar(Complex64::new(0.0, -0.5)))
+            .unwrap(),
+        LocalizedSelfEnergy::new(
+            vec![dimension - 1],
+            ComplexMatrix::scalar(Complex64::new(0.0, -0.5)),
+        )
+        .unwrap(),
+    ];
+    let system = SparseOpenSystem::new(
+        hamiltonian,
+        contacts,
+        2.0,
+        GmresOptions {
+            relative_tolerance: 1.0e-10,
+            absolute_tolerance: 1.0e-12,
+            restart: 32,
+            max_iterations: 512,
+        },
+    )
+    .unwrap();
+    assert!(system.hamiltonian_nnz() < 3 * dimension);
+    assert!(system.solver_nnz() < 6 * dimension + 4);
+    let mut right = vec![Complex64::new(0.0, 0.0); dimension];
+    right[0] = Complex64::new(1.0, 0.0);
+    let solution = system.solve_vector(&right).unwrap();
+    assert_eq!(solution.len(), dimension);
+    assert!(solution.iter().all(|value| value.norm().is_finite()));
+    assert!(solution[0].norm() > solution[dimension - 1].norm());
 }

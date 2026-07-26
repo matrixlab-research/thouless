@@ -1,7 +1,13 @@
 //! Steady-state coherent transport through finite devices and periodic leads.
 
+use std::collections::BTreeMap;
+
 use nalgebra::DMatrix;
 
+use crate::linear_operator::{
+    gmres_with_right_preconditioner, CsrMatrix, GmresOptions, Ilu0Preconditioner,
+    IterativeSolveError, LinearOperatorError,
+};
 use crate::spectrum::hermitian_eigensystem;
 use crate::{Complex64, ComplexMatrix, MatrixError};
 
@@ -429,6 +435,542 @@ impl ScatteringMatrix {
     }
 }
 
+/// A retarded self-energy acting only on selected device orbitals.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LocalizedSelfEnergy {
+    orbitals: Vec<usize>,
+    matrix: ComplexMatrix,
+}
+
+impl LocalizedSelfEnergy {
+    /// Creates a local self-energy with an explicit orbital embedding.
+    pub fn new(orbitals: Vec<usize>, matrix: ComplexMatrix) -> Result<Self, TransportError> {
+        if orbitals.is_empty() || matrix.shape() != (orbitals.len(), orbitals.len()) {
+            return Err(TransportError::InvalidLocalizedSelfEnergy);
+        }
+        let mut unique = orbitals.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        if unique.len() != orbitals.len() {
+            return Err(TransportError::InvalidLocalizedSelfEnergy);
+        }
+        Ok(Self { orbitals, matrix })
+    }
+
+    /// Device-orbital indices on which this self-energy acts.
+    #[must_use]
+    pub fn orbitals(&self) -> &[usize] {
+        &self.orbitals
+    }
+
+    /// Dense contact-local self-energy matrix.
+    #[must_use]
+    pub const fn matrix(&self) -> &ComplexMatrix {
+        &self.matrix
+    }
+}
+
+/// Matrix-free open-system solver for a sparse finite Hamiltonian.
+///
+/// Lead self-energies remain dense only within their contact subspaces.
+/// Device solves use restarted GMRES and scale with the Hamiltonian nonzero
+/// count and the number of requested right-hand sides, never with a dense
+/// device inverse.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SparseOpenSystem {
+    hamiltonian: CsrMatrix,
+    self_energies: Vec<LocalizedSelfEnergy>,
+    broadenings: Vec<ComplexMatrix>,
+    retarded_operator: CsrMatrix,
+    preconditioner: Ilu0Preconditioner,
+    options: GmresOptions,
+}
+
+impl SparseOpenSystem {
+    /// Validates and constructs a sparse retarded open system.
+    pub fn new(
+        hamiltonian: CsrMatrix,
+        self_energies: Vec<LocalizedSelfEnergy>,
+        energy: f64,
+        options: GmresOptions,
+    ) -> Result<Self, TransportError> {
+        let dimension = hamiltonian.rows();
+        if dimension == 0 || hamiltonian.columns() != dimension || !energy.is_finite() {
+            return Err(TransportError::InvalidDeviceShape);
+        }
+        if !hamiltonian.is_hermitian(HERMITIAN_TOLERANCE)? {
+            return Err(TransportError::NonHermitianDevice);
+        }
+        if self_energies.iter().any(|contact| {
+            contact
+                .orbitals()
+                .iter()
+                .any(|orbital| *orbital >= dimension)
+        }) {
+            return Err(TransportError::InvalidLocalizedSelfEnergy);
+        }
+        validate_gmres_options(options)?;
+        let broadenings = self_energies
+            .iter()
+            .map(|contact| broadening_from_self_energy(contact.matrix()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let retarded_operator = assemble_retarded_operator(&hamiltonian, &self_energies, energy)?;
+        let preconditioner = Ilu0Preconditioner::factor(&retarded_operator, 1.0e-12)?;
+        Ok(Self {
+            hamiltonian,
+            self_energies,
+            broadenings,
+            retarded_operator,
+            preconditioner,
+            options,
+        })
+    }
+
+    /// Device Hilbert-space dimension.
+    #[must_use]
+    pub const fn dimension(&self) -> usize {
+        self.hamiltonian.rows()
+    }
+
+    /// Number of stored Hamiltonian entries.
+    #[must_use]
+    pub fn hamiltonian_nnz(&self) -> usize {
+        self.hamiltonian.nnz()
+    }
+
+    /// Number of stored entries in the open-system operator and ILU factors.
+    #[must_use]
+    pub fn solver_nnz(&self) -> usize {
+        self.retarded_operator.nnz() + self.preconditioner.nnz()
+    }
+
+    /// Contact-local retarded self-energies.
+    #[must_use]
+    pub fn self_energies(&self) -> &[LocalizedSelfEnergy] {
+        &self.self_energies
+    }
+
+    /// Contact-local broadening matrices.
+    #[must_use]
+    pub fn broadenings(&self) -> &[ComplexMatrix] {
+        &self.broadenings
+    }
+
+    /// Solves `(E - H - Σ) x = b` without materializing a dense device matrix.
+    pub fn solve_vector(
+        &self,
+        right_hand_side: &[Complex64],
+    ) -> Result<Vec<Complex64>, TransportError> {
+        if right_hand_side.len() != self.dimension() {
+            return Err(TransportError::InvalidScatteringFactors);
+        }
+        gmres_with_right_preconditioner(
+            &self.retarded_operator,
+            &self.preconditioner,
+            right_hand_side,
+            None,
+            self.options,
+        )
+        .map(|solution| solution.into_vector())
+        .map_err(Into::into)
+    }
+
+    /// Solves one right-hand side per input-matrix column.
+    pub fn solve_matrix(
+        &self,
+        right_hand_sides: &ComplexMatrix,
+    ) -> Result<ComplexMatrix, TransportError> {
+        if right_hand_sides.rows() != self.dimension() {
+            return Err(TransportError::InvalidScatteringFactors);
+        }
+        let column_count = right_hand_sides.columns();
+        let mut output = ComplexMatrix::zeros(self.dimension(), column_count);
+        for column in 0..column_count {
+            let right = (0..self.dimension())
+                .map(|row| right_hand_sides.as_slice()[row * column_count + column])
+                .collect::<Vec<_>>();
+            let solution = self.solve_vector(&right)?;
+            for (row, value) in solution.into_iter().enumerate() {
+                output.set(row, column, value)?;
+            }
+        }
+        Ok(output)
+    }
+
+    /// Returns a selected Green-function block.
+    ///
+    /// Only columns named by `source_orbitals` are solved, and only rows named
+    /// by `drain_orbitals` are returned.
+    pub fn green_block(
+        &self,
+        drain_orbitals: &[usize],
+        source_orbitals: &[usize],
+    ) -> Result<ComplexMatrix, TransportError> {
+        if drain_orbitals
+            .iter()
+            .chain(source_orbitals)
+            .any(|orbital| *orbital >= self.dimension())
+        {
+            return Err(TransportError::InvalidLocalizedSelfEnergy);
+        }
+        let mut right = ComplexMatrix::zeros(self.dimension(), source_orbitals.len());
+        for (column, orbital) in source_orbitals.iter().enumerate() {
+            right.set(*orbital, column, Complex64::new(1.0, 0.0))?;
+        }
+        let solved = self.solve_matrix(&right)?;
+        select_rows(&solved, drain_orbitals)
+    }
+
+    /// Returns exact diagonal local density of states values.
+    ///
+    /// This performs one sparse solve per device orbital. Scattering and
+    /// transmission methods below require only contact-channel solves.
+    pub fn local_density_of_states(&self) -> Result<Vec<f64>, TransportError> {
+        let mut values = Vec::with_capacity(self.dimension());
+        let mut right = vec![Complex64::new(0.0, 0.0); self.dimension()];
+        for orbital in 0..self.dimension() {
+            right[orbital] = Complex64::new(1.0, 0.0);
+            let solution = self.solve_vector(&right)?;
+            values.push(-solution[orbital].im / std::f64::consts::PI);
+            right[orbital] = Complex64::new(0.0, 0.0);
+        }
+        Ok(values)
+    }
+
+    /// Applies the sparse retarded Green operator to injection factors.
+    pub fn scattering_states(
+        &self,
+        injection_factors: &[ComplexMatrix],
+    ) -> Result<Vec<ComplexMatrix>, TransportError> {
+        injection_factors
+            .iter()
+            .enumerate()
+            .map(|(lead, factor)| {
+                if factor.rows() != self.dimension() {
+                    return Err(TransportError::InvalidScatteringFactor { lead });
+                }
+                let states = self.solve_matrix(factor)?;
+                let mut transposed = Vec::with_capacity(states.rows() * states.columns());
+                for channel in 0..states.columns() {
+                    for orbital in 0..states.rows() {
+                        transposed.push(states.as_slice()[orbital * states.columns() + channel]);
+                    }
+                }
+                ComplexMatrix::new(states.columns(), states.rows(), transposed).map_err(Into::into)
+            })
+            .collect()
+    }
+
+    /// Constructs a Fisher-Lee scattering matrix using sparse device solves.
+    pub fn scattering_matrix(
+        &self,
+        incoming_factors: &[ComplexMatrix],
+        outgoing_factors: &[ComplexMatrix],
+        relative_tolerance: f64,
+    ) -> Result<ScatteringMatrix, TransportError> {
+        let lead_count = self.self_energies.len();
+        if incoming_factors.len() != lead_count
+            || outgoing_factors.len() != lead_count
+            || !relative_tolerance.is_finite()
+            || relative_tolerance <= 0.0
+        {
+            return Err(TransportError::InvalidScatteringFactors);
+        }
+        let mut offsets = Vec::with_capacity(lead_count + 1);
+        offsets.push(0usize);
+        for lead in 0..lead_count {
+            if incoming_factors[lead].rows() != self.dimension()
+                || outgoing_factors[lead].rows() != self.dimension()
+                || incoming_factors[lead].columns() != outgoing_factors[lead].columns()
+            {
+                return Err(TransportError::InvalidScatteringFactor { lead });
+            }
+            offsets.push(
+                offsets[lead]
+                    .checked_add(incoming_factors[lead].columns())
+                    .ok_or(TransportError::InvalidScatteringFactors)?,
+            );
+        }
+        let solved = incoming_factors
+            .iter()
+            .map(|factor| self.solve_matrix(factor).map(|value| to_backend(&value)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let incoming = incoming_factors.iter().map(to_backend).collect::<Vec<_>>();
+        let outgoing = outgoing_factors.iter().map(to_backend).collect::<Vec<_>>();
+        let channel_count = *offsets.last().expect("offset zero was inserted");
+        let mut matrix = DMatrix::<Complex64>::zeros(channel_count, channel_count);
+        for drain in 0..lead_count {
+            for source in 0..lead_count {
+                let mut block = outgoing[drain].adjoint() * &solved[source] * -Complex64::i();
+                if drain == source && incoming[source].ncols() > 0 {
+                    let scale = frobenius_norm(&outgoing[drain]).max(1.0);
+                    let inverse = outgoing[drain]
+                        .clone()
+                        .pseudo_inverse(relative_tolerance * scale)
+                        .map_err(|_| TransportError::PseudoinverseFailure)?;
+                    block += inverse * &incoming[source];
+                }
+                for row in 0..outgoing[drain].ncols() {
+                    for column in 0..incoming[source].ncols() {
+                        matrix[(offsets[drain] + row, offsets[source] + column)] =
+                            block[(row, column)];
+                    }
+                }
+            }
+        }
+        Ok(ScatteringMatrix {
+            matrix: from_backend(&matrix)?,
+            lead_offsets: offsets,
+        })
+    }
+
+    /// Returns channel counts from explicit values or local broadenings.
+    pub fn channel_counts(
+        &self,
+        explicit: &[Option<usize>],
+        relative_tolerance: f64,
+    ) -> Result<Vec<usize>, TransportError> {
+        if explicit.len() != self.broadenings.len()
+            || !relative_tolerance.is_finite()
+            || relative_tolerance <= 0.0
+        {
+            return Err(TransportError::InvalidChannelCounts);
+        }
+        explicit
+            .iter()
+            .zip(&self.broadenings)
+            .map(|(count, broadening)| {
+                count.map_or_else(
+                    || broadening_channel_count(broadening, relative_tolerance),
+                    Ok,
+                )
+            })
+            .collect()
+    }
+
+    /// Embeds a square root of one contact broadening in the device basis.
+    pub fn broadening_factor(
+        &self,
+        lead: usize,
+        channel_count: usize,
+    ) -> Result<ComplexMatrix, TransportError> {
+        let broadening = self
+            .broadenings
+            .get(lead)
+            .ok_or(TransportError::UnknownLead { lead })?;
+        let local = broadening_factor_from_matrix(broadening, channel_count)?;
+        embed_rows(
+            self.dimension(),
+            self.self_energies[lead].orbitals(),
+            &local,
+        )
+    }
+
+    /// Returns Green-function transmission and reflection values.
+    ///
+    /// Each source requires one sparse solve per nonzero broadening
+    /// eigenchannel.
+    pub fn green_function_transmission_matrix(
+        &self,
+        channel_counts: &[usize],
+    ) -> Result<Vec<Vec<f64>>, TransportError> {
+        if channel_counts.len() != self.self_energies.len() {
+            return Err(TransportError::InvalidChannelCounts);
+        }
+        let local_factors = self
+            .broadenings
+            .iter()
+            .zip(channel_counts)
+            .map(|(broadening, count)| broadening_factor_from_matrix(broadening, *count))
+            .collect::<Result<Vec<_>, _>>()?;
+        let embedded_factors = local_factors
+            .iter()
+            .zip(&self.self_energies)
+            .map(|(factor, contact)| embed_rows(self.dimension(), contact.orbitals(), factor))
+            .collect::<Result<Vec<_>, _>>()?;
+        let solved = embedded_factors
+            .iter()
+            .map(|factor| self.solve_matrix(factor))
+            .collect::<Result<Vec<_>, _>>()?;
+        (0..self.self_energies.len())
+            .map(|drain| {
+                (0..self.self_energies.len())
+                    .map(|source| {
+                        let selected =
+                            select_rows(&solved[source], self.self_energies[drain].orbitals())?;
+                        let amplitudes =
+                            to_backend(&local_factors[drain]).adjoint() * to_backend(&selected);
+                        let mut value = amplitudes.iter().map(Complex64::norm_sqr).sum();
+                        if drain == source {
+                            value += 2.0 * amplitudes.trace().im + channel_counts[source] as f64;
+                        }
+                        Ok(value)
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+}
+
+fn assemble_retarded_operator(
+    hamiltonian: &CsrMatrix,
+    self_energies: &[LocalizedSelfEnergy],
+    energy: f64,
+) -> Result<CsrMatrix, TransportError> {
+    let dimension = hamiltonian.rows();
+    let mut rows = (0..dimension)
+        .map(|row| {
+            let mut values = BTreeMap::new();
+            values.insert(row, Complex64::new(energy, 0.0));
+            values
+        })
+        .collect::<Vec<_>>();
+    for (row, values) in rows.iter_mut().enumerate() {
+        for entry in hamiltonian.row_offsets()[row]..hamiltonian.row_offsets()[row + 1] {
+            *values
+                .entry(hamiltonian.column_indices()[entry])
+                .or_default() -= hamiltonian.values()[entry];
+        }
+    }
+    for contact in self_energies {
+        let local_dimension = contact.orbitals().len();
+        for (local_row, device_row) in contact.orbitals().iter().copied().enumerate() {
+            for (local_column, device_column) in contact.orbitals().iter().copied().enumerate() {
+                *rows[device_row].entry(device_column).or_default() -=
+                    contact.matrix().as_slice()[local_row * local_dimension + local_column];
+            }
+        }
+    }
+    let mut row_offsets = Vec::with_capacity(dimension + 1);
+    let mut column_indices = Vec::new();
+    let mut values = Vec::new();
+    row_offsets.push(0);
+    for (row, entries) in rows.into_iter().enumerate() {
+        for (column, value) in entries {
+            if column == row || value != Complex64::new(0.0, 0.0) {
+                column_indices.push(column);
+                values.push(value);
+            }
+        }
+        row_offsets.push(values.len());
+    }
+    CsrMatrix::new(dimension, dimension, row_offsets, column_indices, values).map_err(Into::into)
+}
+
+fn select_rows(matrix: &ComplexMatrix, rows: &[usize]) -> Result<ComplexMatrix, TransportError> {
+    if rows.iter().any(|row| *row >= matrix.rows()) {
+        return Err(TransportError::InvalidLocalizedSelfEnergy);
+    }
+    ComplexMatrix::new(
+        rows.len(),
+        matrix.columns(),
+        rows.iter()
+            .flat_map(|row| {
+                (0..matrix.columns())
+                    .map(move |column| matrix.as_slice()[row * matrix.columns() + column])
+            })
+            .collect(),
+    )
+    .map_err(Into::into)
+}
+
+fn embed_rows(
+    dimension: usize,
+    rows: &[usize],
+    local: &ComplexMatrix,
+) -> Result<ComplexMatrix, TransportError> {
+    if local.rows() != rows.len() || rows.iter().any(|row| *row >= dimension) {
+        return Err(TransportError::InvalidLocalizedSelfEnergy);
+    }
+    let mut embedded = ComplexMatrix::zeros(dimension, local.columns());
+    for (local_row, device_row) in rows.iter().enumerate() {
+        for column in 0..local.columns() {
+            embedded.set(
+                *device_row,
+                column,
+                local.as_slice()[local_row * local.columns() + column],
+            )?;
+        }
+    }
+    Ok(embedded)
+}
+
+fn broadening_from_self_energy(
+    self_energy: &ComplexMatrix,
+) -> Result<ComplexMatrix, TransportError> {
+    let dimension = self_energy.rows();
+    if self_energy.columns() != dimension {
+        return Err(TransportError::InvalidLocalizedSelfEnergy);
+    }
+    ComplexMatrix::new(
+        dimension,
+        dimension,
+        (0..dimension)
+            .flat_map(|row| {
+                (0..dimension).map(move |column| {
+                    Complex64::i()
+                        * (self_energy.as_slice()[row * dimension + column]
+                            - self_energy.as_slice()[column * dimension + row].conj())
+                })
+            })
+            .collect(),
+    )
+    .map_err(Into::into)
+}
+
+fn broadening_channel_count(
+    broadening: &ComplexMatrix,
+    relative_tolerance: f64,
+) -> Result<usize, TransportError> {
+    let scale = infinity_norm(broadening).max(1.0);
+    let spectrum = hermitian_eigensystem(broadening, HERMITIAN_TOLERANCE)
+        .map_err(|_| TransportError::DecompositionFailure)?;
+    Ok(spectrum
+        .eigenvalues()
+        .iter()
+        .filter(|value| **value > relative_tolerance * scale)
+        .count())
+}
+
+fn broadening_factor_from_matrix(
+    broadening: &ComplexMatrix,
+    channel_count: usize,
+) -> Result<ComplexMatrix, TransportError> {
+    let dimension = broadening.rows();
+    let spectrum = hermitian_eigensystem(broadening, HERMITIAN_TOLERANCE)
+        .map_err(|_| TransportError::DecompositionFailure)?;
+    let first = dimension.saturating_sub(channel_count.min(dimension));
+    let vectors = spectrum.eigenvectors();
+    let eigenvalues = spectrum.eigenvalues();
+    ComplexMatrix::new(
+        dimension,
+        dimension - first,
+        (0..dimension)
+            .flat_map(|row| {
+                (first..dimension).map(move |column| {
+                    vectors.as_slice()[row * dimension + column]
+                        * eigenvalues[column].max(0.0).sqrt()
+                })
+            })
+            .collect(),
+    )
+    .map_err(Into::into)
+}
+
+fn validate_gmres_options(options: GmresOptions) -> Result<(), TransportError> {
+    if !options.relative_tolerance.is_finite()
+        || options.relative_tolerance <= 0.0
+        || !options.absolute_tolerance.is_finite()
+        || options.absolute_tolerance < 0.0
+        || options.restart == 0
+        || options.max_iterations == 0
+    {
+        Err(TransportError::InvalidOptions)
+    } else {
+        Ok(())
+    }
+}
+
 /// Errors raised by steady-state transport calculations.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -465,6 +1007,12 @@ pub enum TransportError {
     PseudoinverseFailure,
     /// Explicit or inferred lead channel counts are inconsistent.
     InvalidChannelCounts,
+    /// A contact-local self-energy has invalid indices or dimensions.
+    InvalidLocalizedSelfEnergy,
+    /// A sparse linear-operator operation failed.
+    LinearOperator(LinearOperatorError),
+    /// A sparse iterative solve failed.
+    Iterative(IterativeSolveError),
     /// A dense matrix operation failed.
     Matrix(MatrixError),
 }
@@ -503,6 +1051,11 @@ impl std::fmt::Display for TransportError {
                 write!(formatter, "scattering-factor pseudoinverse failed")
             }
             Self::InvalidChannelCounts => write!(formatter, "lead channel counts are invalid"),
+            Self::InvalidLocalizedSelfEnergy => {
+                write!(formatter, "localized self-energy embedding is invalid")
+            }
+            Self::LinearOperator(error) => error.fmt(formatter),
+            Self::Iterative(error) => error.fmt(formatter),
             Self::Matrix(error) => error.fmt(formatter),
         }
     }
@@ -511,6 +1064,8 @@ impl std::fmt::Display for TransportError {
 impl std::error::Error for TransportError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::LinearOperator(error) => Some(error),
+            Self::Iterative(error) => Some(error),
             Self::Matrix(error) => Some(error),
             _ => None,
         }
@@ -520,6 +1075,18 @@ impl std::error::Error for TransportError {
 impl From<MatrixError> for TransportError {
     fn from(error: MatrixError) -> Self {
         Self::Matrix(error)
+    }
+}
+
+impl From<LinearOperatorError> for TransportError {
+    fn from(error: LinearOperatorError) -> Self {
+        Self::LinearOperator(error)
+    }
+}
+
+impl From<IterativeSolveError> for TransportError {
+    fn from(error: IterativeSolveError) -> Self {
+        Self::Iterative(error)
     }
 }
 
@@ -792,6 +1359,49 @@ fn self_energy_at_broadening(
     from_backend(&self_energy)
 }
 
+fn embedded_contact_self_energy(
+    lead: &LeadContact,
+    energy: f64,
+    options: SurfaceGreenOptions,
+) -> Result<ComplexMatrix, TransportError> {
+    let surface = surface_green_function(
+        lead.cell_hamiltonian(),
+        lead.inter_cell_hopping(),
+        energy,
+        options,
+    )?;
+    let coupling = to_backend(lead.coupling());
+    let self_energy = &coupling * to_backend(&surface) * coupling.adjoint();
+    from_backend(&self_energy)
+}
+
+/// Computes a contact-local zero-broadening self-energy.
+///
+/// Unlike [`open_system_extrapolated_self_energies`], the contact coupling
+/// need only span the affected device-interface orbitals. The returned matrix
+/// therefore scales with contact width rather than device size.
+pub fn extrapolated_lead_self_energy(
+    lead: &LeadContact,
+    energy: f64,
+    options: SurfaceGreenOptions,
+) -> Result<ComplexMatrix, TransportError> {
+    let narrow = embedded_contact_self_energy(lead, energy, options)?;
+    let mut wider_options = options;
+    wider_options.broadening *= 2.0;
+    let wider = embedded_contact_self_energy(lead, energy, wider_options)?;
+    ComplexMatrix::new(
+        narrow.rows(),
+        narrow.columns(),
+        narrow
+            .as_slice()
+            .iter()
+            .zip(wider.as_slice())
+            .map(|(narrow, wider)| 2.0 * narrow - wider)
+            .collect(),
+    )
+    .map_err(Into::into)
+}
+
 /// Computes embedded retarded self-energies without factoring the finite device.
 ///
 /// This is the reusable boundary-condition step of [`solve_open_system`].
@@ -819,15 +1429,7 @@ pub fn open_system_self_energies(
 
     let mut embedded_self_energies = Vec::with_capacity(leads.len());
     for lead in leads {
-        let surface = surface_green_function(
-            lead.cell_hamiltonian(),
-            lead.inter_cell_hopping(),
-            energy,
-            options,
-        )?;
-        let coupling = to_backend(lead.coupling());
-        let self_energy = &coupling * to_backend(&surface) * coupling.adjoint();
-        embedded_self_energies.push(from_backend(&self_energy)?);
+        embedded_self_energies.push(embedded_contact_self_energy(lead, energy, options)?);
     }
     Ok(embedded_self_energies)
 }

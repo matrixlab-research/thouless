@@ -1621,6 +1621,16 @@ class FiniteSystem(system_module.FiniteSystem):
         *,
         params=None,
     ):
+        if sparse:
+            return system_module.System.hamiltonian_submatrix(
+                self,
+                args=args,
+                to_sites=to_sites,
+                from_sites=from_sites,
+                sparse=True,
+                return_norb=return_norb,
+                params=params,
+            )
         onsite_values = self._evaluated_onsites(args, params)
         dofs = [
             _onsite_dimension(value, site.family.norbs)
@@ -1686,19 +1696,25 @@ class FiniteSystem(system_module.FiniteSystem):
             [np.arange(offsets[index], offsets[index + 1]) for index in selected_columns]
         )
         result = matrix[np.ix_(row_basis, column_basis)]
-        output = result
-        if sparse:
-            from scipy import sparse as scipy_sparse
-
-            output = scipy_sparse.coo_matrix(result)
         if return_norb:
-            return output, np.asarray([dofs[index] for index in selected_rows]), np.asarray(
+            return result, np.asarray([dofs[index] for index in selected_rows]), np.asarray(
                 [dofs[index] for index in selected_columns]
             )
-        return output
+        return result
 
-    def _transport_data(self, args=(), params=None):
-        device = self.hamiltonian_submatrix(args=args, params=params)
+    def _transport_data(
+        self,
+        args=(),
+        params=None,
+        *,
+        sparse=False,
+        compact_couplings=False,
+    ):
+        device = self.hamiltonian_submatrix(
+            args=args,
+            params=params,
+            sparse=sparse,
+        )
         offsets = self._site_slices(args, params)
         lead_data = []
         for lead, interface in zip(
@@ -1717,16 +1733,22 @@ class FiniteSystem(system_module.FiniteSystem):
                     dtype=complex,
                 )
                 lead_hopping = np.zeros_like(cell)
-                coupling = np.zeros(
-                    (device.shape[0], interface_dimension),
-                    dtype=complex,
-                )
-                coupling[
-                    np.ix_(
-                        device_basis,
-                        np.arange(interface_dimension),
+                if compact_couplings:
+                    coupling = np.eye(
+                        interface_dimension,
+                        dtype=complex,
                     )
-                ] = np.eye(interface_dimension)
+                else:
+                    coupling = np.zeros(
+                        (device.shape[0], interface_dimension),
+                        dtype=complex,
+                    )
+                    coupling[
+                        np.ix_(
+                            device_basis,
+                            np.arange(interface_dimension),
+                        )
+                    ] = np.eye(interface_dimension)
                 lead_data.append(
                     (
                         cell.tolist(),
@@ -1757,8 +1779,14 @@ class FiniteSystem(system_module.FiniteSystem):
                 raise ValueError(
                     "Lead interface orbital count does not match its principal cell"
                 )
-            coupling = np.zeros((device.shape[0], cell_dimension), dtype=complex)
-            coupling[device_basis, :] = inter_cell.conj().T
+            if compact_couplings:
+                coupling = inter_cell.conj().T
+            else:
+                coupling = np.zeros(
+                    (device.shape[0], cell_dimension),
+                    dtype=complex,
+                )
+                coupling[device_basis, :] = inter_cell.conj().T
             lead_data.append(
                 (cell.tolist(), lead_hopping.tolist(), coupling.tolist())
             )

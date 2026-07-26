@@ -32,16 +32,21 @@ def _orbital_counts(system, args, params):
             strict=True,
         ):
             counts[int(start) : int(stop)] = int(norbs)
-        return counts
-    return np.asarray(
-        [
-            np.atleast_2d(
-                system.hamiltonian(index, index, *args, params=params)
-            ).shape[0]
-            for index in range(system.graph.num_nodes)
-        ],
-        dtype=int,
-    )
+    else:
+        counts = np.ones(system.graph.num_nodes, dtype=int)
+    for index in range(system.graph.num_nodes):
+        onsite = np.asarray(
+            system.hamiltonian(index, index, *args, params=params)
+        )
+        if onsite.ndim == 0:
+            continue
+        if onsite.ndim != 2 or onsite.shape[0] != onsite.shape[1]:
+            raise ValueError(
+                f"Onsite Hamiltonian block has shape {onsite.shape}, "
+                "expected a square matrix"
+            )
+        counts[index] = onsite.shape[0]
+    return counts
 
 
 class System(metaclass=abc.ABCMeta):
@@ -83,6 +88,104 @@ class System(metaclass=abc.ABCMeta):
         column_offsets = np.cumsum(
             [0, *(int(counts[index]) for index in columns)]
         )
+        if sparse:
+            from scipy import sparse as scipy_sparse
+
+            row_positions = {}
+            for position, site in enumerate(rows):
+                row_positions.setdefault(int(site), []).append(position)
+            column_positions = {}
+            for position, site in enumerate(columns):
+                column_positions.setdefault(int(site), []).append(position)
+            data = []
+            row_indices = []
+            column_indices = []
+
+            def append_block(row_site, column_site, value):
+                block = _block(
+                    value,
+                    int(counts[row_site]),
+                    int(counts[column_site]),
+                )
+                for row_position in row_positions.get(row_site, ()):
+                    row_start = int(row_offsets[row_position])
+                    for column_position in column_positions.get(
+                        column_site, ()
+                    ):
+                        column_start = int(
+                            column_offsets[column_position]
+                        )
+                        for local_row, local_column in zip(
+                            *np.nonzero(block), strict=True
+                        ):
+                            data.append(
+                                block[local_row, local_column]
+                            )
+                            row_indices.append(
+                                row_start + int(local_row)
+                            )
+                            column_indices.append(
+                                column_start + int(local_column)
+                            )
+
+            for site in row_positions.keys() & column_positions.keys():
+                append_block(
+                    site,
+                    site,
+                    self.hamiltonian(
+                        site, site, *args, params=params
+                    ),
+                )
+
+            try:
+                graph_edges = iter(self.graph)
+            except TypeError:
+                graph_edges = (
+                    (row_site, column_site)
+                    for row_site in row_positions
+                    for column_site in column_positions
+                    if row_site != column_site
+                    and self.graph.has_edge(row_site, column_site)
+                )
+            seen = set()
+            for row_site, column_site in graph_edges:
+                row_site = int(row_site)
+                column_site = int(column_site)
+                edge = row_site, column_site
+                if (
+                    edge in seen
+                    or row_site not in row_positions
+                    or column_site not in column_positions
+                ):
+                    continue
+                seen.add(edge)
+                try:
+                    value = self.hamiltonian(
+                        row_site,
+                        column_site,
+                        *args,
+                        params=params,
+                    )
+                except KeyError:
+                    continue
+                append_block(row_site, column_site, value)
+
+            output = scipy_sparse.coo_matrix(
+                (data, (row_indices, column_indices)),
+                shape=(
+                    int(row_offsets[-1]),
+                    int(column_offsets[-1]),
+                ),
+                dtype=complex,
+            )
+            if return_norb:
+                return (
+                    output,
+                    counts[np.asarray(rows, dtype=int)],
+                    counts[np.asarray(columns, dtype=int)],
+                )
+            return output
+
         matrix = np.zeros(
             (int(row_offsets[-1]), int(column_offsets[-1])),
             dtype=complex,
@@ -115,18 +218,13 @@ class System(metaclass=abc.ABCMeta):
                         column_position
                     ] : column_offsets[column_position + 1],
                 ] = block
-        output = matrix
-        if sparse:
-            from scipy import sparse as scipy_sparse
-
-            output = scipy_sparse.coo_matrix(matrix)
         if return_norb:
             return (
-                output,
+                matrix,
                 counts[np.asarray(rows, dtype=int)],
                 counts[np.asarray(columns, dtype=int)],
             )
-        return output
+        return matrix
 
     def __str__(self):
         return (

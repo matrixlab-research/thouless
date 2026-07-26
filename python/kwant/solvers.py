@@ -6,8 +6,22 @@ import sys
 import types
 
 import numpy as np
+import scipy.sparse
 
 from thouless import _core
+
+
+def _csr_parts(matrix):
+    matrix = scipy.sparse.csr_matrix(matrix, dtype=complex)
+    matrix.sum_duplicates()
+    matrix.sort_indices()
+    matrix.eliminate_zeros()
+    return (
+        matrix.shape,
+        matrix.indptr.tolist(),
+        matrix.indices.tolist(),
+        matrix.data.tolist(),
+    )
 
 
 class BlockResult:
@@ -22,7 +36,12 @@ class BlockResult:
         sizes,
         current_conserving=False,
     ):
-        self.data = np.asarray(data, dtype=complex)
+        self._data_loader = data if callable(data) else None
+        self._data = (
+            None
+            if self._data_loader is not None
+            else np.asarray(data, dtype=complex)
+        )
         self.lead_info = tuple(lead_info)
         self.out_leads = list(out_leads)
         self.in_leads = list(in_leads)
@@ -34,6 +53,13 @@ class BlockResult:
         self.out_offsets = np.cumsum(
             [0, *(self.sizes[index] for index in self.out_leads)]
         )
+
+    @property
+    def data(self):
+        if self._data is None:
+            self._data = np.asarray(self._data_loader(), dtype=complex)
+            self._data_loader = None
+        return self._data
 
     def block_coords(self, out_lead, in_lead):
         return (
@@ -255,17 +281,18 @@ class GreensFunction(BlockResult):
 
 
 def _solution(syst, energy, args, params, channel_counts=None):
-    device, leads = syst._transport_data(args=args, params=params)
-    selfenergies = [
-        np.asarray(value, dtype=complex)
-        for value in _core.open_system_extrapolated_self_energies(
-            device.tolist(),
-            leads,
-            float(energy),
-        )
-    ]
+    device, leads = syst._transport_data(
+        args=args,
+        params=params,
+        sparse=True,
+        compact_couplings=True,
+    )
+    interface_bases = _interface_bases(syst, args, params)
+    selfenergies = []
     counts = []
-    for index, lead in enumerate(syst.leads):
+    for index, (lead, data) in enumerate(
+        zip(syst.leads, leads, strict=True)
+    ):
         if hasattr(lead, "modes"):
             propagating, stabilized = lead.modes(
                 energy, args=args, params=params
@@ -273,36 +300,50 @@ def _solution(syst, energy, args, params, channel_counts=None):
             count = len(propagating.momenta) // 2
             counts.append(count)
             if getattr(lead, "_uses_stabilized_selfenergy", False):
-                interface_selfenergy = np.asarray(
+                selfenergy = np.asarray(
                     stabilized.selfenergy(),
                     dtype=complex,
                 )
-                selfenergies[index] = _embed_interface_matrix(
-                    syst,
-                    index,
-                    interface_selfenergy,
-                    args,
-                    params,
+            else:
+                selfenergy = np.asarray(
+                    _core.extrapolated_contact_self_energy(
+                        *data,
+                        float(energy),
+                    ),
+                    dtype=complex,
                 )
-            selfenergies[index] = np.asarray(
+            selfenergy = np.asarray(
                 _core.regularize_embedded_self_energy(
-                    selfenergies[index].tolist(),
+                    selfenergy.tolist(),
                     count,
                 ),
                 dtype=complex,
             )
+            selfenergies.append(selfenergy)
         elif hasattr(lead, "selfenergy"):
             counts.append(None)
-            interface_selfenergy = np.asarray(
-                lead.selfenergy(energy, args=args, params=params),
-                dtype=complex,
-            )
-            selfenergies[index] = _embed_interface_matrix(
-                syst, index, interface_selfenergy, args, params
+            selfenergies.append(
+                np.asarray(
+                    lead.selfenergy(
+                        energy,
+                        args=args,
+                        params=params,
+                    ),
+                    dtype=complex,
+                )
             )
         else:
             raise ValueError(
                 f"Lead {index} provides neither modes nor selfenergy"
+            )
+        interface_dimension = len(interface_bases[index])
+        if selfenergies[index].shape != (
+            interface_dimension,
+            interface_dimension,
+        ):
+            raise ValueError(
+                f"Self-energy dimension for lead {index} does not "
+                "match its interface"
             )
     if channel_counts is not None:
         expected = [
@@ -319,34 +360,19 @@ def _solution(syst, energy, args, params, channel_counts=None):
             )
         ):
             raise ValueError("Lead channel count is inconsistent with modes")
-    native = _core.open_system_from_self_energies(
-        device.tolist(),
-        [value.tolist() for value in selfenergies],
+    native = _core.sparse_open_system(
+        *_csr_parts(device),
+        [
+            (basis.tolist(), value.tolist())
+            for basis, value in zip(
+                interface_bases,
+                selfenergies,
+                strict=True,
+            )
+        ],
         float(energy),
     )
     return native, tuple(counts)
-
-
-def _embed_interface_matrix(syst, lead_index, matrix, args, params):
-    offsets = syst._site_slices(args, params)
-    interface = syst.lead_interfaces[lead_index]
-    device_basis = np.concatenate(
-        [
-            np.arange(offsets[index], offsets[index + 1])
-            for index in interface
-        ]
-    )
-    matrix = np.asarray(matrix, dtype=complex)
-    if matrix.shape != (len(device_basis), len(device_basis)):
-        raise ValueError(
-            f"Self-energy dimension for lead {lead_index} does not "
-            "match its interface"
-        )
-    result = np.zeros(
-        (offsets[-1], offsets[-1]), dtype=complex
-    )
-    result[np.ix_(device_basis, device_basis)] = matrix
-    return result
 
 
 def _check_precalculated(syst, allowed):
@@ -360,7 +386,12 @@ def _check_precalculated(syst, allowed):
 def _mode_factors(
     syst, lead_info, selfenergies, native, args, params
 ):
-    device, lead_data = syst._transport_data(args=args, params=params)
+    device, lead_data = syst._transport_data(
+        args=args,
+        params=params,
+        sparse=True,
+        compact_couplings=True,
+    )
     offsets = syst._site_slices(args, params)
     incoming = []
     outgoing = []
@@ -399,26 +430,38 @@ def _mode_factors(
                 for index in interface
             ]
         )
-        boundary = np.zeros(
-            (device.shape[0], coupling.shape[1]), dtype=complex
-        )
-        boundary[
-            np.ix_(device_basis, np.arange(len(device_basis)))
-        ] = np.eye(len(device_basis))
         mode_count = len(info.momenta) // 2
         incoming_waves = info.wave_functions[:, :mode_count]
         outgoing_waves = info.wave_functions[:, mode_count:]
         incoming_lambdas = np.exp(1j * info.momenta[:mode_count])
         outgoing_lambdas = np.exp(1j * info.momenta[mode_count:])
-        incoming.append(
-            coupling @ incoming_waves
-            - sigma @ (boundary @ (incoming_waves / incoming_lambdas))
+        boundary = np.zeros(
+            (len(device_basis), coupling.shape[1]),
+            dtype=complex,
         )
-        outgoing.append(
+        boundary[
+            :,
+            : len(device_basis),
+        ] = np.eye(len(device_basis))
+        incoming_local = (
+            coupling @ incoming_waves
+            - sigma
+            @ (boundary @ (incoming_waves / incoming_lambdas))
+        )
+        outgoing_local = (
             coupling @ outgoing_waves
             - sigma.conj().T
             @ (boundary @ (outgoing_waves / outgoing_lambdas))
         )
+        incoming_factor = np.zeros(
+            (device.shape[0], mode_count),
+            dtype=complex,
+        )
+        outgoing_factor = np.zeros_like(incoming_factor)
+        incoming_factor[device_basis, :] = incoming_local
+        outgoing_factor[device_basis, :] = outgoing_local
+        incoming.append(incoming_factor)
+        outgoing.append(outgoing_factor)
     return incoming, outgoing
 
 
@@ -557,7 +600,6 @@ def greens_function(
     native, channel_counts = _solution(
         syst, energy, args, params
     )
-    green = np.asarray(native.retarded_green, dtype=complex)
     selfenergies = tuple(
         np.asarray(value, dtype=complex)
         for value in native.self_energies
@@ -574,29 +616,23 @@ def greens_function(
         dtype=float,
     )
     interface_bases = _interface_bases(syst, args, params)
-    interface_selfenergies = tuple(
-        matrix[np.ix_(basis, basis)]
-        for matrix, basis in zip(
-            selfenergies, interface_bases, strict=True
-        )
-    )
-    interface_broadenings = tuple(
-        matrix[np.ix_(basis, basis)]
-        for matrix, basis in zip(
-            broadenings, interface_bases, strict=True
-        )
-    )
     rows = np.concatenate(
         [interface_bases[index] for index in out_leads]
     )
     columns = np.concatenate(
         [interface_bases[index] for index in in_leads]
     )
+    def load_green():
+        return np.asarray(
+            native.green_block(rows.tolist(), columns.tolist()),
+            dtype=complex,
+        ).reshape((len(rows), len(columns)))
+
     return GreensFunction(
-        green[np.ix_(rows, columns)],
+        load_green,
         transmissions,
-        interface_selfenergies,
-        interface_broadenings,
+        selfenergies,
+        broadenings,
         channel_counts,
         out_leads,
         in_leads,

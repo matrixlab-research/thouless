@@ -44,10 +44,15 @@ source evaluation now resolves the continuity equation in the shared Rust
 core; Python performs only site, callback, and array mapping. Complete
 steady-state compatibility entry points likewise delegate embedded-self-energy
 solves, Green functions, Caroli and Fisher-Lee transport, scattering states,
-channel inference, and LDOS to Rust; scientific-scale sparse device solves
-remain open. Complete semantic parity, broader Wannier
+channel inference, and LDOS to Rust. Device Hamiltonians and contact-local
+self-energies are assembled as canonical CSR operators and solved using
+Rust-native zero-fill incomplete-LU right preconditioning with restarted GMRES;
+100000-dimensional native and 20000-dimensional compatibility contracts reject
+dense device materialization, while the pinned quantum Hall workflow verifies
+quantized transport. Complete semantic parity for remaining Kwant construction,
+lead-mode, decomposition, and optional-backend details, broader Wannier
 differential fixtures, realistic material-scale validation, complete topology
-and response theory, and scientific-scale open-system transport remain open.
+and response theory, and isolated held-out validation remain open.
 
 A green CI run currently means:
 
