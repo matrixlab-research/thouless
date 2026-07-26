@@ -229,6 +229,61 @@ def test_green_function_and_ldos_contract() -> None:
     assert np.all(density > 0)
 
 
+def test_steady_state_solver_uses_the_rust_open_system_core(
+    monkeypatch,
+) -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    lattice = kwant.lattice.chain(norbs=1)
+    system = kwant.Builder()
+    for index in range(4):
+        system[lattice(index)] = 0.1 * index
+    system[lattice.neighbors()] = -1.0
+    lead = kwant.Builder(
+        kwant.TranslationalSymmetry(lattice.vec((-1,)))
+    )
+    lead[lattice(0)] = 0.0
+    lead[lattice.neighbors()] = -1.0
+    system.attach_lead(lead)
+    system.attach_lead(lead.reversed())
+    finalized = system.finalized()
+
+    called = []
+    original = kwant.solvers._core.open_system_from_self_energies
+
+    def traced(*args, **kwargs):
+        called.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        kwant.solvers._core,
+        "open_system_from_self_energies",
+        traced,
+    )
+
+    def disabled(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError(
+            "steady-state transport used NumPy linear algebra"
+        )
+
+    for name in ("inv", "eigh", "eigvalsh", "pinv"):
+        monkeypatch.setattr(np.linalg, name, disabled)
+
+    scattering = kwant.smatrix(finalized, energy=0.15)
+    green = kwant.greens_function(finalized, energy=0.15)
+    density = kwant.ldos(finalized, energy=0.15)
+    states = kwant.wave_function(finalized, energy=0.15)
+
+    assert scattering.transmission(1, 0) > 0.0
+    assert green.transmission(1, 0) == pytest.approx(
+        scattering.transmission(1, 0),
+        abs=1.0e-9,
+    )
+    assert density.shape == (4,)
+    assert states(0).shape == (1, 4)
+    assert len(called) == 4
+
+
 def test_local_operators_execute_the_rust_continuity_core(monkeypatch) -> None:
     kwant = require_compat_module("kwant", ISSUE_URL)
     lattice = kwant.lattice.chain(norbs=2)

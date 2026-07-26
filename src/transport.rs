@@ -110,6 +110,17 @@ impl ScatteringSolution {
         &self.broadenings
     }
 
+    /// Returns all Caroli transmissions as `[drain][source]`.
+    pub fn transmission_matrix(&self) -> Result<Vec<Vec<f64>>, TransportError> {
+        (0..self.broadenings.len())
+            .map(|drain| {
+                (0..self.broadenings.len())
+                    .map(|source| self.transmission(drain, source))
+                    .collect()
+            })
+            .collect()
+    }
+
     /// Returns the Caroli transmission from `source` into `drain`.
     pub fn transmission(&self, drain: usize, source: usize) -> Result<f64, TransportError> {
         let drain_broadening = self
@@ -129,6 +140,292 @@ impl ScatteringSolution {
         } else {
             Ok(value)
         }
+    }
+
+    /// Returns `-Im G^r_ii / π` for every device orbital.
+    #[must_use]
+    pub fn local_density_of_states(&self) -> Vec<f64> {
+        let dimension = self.retarded_green.rows();
+        (0..dimension)
+            .map(|index| {
+                -self.retarded_green.as_slice()[index * dimension + index].im / std::f64::consts::PI
+            })
+            .collect()
+    }
+
+    /// Applies the retarded Green function to lead-injection factors.
+    ///
+    /// Every input matrix has shape `device orbitals × incoming channels`.
+    /// Returned matrices use the source-compatible layout
+    /// `incoming channels × device orbitals`.
+    pub fn scattering_states(
+        &self,
+        injection_factors: &[ComplexMatrix],
+    ) -> Result<Vec<ComplexMatrix>, TransportError> {
+        let device_dimension = self.retarded_green.rows();
+        let green = to_backend(&self.retarded_green);
+        injection_factors
+            .iter()
+            .enumerate()
+            .map(|(lead, factor)| {
+                if factor.rows() != device_dimension {
+                    return Err(TransportError::InvalidScatteringFactor { lead });
+                }
+                let states = &green * to_backend(factor);
+                ComplexMatrix::new(
+                    states.ncols(),
+                    states.nrows(),
+                    (0..states.ncols())
+                        .flat_map(|channel| {
+                            let states = &states;
+                            (0..states.nrows()).map(move |orbital| states[(orbital, channel)])
+                        })
+                        .collect(),
+                )
+                .map_err(Into::into)
+            })
+            .collect()
+    }
+
+    /// Constructs the full Fisher-Lee scattering matrix.
+    ///
+    /// Incoming and outgoing factors for one lead must have the same channel
+    /// count and use shape `device orbitals × channels`. The direct term is
+    /// obtained from the Moore-Penrose inverse of the outgoing factor.
+    pub fn scattering_matrix(
+        &self,
+        incoming_factors: &[ComplexMatrix],
+        outgoing_factors: &[ComplexMatrix],
+        relative_tolerance: f64,
+    ) -> Result<ScatteringMatrix, TransportError> {
+        let lead_count = self.broadenings.len();
+        let device_dimension = self.retarded_green.rows();
+        if incoming_factors.len() != lead_count
+            || outgoing_factors.len() != lead_count
+            || !relative_tolerance.is_finite()
+            || relative_tolerance <= 0.0
+        {
+            return Err(TransportError::InvalidScatteringFactors);
+        }
+        let mut offsets: Vec<usize> = Vec::with_capacity(lead_count + 1);
+        offsets.push(0);
+        for lead in 0..lead_count {
+            let incoming = &incoming_factors[lead];
+            let outgoing = &outgoing_factors[lead];
+            if incoming.rows() != device_dimension
+                || outgoing.rows() != device_dimension
+                || incoming.columns() != outgoing.columns()
+            {
+                return Err(TransportError::InvalidScatteringFactor { lead });
+            }
+            offsets.push(
+                offsets
+                    .last()
+                    .copied()
+                    .expect("offset zero was inserted")
+                    .checked_add(incoming.columns())
+                    .ok_or(TransportError::InvalidScatteringFactors)?,
+            );
+        }
+        let channel_count = *offsets.last().expect("offset zero was inserted");
+        let green = to_backend(&self.retarded_green);
+        let incoming = incoming_factors.iter().map(to_backend).collect::<Vec<_>>();
+        let outgoing = outgoing_factors.iter().map(to_backend).collect::<Vec<_>>();
+        let mut matrix = DMatrix::<Complex64>::zeros(channel_count, channel_count);
+        for drain in 0..lead_count {
+            let drain_start = offsets[drain];
+            let drain_channels = outgoing[drain].ncols();
+            for source in 0..lead_count {
+                let source_start = offsets[source];
+                let source_channels = incoming[source].ncols();
+                let mut block =
+                    outgoing[drain].adjoint() * &green * &incoming[source] * -Complex64::i();
+                if drain == source && source_channels > 0 {
+                    let scale = frobenius_norm(&outgoing[drain]).max(1.0);
+                    let inverse = outgoing[drain]
+                        .clone()
+                        .pseudo_inverse(relative_tolerance * scale)
+                        .map_err(|_| TransportError::PseudoinverseFailure)?;
+                    block += inverse * &incoming[source];
+                }
+                for row in 0..drain_channels {
+                    for column in 0..source_channels {
+                        matrix[(drain_start + row, source_start + column)] = block[(row, column)];
+                    }
+                }
+            }
+        }
+        Ok(ScatteringMatrix {
+            matrix: from_backend(&matrix)?,
+            lead_offsets: offsets,
+        })
+    }
+
+    /// Returns channel counts, preserving explicit counts and inferring the
+    /// remaining values from positive broadening eigenchannels.
+    pub fn channel_counts(
+        &self,
+        explicit: &[Option<usize>],
+        relative_tolerance: f64,
+    ) -> Result<Vec<usize>, TransportError> {
+        if explicit.len() != self.broadenings.len()
+            || !relative_tolerance.is_finite()
+            || relative_tolerance <= 0.0
+        {
+            return Err(TransportError::InvalidChannelCounts);
+        }
+        explicit
+            .iter()
+            .zip(&self.broadenings)
+            .map(|(count, broadening)| {
+                if let Some(count) = count {
+                    return Ok(*count);
+                }
+                let scale = infinity_norm(broadening).max(1.0);
+                let spectrum = hermitian_eigensystem(broadening, HERMITIAN_TOLERANCE)
+                    .map_err(|_| TransportError::DecompositionFailure)?;
+                Ok(spectrum
+                    .eigenvalues()
+                    .iter()
+                    .filter(|value| **value > relative_tolerance * scale)
+                    .count())
+            })
+            .collect()
+    }
+
+    /// Returns lead-to-lead values with the reflection convention used by a
+    /// retarded Green-function result.
+    pub fn green_function_transmission_matrix(
+        &self,
+        channel_counts: &[usize],
+    ) -> Result<Vec<Vec<f64>>, TransportError> {
+        if channel_counts.len() != self.broadenings.len() {
+            return Err(TransportError::InvalidChannelCounts);
+        }
+        let green = to_backend(&self.retarded_green);
+        let green_adjoint = green.adjoint();
+        (0..self.broadenings.len())
+            .map(|drain| {
+                (0..self.broadenings.len())
+                    .map(|source| {
+                        let drain_gamma = to_backend(&self.broadenings[drain]);
+                        let source_gamma = to_backend(&self.broadenings[source]);
+                        let mut value = (&drain_gamma * &green * &source_gamma * &green_adjoint)
+                            .trace()
+                            .re;
+                        if drain == source {
+                            value += 2.0 * (&source_gamma * &green).trace().im
+                                + channel_counts[source] as f64;
+                        }
+                        Ok(value)
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Returns a square root of one lead broadening with the largest
+    /// `channel_count` eigenchannels.
+    pub fn broadening_factor(
+        &self,
+        lead: usize,
+        channel_count: usize,
+    ) -> Result<ComplexMatrix, TransportError> {
+        let broadening = self
+            .broadenings
+            .get(lead)
+            .ok_or(TransportError::UnknownLead { lead })?;
+        let dimension = broadening.rows();
+        let spectrum = hermitian_eigensystem(broadening, HERMITIAN_TOLERANCE)
+            .map_err(|_| TransportError::DecompositionFailure)?;
+        let first = dimension.saturating_sub(channel_count.min(dimension));
+        let vectors = spectrum.eigenvectors();
+        let eigenvalues = spectrum.eigenvalues();
+        ComplexMatrix::new(
+            dimension,
+            dimension - first,
+            (0..dimension)
+                .flat_map(|row| {
+                    (first..dimension).map(move |column| {
+                        vectors.as_slice()[row * dimension + column]
+                            * eigenvalues[column].max(0.0).sqrt()
+                    })
+                })
+                .collect(),
+        )
+        .map_err(Into::into)
+    }
+}
+
+/// A channel-resolved scattering matrix with one contiguous block per lead.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScatteringMatrix {
+    matrix: ComplexMatrix,
+    lead_offsets: Vec<usize>,
+}
+
+impl ScatteringMatrix {
+    /// Full channel-space scattering matrix.
+    #[must_use]
+    pub const fn matrix(&self) -> &ComplexMatrix {
+        &self.matrix
+    }
+
+    /// Cumulative channel offsets, including the terminal offset.
+    #[must_use]
+    pub fn lead_offsets(&self) -> &[usize] {
+        &self.lead_offsets
+    }
+
+    /// Copies one drain/source block.
+    pub fn block(&self, drain: usize, source: usize) -> Result<ComplexMatrix, TransportError> {
+        let lead_count = self.lead_offsets.len().saturating_sub(1);
+        if drain >= lead_count || source >= lead_count {
+            return Err(TransportError::UnknownLead {
+                lead: drain.max(source),
+            });
+        }
+        let row_start = self.lead_offsets[drain];
+        let row_stop = self.lead_offsets[drain + 1];
+        let column_start = self.lead_offsets[source];
+        let column_stop = self.lead_offsets[source + 1];
+        ComplexMatrix::new(
+            row_stop - row_start,
+            column_stop - column_start,
+            (row_start..row_stop)
+                .flat_map(|row| {
+                    (column_start..column_stop).map(move |column| {
+                        self.matrix.as_slice()[row * self.matrix.columns() + column]
+                    })
+                })
+                .collect(),
+        )
+        .map_err(Into::into)
+    }
+
+    /// Returns squared block norms as `[drain][source]`.
+    pub fn transmission_matrix(&self) -> Vec<Vec<f64>> {
+        let lead_count = self.lead_offsets.len().saturating_sub(1);
+        (0..lead_count)
+            .map(|drain| {
+                let row_start = self.lead_offsets[drain];
+                let row_stop = self.lead_offsets[drain + 1];
+                (0..lead_count)
+                    .map(|source| {
+                        let column_start = self.lead_offsets[source];
+                        let column_stop = self.lead_offsets[source + 1];
+                        (row_start..row_stop)
+                            .flat_map(|row| {
+                                (column_start..column_stop).map(move |column| {
+                                    self.matrix.as_slice()[row * self.matrix.columns() + column]
+                                        .norm_sqr()
+                                })
+                            })
+                            .sum()
+                    })
+                    .collect()
+            })
+            .collect()
     }
 }
 
@@ -157,6 +454,17 @@ pub enum TransportError {
         /// Invalid lead index.
         lead: usize,
     },
+    /// Injection or extraction factors have incompatible lead dimensions.
+    InvalidScatteringFactors,
+    /// One lead factor has an incompatible device or channel dimension.
+    InvalidScatteringFactor {
+        /// Lead containing the invalid factor.
+        lead: usize,
+    },
+    /// A Moore-Penrose inverse required by the Fisher-Lee direct term failed.
+    PseudoinverseFailure,
+    /// Explicit or inferred lead channel counts are inconsistent.
+    InvalidChannelCounts,
     /// A dense matrix operation failed.
     Matrix(MatrixError),
 }
@@ -179,6 +487,22 @@ impl std::fmt::Display for TransportError {
                 write!(formatter, "surface Green decimation did not converge")
             }
             Self::UnknownLead { lead } => write!(formatter, "lead index {lead} is out of range"),
+            Self::InvalidScatteringFactors => {
+                write!(
+                    formatter,
+                    "scattering factors are inconsistent with attached leads"
+                )
+            }
+            Self::InvalidScatteringFactor { lead } => {
+                write!(
+                    formatter,
+                    "scattering factor for lead {lead} has an invalid shape"
+                )
+            }
+            Self::PseudoinverseFailure => {
+                write!(formatter, "scattering-factor pseudoinverse failed")
+            }
+            Self::InvalidChannelCounts => write!(formatter, "lead channel counts are invalid"),
             Self::Matrix(error) => error.fmt(formatter),
         }
     }
@@ -508,25 +832,66 @@ pub fn open_system_self_energies(
     Ok(embedded_self_energies)
 }
 
-/// Solves the retarded Green function of a finite device with periodic leads.
-pub fn solve_open_system(
+/// Computes zero-broadening self-energies by linear extrapolation from two
+/// positive numerical broadenings.
+pub fn open_system_extrapolated_self_energies(
     device_hamiltonian: &ComplexMatrix,
     leads: &[LeadContact],
     energy: f64,
     options: SurfaceGreenOptions,
+) -> Result<Vec<ComplexMatrix>, TransportError> {
+    let narrow = open_system_self_energies(device_hamiltonian, leads, energy, options)?;
+    let mut wider_options = options;
+    wider_options.broadening *= 2.0;
+    let wider = open_system_self_energies(device_hamiltonian, leads, energy, wider_options)?;
+    narrow
+        .into_iter()
+        .zip(wider)
+        .map(|(narrow, wider)| {
+            ComplexMatrix::new(
+                narrow.rows(),
+                narrow.columns(),
+                narrow
+                    .as_slice()
+                    .iter()
+                    .zip(wider.as_slice())
+                    .map(|(narrow, wider)| 2.0 * narrow - wider)
+                    .collect(),
+            )
+            .map_err(Into::into)
+        })
+        .collect()
+}
+
+/// Solves a finite Hermitian device from arbitrary embedded retarded
+/// self-energies.
+///
+/// This is the narrow waist shared by periodic mode leads, custom
+/// self-energy leads, and externally generated embedding methods.
+pub fn solve_open_system_from_self_energies(
+    device_hamiltonian: &ComplexMatrix,
+    embedded_self_energies: &[ComplexMatrix],
+    energy: f64,
 ) -> Result<ScatteringSolution, TransportError> {
     let device_count = device_hamiltonian.rows();
-    let embedded_self_energies =
-        open_system_self_energies(device_hamiltonian, leads, energy, options)?;
-    let mut broadenings = Vec::with_capacity(leads.len());
-    // The lead self-energies provide the retarded boundary condition. The
-    // finite device must not receive the surface-decimation broadening again:
-    // doing so would introduce artificial absorption proportional to device
-    // length and violate current conservation.
+    if device_count == 0 || device_hamiltonian.columns() != device_count || !energy.is_finite() {
+        return Err(TransportError::InvalidDeviceShape);
+    }
+    if !device_hamiltonian.is_hermitian(HERMITIAN_TOLERANCE)? {
+        return Err(TransportError::NonHermitianDevice);
+    }
+    if embedded_self_energies
+        .iter()
+        .any(|self_energy| self_energy.shape() != (device_count, device_count))
+    {
+        return Err(TransportError::InvalidLeadShape);
+    }
+
+    let mut broadenings = Vec::with_capacity(embedded_self_energies.len());
     let mut inverse_green = DMatrix::<Complex64>::identity(device_count, device_count)
         * Complex64::new(energy, 0.0)
         - to_backend(device_hamiltonian);
-    for self_energy in &embedded_self_energies {
+    for self_energy in embedded_self_energies {
         let self_energy = to_backend(self_energy);
         inverse_green -= &self_energy;
         let broadening = (self_energy.clone() - self_energy.adjoint()) * Complex64::new(0.0, 1.0);
@@ -537,13 +902,35 @@ pub fn solve_open_system(
         .ok_or(TransportError::SingularGreenFunction)?;
     Ok(ScatteringSolution {
         retarded_green: from_backend(&retarded_green)?,
-        self_energies: embedded_self_energies,
+        self_energies: embedded_self_energies.to_vec(),
         broadenings,
     })
 }
 
+/// Solves the retarded Green function of a finite device with periodic leads.
+pub fn solve_open_system(
+    device_hamiltonian: &ComplexMatrix,
+    leads: &[LeadContact],
+    energy: f64,
+    options: SurfaceGreenOptions,
+) -> Result<ScatteringSolution, TransportError> {
+    let embedded_self_energies =
+        open_system_self_energies(device_hamiltonian, leads, energy, options)?;
+    solve_open_system_from_self_energies(device_hamiltonian, &embedded_self_energies, energy)
+}
+
 fn frobenius_norm(matrix: &DMatrix<Complex64>) -> f64 {
     matrix.iter().map(Complex64::norm_sqr).sum::<f64>().sqrt()
+}
+
+fn infinity_norm(matrix: &ComplexMatrix) -> f64 {
+    (0..matrix.rows())
+        .map(|row| {
+            (0..matrix.columns())
+                .map(|column| matrix.as_slice()[row * matrix.columns() + column].norm())
+                .sum::<f64>()
+        })
+        .fold(0.0, f64::max)
 }
 
 fn to_backend(matrix: &ComplexMatrix) -> DMatrix<Complex64> {

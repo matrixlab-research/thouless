@@ -9,8 +9,6 @@ import numpy as np
 
 from thouless import _core
 
-_SURFACE_BROADENING = 1.0e-6
-
 
 class BlockResult:
     """Common block access and transport statistics for solver results."""
@@ -179,8 +177,12 @@ class SMatrix(BlockResult):
         return slice(base + offsets[block], base + offsets[block + 1])
 
     def _transmission(self, out_lead, in_lead):
+        if np.isscalar(out_lead) and np.isscalar(in_lead):
+            return float(
+                self._transmissions[int(out_lead), int(in_lead)]
+            )
         return float(
-            np.linalg.norm(self.submatrix(out_lead, in_lead)) ** 2
+            np.sum(np.abs(self.submatrix(out_lead, in_lead)) ** 2)
         )
 
     def transmission(self, out_lead, in_lead):
@@ -244,53 +246,22 @@ class GreensFunction(BlockResult):
         )
 
     def _transmission(self, lead_out, lead_in):
-        lead_out = int(lead_out)
-        lead_in = int(lead_in)
-        result = np.trace(
-            self._a_ttdagger_a_inv(lead_out, lead_in)
-        ).real
-        if lead_out == lead_in:
-            gamma = self.broadenings[lead_in]
-            green = self.submatrix(lead_out, lead_in)
-            result += (
-                2 * np.trace(gamma @ green).imag
-                + self.num_propagating(lead_in)
-            )
-        return float(result)
+        return float(
+            self._transmissions[int(lead_out), int(lead_in)]
+        )
 
     def num_propagating(self, lead):
-        count = self._channel_counts[int(lead)]
-        if count is not None:
-            return int(count)
-        gamma = self.broadenings[int(lead)]
-        scale = max(np.linalg.norm(gamma, np.inf), 1.0)
-        return int(
-            np.sum(
-                np.linalg.eigvalsh(
-                    0.5 * (gamma + gamma.conj().T)
-                )
-                > 1.0e-10 * scale
-            )
-        )
+        return int(self._channel_counts[int(lead)])
+
 
 def _solution(syst, energy, args, params, channel_counts=None):
     device, leads = syst._transport_data(args=args, params=params)
-    narrow_selfenergies = _core.open_system_embedded_self_energies(
-        device.tolist(),
-        leads,
-        float(energy),
-    )
-    wider_selfenergies = _core.open_system_embedded_self_energies(
-        device.tolist(),
-        leads,
-        float(energy),
-        2 * _SURFACE_BROADENING,
-    )
     selfenergies = [
-        2 * np.asarray(narrow, dtype=complex)
-        - np.asarray(wide, dtype=complex)
-        for narrow, wide in zip(
-            narrow_selfenergies, wider_selfenergies, strict=True
+        np.asarray(value, dtype=complex)
+        for value in _core.open_system_extrapolated_self_energies(
+            device.tolist(),
+            leads,
+            float(energy),
         )
     ]
     counts = []
@@ -313,13 +284,13 @@ def _solution(syst, energy, args, params, channel_counts=None):
                     args,
                     params,
                 )
-            gamma = 1j * (
-                selfenergies[index] - selfenergies[index].conj().T
+            selfenergies[index] = np.asarray(
+                _core.regularize_embedded_self_energy(
+                    selfenergies[index].tolist(),
+                    count,
+                ),
+                dtype=complex,
             )
-            projected, _ = _physical_selfenergies(
-                [selfenergies[index]], [gamma], [count]
-            )
-            selfenergies[index] = projected[0]
         elif hasattr(lead, "selfenergy"):
             counts.append(None)
             interface_selfenergy = np.asarray(
@@ -348,39 +319,12 @@ def _solution(syst, energy, args, params, channel_counts=None):
             )
         ):
             raise ValueError("Lead channel count is inconsistent with modes")
-    broadenings = [
-        1j * (value - value.conj().T) for value in selfenergies
-    ]
-    inverse_green = (
-        float(energy) * np.eye(device.shape[0], dtype=complex)
-        - device
-        - sum(
-            (np.asarray(value, dtype=complex) for value in selfenergies),
-            start=np.zeros_like(device, dtype=complex),
-        )
+    native = _core.open_system_from_self_energies(
+        device.tolist(),
+        [value.tolist() for value in selfenergies],
+        float(energy),
     )
-    green = np.linalg.inv(inverse_green)
-    transmissions = np.asarray(
-        [
-            [
-                np.trace(
-                    np.asarray(drain)
-                    @ green
-                    @ np.asarray(source)
-                    @ green.conj().T
-                ).real
-                for source in broadenings
-            ]
-            for drain in broadenings
-        ],
-        dtype=float,
-    )
-    return (
-        np.asarray(green, dtype=complex),
-        selfenergies,
-        broadenings,
-        transmissions,
-    )
+    return native, tuple(counts)
 
 
 def _embed_interface_matrix(syst, lead_index, matrix, args, params):
@@ -405,33 +349,6 @@ def _embed_interface_matrix(syst, lead_index, matrix, args, params):
     return result
 
 
-def _physical_selfenergies(selfenergies, broadenings, channel_counts):
-    projected_selfenergies = []
-    projected_broadenings = []
-    for selfenergy, broadening, channel_count in zip(
-        selfenergies, broadenings, channel_counts, strict=True
-    ):
-        sigma = np.asarray(selfenergy, dtype=complex)
-        gamma = np.asarray(broadening, dtype=complex)
-        eigenvalues, eigenvectors = np.linalg.eigh(
-            0.5 * (gamma + gamma.conj().T)
-        )
-        order = np.argsort(eigenvalues)[::-1][: int(channel_count)]
-        if len(order):
-            vectors = eigenvectors[:, order]
-            physical_gamma = (
-                vectors
-                * np.maximum(eigenvalues[order], 0.0)
-            ) @ vectors.conj().T
-        else:
-            physical_gamma = np.zeros_like(gamma)
-        hermitian_part = 0.5 * (sigma + sigma.conj().T)
-        physical_sigma = hermitian_part - 0.5j * physical_gamma
-        projected_selfenergies.append(physical_sigma)
-        projected_broadenings.append(physical_gamma)
-    return projected_selfenergies, projected_broadenings
-
-
 def _check_precalculated(syst, allowed):
     what = getattr(syst, "_precalculated_what", None)
     if what is not None and what not in allowed:
@@ -440,30 +357,9 @@ def _check_precalculated(syst, allowed):
         )
 
 
-def _scattering_matrix(green, incoming_factors, outgoing_factors):
-    offsets = np.cumsum(
-        [0, *(factor.shape[1] for factor in incoming_factors)]
-    )
-    data = np.zeros((offsets[-1], offsets[-1]), dtype=complex)
-    slices = tuple(
-        slice(offsets[index], offsets[index + 1])
-        for index in range(len(incoming_factors))
-    )
-    for drain, outgoing_factor in enumerate(outgoing_factors):
-        for source, incoming_factor in enumerate(incoming_factors):
-            block = (
-                -1j
-                * outgoing_factor.conj().T
-                @ green
-                @ incoming_factor
-            )
-            if drain == source:
-                block += np.linalg.pinv(outgoing_factor) @ incoming_factor
-            data[slices[drain], slices[source]] = block
-    return data, slices
-
-
-def _mode_factors(syst, lead_info, selfenergies, args, params):
+def _mode_factors(
+    syst, lead_info, selfenergies, native, args, params
+):
     device, lead_data = syst._transport_data(args=args, params=params)
     offsets = syst._site_slices(args, params)
     incoming = []
@@ -487,18 +383,10 @@ def _mode_factors(syst, lead_info, selfenergies, args, params):
             "_uses_stabilized_selfenergy",
             False,
         ):
-            gamma = 1j * (
-                np.asarray(selfenergy)
-                - np.asarray(selfenergy).conj().T
-            )
-            eigenvalues, eigenvectors = np.linalg.eigh(
-                0.5 * (gamma + gamma.conj().T)
-            )
             mode_count = len(info.momenta) // 2
-            order = np.argsort(eigenvalues)[::-1][:mode_count]
-            factors = (
-                eigenvectors[:, order]
-                * np.sqrt(np.maximum(eigenvalues[order], 0.0))
+            factors = np.asarray(
+                native.broadening_factor(index, mode_count),
+                dtype=complex,
             )
             incoming.append(factors)
             outgoing.append(factors)
@@ -600,34 +488,37 @@ def smatrix(
         len(info.momenta) // 2 if info is not None else 0
         for info in preliminary_info
     )
-    green, selfenergies, _, _ = _solution(
+    native, _ = _solution(
         syst,
         energy,
         args,
         params,
         channel_counts,
     )
+    selfenergies = tuple(
+        np.asarray(value, dtype=complex)
+        for value in native.self_energies
+    )
     lead_info = tuple(
         selfenergies[index] if info is None else info
         for index, info in enumerate(preliminary_info)
     )
     incoming_factors, outgoing_factors = _mode_factors(
-        syst, lead_info, selfenergies, args, params
+        syst, lead_info, selfenergies, native, args, params
     )
-    data, lead_slices = _scattering_matrix(
-        green, incoming_factors, outgoing_factors
+    data, lead_offsets, physical_transmissions = (
+        native.scattering_matrix(
+            [value.tolist() for value in incoming_factors],
+            [value.tolist() for value in outgoing_factors],
+        )
     )
-    physical_transmissions = np.asarray(
-        [
-            [
-                np.linalg.norm(
-                    data[lead_slices[drain], lead_slices[source]]
-                )
-                ** 2
-                for source in range(lead_count)
-            ]
-            for drain in range(lead_count)
-        ]
+    total_channels = int(lead_offsets[-1])
+    data = np.asarray(data, dtype=complex).reshape(
+        (total_channels, total_channels)
+    )
+    lead_slices = tuple(
+        slice(lead_offsets[index], lead_offsets[index + 1])
+        for index in range(lead_count)
     )
     row_indices = np.concatenate(
         [np.arange(data.shape[0])[lead_slices[index]] for index in out_leads]
@@ -663,21 +554,24 @@ def greens_function(
     out_leads, in_leads = _lead_selection(
         lead_count, out_leads, in_leads
     )
-    green, selfenergies, broadenings, transmissions = _solution(
+    native, channel_counts = _solution(
         syst, energy, args, params
     )
+    green = np.asarray(native.retarded_green, dtype=complex)
+    selfenergies = tuple(
+        np.asarray(value, dtype=complex)
+        for value in native.self_energies
+    )
+    broadenings = tuple(
+        np.asarray(value, dtype=complex)
+        for value in native.broadenings
+    )
     channel_counts = tuple(
-        (
-            len(
-                lead.modes(
-                    energy, args=args, params=params
-                )[0].momenta
-            )
-            // 2
-            if hasattr(lead, "modes")
-            else None
-        )
-        for lead in syst.leads
+        native.channel_counts(list(channel_counts))
+    )
+    transmissions = np.asarray(
+        native.green_function_transmissions(list(channel_counts)),
+        dtype=float,
     )
     interface_bases = _interface_bases(syst, args, params)
     interface_selfenergies = tuple(
@@ -718,10 +612,10 @@ def ldos(syst, energy=0, args=(), *, params=None, **kwargs):
         len(lead.modes(energy, args=args, params=params)[0].momenta) // 2
         for lead in syst.leads
     )
-    green, _, _, _ = _solution(
+    native, _ = _solution(
         syst, energy, args, params, channel_counts
     )
-    return -np.imag(np.diag(green)) / np.pi
+    return np.asarray(native.local_density_of_states, dtype=float)
 
 
 class WaveFunction:
@@ -759,8 +653,12 @@ def wave_function(syst, energy=0, args=(), *, params=None, **kwargs):
         )
         for lead in syst.leads
     )
-    green, selfenergies, _, _ = _solution(
+    native, _ = _solution(
         syst, energy, args, params, channel_counts
+    )
+    selfenergies = tuple(
+        np.asarray(value, dtype=complex)
+        for value in native.self_energies
     )
     lead_info = tuple(
         (
@@ -774,13 +672,26 @@ def wave_function(syst, energy=0, args=(), *, params=None, **kwargs):
         syst,
         lead_info,
         selfenergies,
+        native,
         args,
         params,
     )
+    native_states = native.scattering_states(
+        [value.tolist() for value in incoming_factors]
+    )
     states = [
-        None if not hasattr(info, "momenta") else (green @ factor).T
-        for info, factor in zip(
-            lead_info, incoming_factors, strict=True
+        (
+            None
+            if not hasattr(info, "momenta")
+            else np.asarray(state, dtype=complex).reshape(
+                (factor.shape[1], factor.shape[0])
+            )
+        )
+        for info, state, factor in zip(
+            lead_info,
+            native_states,
+            incoming_factors,
+            strict=True,
         )
     ]
     return WaveFunction(states)

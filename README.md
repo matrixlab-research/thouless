@@ -42,7 +42,10 @@ source packages, including Wannier, visualization, low-level system, solver,
 linear-algebra, and local-operator entry points. Kwant density, current, and
 source evaluation now resolves the continuity equation in the shared Rust
 core; Python performs only site, callback, and array mapping. Complete
-semantic parity, broader Wannier
+steady-state compatibility entry points likewise delegate embedded-self-energy
+solves, Green functions, Caroli and Fisher-Lee transport, scattering states,
+channel inference, and LDOS to Rust; scientific-scale sparse device solves
+remain open. Complete semantic parity, broader Wannier
 differential fixtures, realistic material-scale validation, complete topology
 and response theory, and scientific-scale open-system transport remain open.
 
