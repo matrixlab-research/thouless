@@ -8,6 +8,12 @@ rust = "thouless"
 python = "thouless"
 julia = "Thouless"
 
+[tracking]
+rust_contract = "https://github.com/matrixlab-research/thouless/issues/7"
+python_native = "https://github.com/matrixlab-research/thouless/issues/8"
+julia_native = "https://github.com/matrixlab-research/thouless/issues/9"
+cross_language_ci = "https://github.com/matrixlab-research/thouless/issues/10"
+
 [[workflow]]
 id = "model.structure"
 rust = "thouless::model"

@@ -167,6 +167,18 @@ def check_native_language_contract() -> None:
         fail("native language contract has no version")
     if set(contract.get("languages", {})) != {"rust", "python", "julia"}:
         fail("native language contract must name Rust, Python, and Julia")
+    tracking = contract.get("tracking", {})
+    expected_tracking = {
+        "rust_contract",
+        "python_native",
+        "julia_native",
+        "cross_language_ci",
+    }
+    if set(tracking) != expected_tracking:
+        fail("native language contract has incomplete issue tracking")
+    for issue in tracking.values():
+        if not ISSUE_PATTERN.match(issue):
+            fail("native language contract has an invalid gap issue")
 
     workflows = contract.get("workflow", [])
     identifiers = [workflow.get("id") for workflow in workflows]

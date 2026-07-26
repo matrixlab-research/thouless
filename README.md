@@ -107,7 +107,12 @@ and requires all three language surfaces to cover the same scientific
 workflows. The machine-readable namespace mapping is
 [`spec/api/thouless-native-languages.toml`](spec/api/thouless-native-languages.toml).
 This is a target contract: the public Python-native API, C ABI, Julia package,
-and their artifact and parity CI remain unimplemented.
+and their artifact and parity CI remain unimplemented. The corresponding gaps
+are tracked in issues
+[#7](https://github.com/matrixlab-research/thouless/issues/7),
+[#8](https://github.com/matrixlab-research/thouless/issues/8),
+[#9](https://github.com/matrixlab-research/thouless/issues/9), and
+[#10](https://github.com/matrixlab-research/thouless/issues/10).
 
 The first native module is:
 

@@ -332,6 +332,13 @@ The language-native work is complete only when:
 - isolated held-out validation passes;
 - all associated gap issues are closed.
 
-The initial issue texts are preserved in
-[`native-language-api-issue-drafts.md`](native-language-api-issue-drafts.md)
-until the repository grants an authenticated writer permission to create them.
+Implementation and validation gaps are tracked in:
+
+- [issue #7](https://github.com/matrixlab-research/thouless/issues/7):
+  stabilize the Rust-native public API contract;
+- [issue #8](https://github.com/matrixlab-research/thouless/issues/8):
+  provide the first-class Python-native API;
+- [issue #9](https://github.com/matrixlab-research/thouless/issues/9):
+  add the stable C ABI and `Thouless.jl`;
+- [issue #10](https://github.com/matrixlab-research/thouless/issues/10):
+  add artifact and cross-language semantic-parity CI.
