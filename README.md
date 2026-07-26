@@ -51,10 +51,13 @@ Rust-native zero-fill incomplete-LU right preconditioning with restarted GMRES;
 dense device materialization, while the pinned quantum Hall workflow verifies
 quantized transport. Real and complex ordinary and generalized Schur paths
 preserve source dtypes, real quasi-triangular blocks, conjugate-pair order, and
-invariant-subspace reordering. Remaining work comprises the optional
-Rust-native sparse-direct backend, broader Wannier90 and Quantum ESPRESSO
-fixtures, realistic material-scale Wannier validation, broader intrinsic
-response theory, and isolated held-out validation.
+invariant-subspace reordering. The optional Kwant sparse-direct interface now
+uses Rust-native fill-reducing symbolic analysis, reusable complex sparse LU,
+multiple-right-hand-side solves, and ordered principal Schur complements;
+compatibility statistics expose portable storage counts without claiming
+MUMPS-internal measurements. Remaining work comprises broader Wannier90 and
+Quantum ESPRESSO fixtures, realistic material-scale Wannier validation,
+broader intrinsic response theory, and isolated held-out validation.
 
 A green CI run currently means:
 
@@ -119,8 +122,9 @@ let model = builder.build()?;
 - `spec/api/` contains executable public API inventories for the pinned source
   versions.
 - Exact upstream source and test baselines are pinned in `spec/upstream/`.
-  Remaining PythTB and Kwant failures are tracked in
-  [issue #4](https://github.com/matrixlab-research/thouless/issues/4) and
+  Remaining PythTB semantic and validation work is tracked in
+  [issue #4](https://github.com/matrixlab-research/thouless/issues/4);
+  completed Kwant backend work retains its audit trail in
   [issue #5](https://github.com/matrixlab-research/thouless/issues/5).
 - Isolated held-out validation is tracked in
   [issue #6](https://github.com/matrixlab-research/thouless/issues/6).
@@ -145,10 +149,10 @@ PYTHONPATH=python python -m pytest -q -ra compat-tests
 The strict runners execute all 398 collected Kwant tests and all 98 collected
 PythTB tests through the repository-built extension. The API checker separately
 validates the pinned public surfaces, so a green source-test run cannot hide a
-missing untested export. Remaining Kwant semantic and backend gaps are tracked
-in issue #5. Deeper PythTB semantic parity, Wannier and file-format
+missing untested export. Deeper PythTB semantic parity, Wannier and file-format
 differential fixtures, and scientific-scale validation remain tracked in issue
-#4. A skip without a linked issue is a CI error.
+#4. The completed Kwant sparse-direct backend retains its implementation audit
+trail in issue #5. A skip without a linked issue is a CI error.
 
 ## Source baselines
 

@@ -16,6 +16,7 @@ members = [".", "crates/thouless-lapack", "crates/thouless-python"]
 resolver = "2"
 
 [dependencies]
+faer = { version = "=0.20.1", default-features = false, features = ["std", "linalg"] }
 md-5 = "0.10.6"
 nalgebra = "0.33.2"
 num-complex = "0.4.6"

@@ -796,6 +796,111 @@ def test_compressed_graph_generalizes_to_parallel_and_dangling_edges() -> None:
     assert tuple(restored.in_neighbors(43)) == tuple(compressed.in_neighbors(43))
 
 
+def test_mumps_protocol_uses_reusable_rust_sparse_lu(
+    monkeypatch,
+) -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    import scipy.sparse.linalg
+
+    def forbidden(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("SciPy must not implement sparse factorization")
+
+    monkeypatch.setattr(scipy.sparse.linalg, "splu", forbidden)
+    monkeypatch.setattr(scipy.sparse.linalg, "spsolve", forbidden)
+
+    calls = []
+    for name in ("sparse_lu_analyze", "sparse_schur_complement"):
+        original = getattr(kwant.linalg.mumps._core, name)
+
+        def traced(*args, _name=name, _original=original, **kwargs):
+            calls.append(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(kwant.linalg.mumps._core, name, traced)
+
+    dimension = 1536
+    diagonal = np.full(dimension, 4.0 + 0.1j)
+    lower = np.full(dimension - 1, -1.0 + 0.05j)
+    upper = np.full(dimension - 1, -1.0 - 0.05j)
+    matrix = scipy.sparse.diags(
+        (lower, diagonal, upper),
+        offsets=(-1, 0, 1),
+        shape=(dimension, dimension),
+        dtype=np.complex128,
+        format="csr",
+    )
+    coordinate = np.arange(dimension)
+    expected = np.column_stack(
+        (
+            np.sin(0.013 * coordinate) + 0.2j,
+            np.cos(0.017 * coordinate) - 0.3j,
+        )
+    )
+    factored_matrix = scipy.sparse.diags(
+        (1.02 * lower, diagonal + 0.25, 0.98 * upper),
+        offsets=(-1, 0, 1),
+        shape=(dimension, dimension),
+        dtype=np.complex128,
+        format="csr",
+    )
+    right_hand_side = factored_matrix @ expected
+
+    context = kwant.linalg.mumps.MUMPSContext()
+    context.analyze(matrix)
+    context.factor(factored_matrix, reuse_analysis=True)
+    solution = context.solve(right_hand_side)
+    np.testing.assert_allclose(solution, expected, rtol=1e-12, atol=1e-12)
+    assert context.analysis_stats.est_nonzeros == matrix.nnz
+    assert context.factor_stats.nonzeros == factored_matrix.nnz
+    assert "estimated number of nonzeros" in str(context.analysis_stats)
+    assert "nonzeros in factored matrix" in str(context.factor_stats)
+
+    dense = np.asarray(
+        [
+            [5.0, 0.2, 0.0, 0.3, 0.0, -0.1],
+            [0.1, 4.5, 0.4, 0.0, 0.2, 0.0],
+            [0.0, -0.3, 5.5, 0.2, 0.0, 0.1],
+            [0.4, 0.0, -0.2, 4.8, 0.3, 0.0],
+            [0.0, 0.1, 0.0, -0.2, 5.2, 0.4],
+            [-0.2, 0.0, 0.3, 0.0, 0.1, 4.6],
+        ],
+        dtype=np.complex128,
+    )
+    selected = np.asarray([4, 1, 5])
+    eliminated = np.asarray([0, 2, 3])
+    expected_schur = (
+        dense[np.ix_(selected, selected)]
+        - dense[np.ix_(selected, eliminated)]
+        @ np.linalg.solve(
+            dense[np.ix_(eliminated, eliminated)],
+            dense[np.ix_(eliminated, selected)],
+        )
+    )
+    complement, statistics = kwant.linalg.mumps.schur_complement(
+        scipy.sparse.csr_matrix(dense),
+        selected,
+        calc_stats=True,
+    )
+    np.testing.assert_allclose(
+        complement,
+        expected_schur,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    assert statistics.ordering == "auto"
+    assert calls == ["sparse_lu_analyze", "sparse_schur_complement"]
+
+
+def test_mumps_singular_factorization_is_recoverable() -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    singular = scipy.sparse.csr_matrix(
+        np.asarray([[1.0, 2.0], [2.0, 4.0]], dtype=np.complex128)
+    )
+    with pytest.raises(kwant.linalg.mumps.MUMPSError):
+        kwant.linalg.mumps.MUMPSContext().factor(singular)
+
+
 def test_dense_decompositions_generalize_to_nonnormal_matrix_pencils() -> None:
     kwant = require_compat_module("kwant", ISSUE_URL)
     rng = np.random.default_rng(1905)

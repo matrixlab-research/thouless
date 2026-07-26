@@ -58,6 +58,10 @@ use thouless::observables::{
 };
 use thouless::periodic::{fold_terms, PeriodicTerm};
 use thouless::random_matrix::{circular_from_components, gaussian_from_components, SymmetryClass};
+use thouless::sparse_direct::{
+    schur_complement as native_sparse_schur_complement, SparseDirectError, SparseLuAnalysis,
+    SparseLuFactorization,
+};
 use thouless::spectrum::hermitian_eigensystem;
 use thouless::symmetry::{
     particle_hole_symmetric_basis, DiscreteSymmetry as NativeDiscreteSymmetry,
@@ -199,6 +203,101 @@ fn csr_from_parts(
     values: Vec<Complex64>,
 ) -> PyResult<CsrMatrix> {
     CsrMatrix::new(rows, columns, row_offsets, column_indices, values).map_err(value_error)
+}
+
+fn sparse_direct_error(error: SparseDirectError) -> PyErr {
+    match error {
+        SparseDirectError::FactorizationFailed => PyRuntimeError::new_err(error.to_string()),
+        _ => PyValueError::new_err(error.to_string()),
+    }
+}
+
+#[pyclass(name = "_SparseLuAnalysis")]
+struct PySparseLuAnalysis {
+    inner: SparseLuAnalysis,
+}
+
+#[pymethods]
+impl PySparseLuAnalysis {
+    #[getter]
+    fn dimension(&self) -> usize {
+        self.inner.dimension()
+    }
+
+    #[getter]
+    fn input_nonzeros(&self) -> usize {
+        self.inner.input_nonzeros()
+    }
+
+    fn factor(
+        &self,
+        rows: usize,
+        columns: usize,
+        row_offsets: Vec<usize>,
+        column_indices: Vec<usize>,
+        values: Vec<Complex64>,
+    ) -> PyResult<PySparseLuFactorization> {
+        let matrix = csr_from_parts(rows, columns, row_offsets, column_indices, values)?;
+        self.inner
+            .factor(&matrix)
+            .map(|inner| PySparseLuFactorization { inner })
+            .map_err(sparse_direct_error)
+    }
+}
+
+#[pyclass(name = "_SparseLuFactorization")]
+struct PySparseLuFactorization {
+    inner: SparseLuFactorization,
+}
+
+#[pymethods]
+impl PySparseLuFactorization {
+    #[getter]
+    fn dimension(&self) -> usize {
+        self.inner.dimension()
+    }
+
+    #[getter]
+    fn input_nonzeros(&self) -> usize {
+        self.inner.input_nonzeros()
+    }
+
+    fn solve(&self, right_hand_side: MatrixRows) -> PyResult<MatrixRows> {
+        let right_hand_side = matrix_from_rows(right_hand_side)?;
+        self.inner
+            .solve(&right_hand_side)
+            .map(|solution| matrix_to_rows(&solution))
+            .map_err(sparse_direct_error)
+    }
+}
+
+#[pyfunction]
+fn sparse_lu_analyze(
+    rows: usize,
+    columns: usize,
+    row_offsets: Vec<usize>,
+    column_indices: Vec<usize>,
+    values: Vec<Complex64>,
+) -> PyResult<PySparseLuAnalysis> {
+    let matrix = csr_from_parts(rows, columns, row_offsets, column_indices, values)?;
+    SparseLuAnalysis::analyze(&matrix)
+        .map(|inner| PySparseLuAnalysis { inner })
+        .map_err(sparse_direct_error)
+}
+
+#[pyfunction]
+fn sparse_schur_complement(
+    rows: usize,
+    columns: usize,
+    row_offsets: Vec<usize>,
+    column_indices: Vec<usize>,
+    values: Vec<Complex64>,
+    selected: Vec<usize>,
+) -> PyResult<MatrixRows> {
+    let matrix = csr_from_parts(rows, columns, row_offsets, column_indices, values)?;
+    native_sparse_schur_complement(&matrix, &selected)
+        .map(|complement| matrix_to_rows(&complement))
+        .map_err(sparse_direct_error)
 }
 
 #[pyclass(name = "_KpmCsrOperator")]
@@ -3508,6 +3607,8 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyKpmHamiltonian>()?;
     module.add_class::<PyOpenSystemSolution>()?;
     module.add_class::<PySparseOpenSystem>()?;
+    module.add_class::<PySparseLuAnalysis>()?;
+    module.add_class::<PySparseLuFactorization>()?;
     module.add_function(wrap_pyfunction!(validate_periodic_bands, module)?)?;
     module.add_function(wrap_pyfunction!(lead_band_evaluation, module)?)?;
     module.add_function(wrap_pyfunction!(reflection_shot_noise, module)?)?;
@@ -3532,6 +3633,8 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(kpm_chebyshev_nodes, module)?)?;
     module.add_function(wrap_pyfunction!(kpm_fermi_distribution, module)?)?;
     module.add_function(wrap_pyfunction!(kpm_velocity_operator, module)?)?;
+    module.add_function(wrap_pyfunction!(sparse_lu_analyze, module)?)?;
+    module.add_function(wrap_pyfunction!(sparse_schur_complement, module)?)?;
     module.add_function(wrap_pyfunction!(periodic_fold_terms, module)?)?;
     module.add_function(wrap_pyfunction!(lead_propagating_modes, module)?)?;
     module.add_function(wrap_pyfunction!(lead_setup_linear_system, module)?)?;

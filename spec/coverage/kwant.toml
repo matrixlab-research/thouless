@@ -179,12 +179,11 @@ status = "implemented"
 name = "optional sparse direct solver backend"
 source_entries = ["linalg.mumps"]
 compat_entry = "python/kwant/linalg/mumps"
-rust_capability = "sparse direct-solver backend not yet designed"
-public_test = "complete pinned MUMPS module"
+rust_capability = "algebra.sparse_direct"
+public_test = "repository 1536-dimensional changed-value symbolic-reuse solve, recoverable singular-factorization error, and ordered Schur-complement contract with scipy.sparse.linalg.splu and spsolve disabled"
 source_test = "dense and sparse right-hand sides, Schur complement, analysis-reuse warning, and a realistic graphene factorization"
-actual_result = "4 source tests passed through a protocol-compatible SuperLU fallback; a Rust-native sparse direct-solver backend and MUMPS-specific statistics remain open"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/5"
+actual_result = "4 source tests passed through Rust-native fill-reducing symbolic analysis, reusable complex sparse LU, multiple-right-hand-side solves, and ordered principal Schur complements; the compatibility objects preserve Kwant's statistics fields using portable backend storage counts rather than claiming unavailable MUMPS-internal counters"
+status = "implemented"
 
 [[interface]]
 name = "kernel polynomial spectral and response methods"

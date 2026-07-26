@@ -179,6 +179,13 @@ test = "src/decomposition.rs real and complex reconstruction and eigenvector tes
 status = "implemented"
 
 [[capability]]
+id = "algebra.sparse_direct"
+description = "Canonical sparse LU with separately reusable symbolic analysis, multiple dense right-hand sides, and principal Schur complements"
+native_api = "thouless::sparse_direct::{SparseLuAnalysis,SparseLuFactorization,schur_complement}"
+test = "src/sparse_direct.rs complex multi-right-hand-side residuals, changed-value symbolic reuse, structure rejection, recoverable numerical singularity, Schur block identity, and 4096-dimensional tridiagonal solve; repository 1536-dimensional compatibility contract with SciPy sparse factorization disabled; and complete pinned Kwant MUMPS module"
+status = "implemented"
+
+[[capability]]
 id = "validation.held_out"
 description = "Evaluator-owned tests on unseen models and workflows"
 native_api = "not applicable"

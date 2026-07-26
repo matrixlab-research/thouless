@@ -30,6 +30,7 @@ pub mod observables;
 pub mod periodic;
 pub mod random_matrix;
 pub mod response;
+pub mod sparse_direct;
 pub mod spectrum;
 pub mod symmetry;
 pub mod topology;
