@@ -119,9 +119,8 @@ status = "implemented"
 id = "transport.propagating_modes"
 description = "Current-normalized propagating Bloch modes, decaying evanescent modes, and stable regular or generalized translation pencils for square nearest-cell leads, including singular-hopping bases, complete orthogonal conservation-law subspaces, symmetry-related blocks, and discrete-symmetry-adapted gauges"
 native_api = "thouless::lead_modes::{setup_lead_linear_system,reexpress_modes_in_singular_hopping_basis,propagating_modes,propagating_modes_in_subspaces,propagating_modes_in_declared_symmetric_subspaces,propagating_modes_with_symmetries,LeadLinearSystem,LeadLinearSystemOptions,PropagatingLeadModes,ProjectedLeadModes}"
-test = "src/lead_modes.rs analytic propagating and gapped scalar-chain, stable-pencil dtype and extraction-basis, singular-basis invariance, degenerate-current, rescaling, complex-projector, symmetry-related-block, time-reversal, and particle-hole properties plus compatibility boundary with the SciPy eigensolver disabled"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/3"
+test = "src/lead_modes.rs analytic propagating and gapped scalar-chain, stable-pencil dtype and extraction-basis, singular-basis invariance, degenerate-current, rescaling, complex-projector, symmetry-related-block, time-reversal, and particle-hole properties; compatibility boundaries with the SciPy eigensolver disabled; and the complete pinned 24-test Kwant physics lead module plus low-level and sparse-solver lead workflows"
+status = "implemented"
 
 [[capability]]
 id = "transport.lead_self_energy"
