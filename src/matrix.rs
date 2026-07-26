@@ -2,6 +2,144 @@
 
 use crate::{Complex64, MatrixError};
 
+/// An owned row-major dense real matrix.
+///
+/// This is the real-valued counterpart of [`ComplexMatrix`].  Keeping the
+/// scalar domain in the type is important for algorithms such as the real
+/// Schur decomposition, whose quasi-triangular form carries information that
+/// is lost by eagerly promoting the input to complex arithmetic.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RealMatrix {
+    rows: usize,
+    columns: usize,
+    data: Vec<f64>,
+}
+
+impl RealMatrix {
+    /// Creates a matrix from row-major entries.
+    pub fn new(rows: usize, columns: usize, data: Vec<f64>) -> Result<Self, MatrixError> {
+        if data.len() != rows.saturating_mul(columns) {
+            return Err(MatrixError::InvalidDataLength {
+                rows,
+                columns,
+                actual: data.len(),
+            });
+        }
+        if data.iter().any(|value| !value.is_finite()) {
+            return Err(MatrixError::NonFiniteValue);
+        }
+        Ok(Self {
+            rows,
+            columns,
+            data,
+        })
+    }
+
+    /// Creates a zero matrix.
+    #[must_use]
+    pub fn zeros(rows: usize, columns: usize) -> Self {
+        Self {
+            rows,
+            columns,
+            data: vec![0.0; rows.saturating_mul(columns)],
+        }
+    }
+
+    /// Creates an identity matrix.
+    #[must_use]
+    pub fn identity(dimension: usize) -> Self {
+        let mut matrix = Self::zeros(dimension, dimension);
+        for index in 0..dimension {
+            matrix.data[index * dimension + index] = 1.0;
+        }
+        matrix
+    }
+
+    /// Returns the number of rows.
+    #[must_use]
+    pub const fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// Returns the number of columns.
+    #[must_use]
+    pub const fn columns(&self) -> usize {
+        self.columns
+    }
+
+    /// Returns the matrix shape.
+    #[must_use]
+    pub const fn shape(&self) -> (usize, usize) {
+        (self.rows, self.columns)
+    }
+
+    /// Returns the row-major entries.
+    #[must_use]
+    pub fn as_slice(&self) -> &[f64] {
+        &self.data
+    }
+
+    /// Consumes the matrix and returns its row-major entries.
+    #[must_use]
+    pub fn into_vec(self) -> Vec<f64> {
+        self.data
+    }
+
+    /// Returns one entry.
+    pub fn get(&self, row: usize, column: usize) -> Result<f64, MatrixError> {
+        let index = self.index(row, column)?;
+        Ok(self.data[index])
+    }
+
+    /// Replaces one entry.
+    pub fn set(&mut self, row: usize, column: usize, value: f64) -> Result<(), MatrixError> {
+        if !value.is_finite() {
+            return Err(MatrixError::NonFiniteValue);
+        }
+        let index = self.index(row, column)?;
+        self.data[index] = value;
+        Ok(())
+    }
+
+    /// Returns the transpose.
+    #[must_use]
+    pub fn transpose(&self) -> Self {
+        let mut result = Self::zeros(self.columns, self.rows);
+        for row in 0..self.rows {
+            for column in 0..self.columns {
+                result.data[column * self.rows + row] = self.data[row * self.columns + column];
+            }
+        }
+        result
+    }
+
+    /// Promotes this matrix to complex arithmetic without changing entries.
+    #[must_use]
+    pub fn to_complex(&self) -> ComplexMatrix {
+        ComplexMatrix {
+            rows: self.rows,
+            columns: self.columns,
+            data: self
+                .data
+                .iter()
+                .map(|value| Complex64::new(*value, 0.0))
+                .collect(),
+        }
+    }
+
+    fn index(&self, row: usize, column: usize) -> Result<usize, MatrixError> {
+        if row >= self.rows || column >= self.columns {
+            return Err(MatrixError::IndexOutOfBounds {
+                row,
+                column,
+                rows: self.rows,
+                columns: self.columns,
+            });
+        }
+        Ok(row * self.columns + column)
+    }
+}
+
 /// An owned row-major dense complex matrix.
 ///
 /// The type deliberately exposes a backend-independent public representation.

@@ -893,6 +893,188 @@ def test_dense_decompositions_generalize_to_nonnormal_matrix_pencils() -> None:
     assert len(generalized_forms) == 2
 
 
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_real_schur_preserves_quasi_triangular_forms_and_dtype(dtype) -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    real_dtype = np.dtype(dtype)
+    complex_dtype = np.dtype(
+        np.complex64 if real_dtype == np.dtype(np.float32) else np.complex128
+    )
+    tolerance = 2e-5 if real_dtype == np.dtype(np.float32) else 1e-11
+    matrix = np.asarray(
+        [
+            [0.0, -2.0, 0.3],
+            [0.5, 0.0, -0.1],
+            [0.0, 0.0, 3.0],
+        ],
+        dtype=dtype,
+    )
+
+    form, vectors, eigenvalues = kwant.linalg.schur(matrix)
+    assert form.dtype == vectors.dtype == real_dtype
+    assert eigenvalues.dtype == complex_dtype
+    assert form[1, 0] != 0
+    assert eigenvalues[0].imag > 0
+    assert eigenvalues[1].imag < 0
+    np.testing.assert_allclose(
+        vectors @ form @ vectors.T,
+        matrix,
+        rtol=tolerance,
+        atol=tolerance,
+    )
+
+    complex_form, complex_vectors = kwant.linalg.convert_r2c_schur(
+        form,
+        vectors,
+    )
+    assert complex_form.dtype == complex_vectors.dtype == complex_dtype
+    np.testing.assert_allclose(
+        np.tril(complex_form, -1),
+        0,
+        rtol=0,
+        atol=tolerance,
+    )
+    np.testing.assert_allclose(
+        np.diag(complex_form),
+        eigenvalues,
+        rtol=tolerance,
+        atol=tolerance,
+    )
+    np.testing.assert_allclose(
+        complex_vectors @ complex_form @ complex_vectors.conj().T,
+        matrix,
+        rtol=tolerance,
+        atol=tolerance,
+    )
+
+    selection = np.asarray([False, True, False])
+    reordered, reordered_vectors, reordered_values = kwant.linalg.order_schur(
+        selection,
+        form,
+        vectors,
+    )
+    assert reordered.dtype == reordered_vectors.dtype == complex_dtype
+    np.testing.assert_allclose(
+        reordered_values[0],
+        eigenvalues[1],
+        rtol=tolerance,
+        atol=tolerance,
+    )
+    np.testing.assert_allclose(
+        reordered_vectors @ reordered @ reordered_vectors.conj().T,
+        matrix,
+        rtol=tolerance,
+        atol=tolerance,
+    )
+    real_reordered, real_reordered_vectors, _ = kwant.linalg.order_schur(
+        [False, False, True],
+        form,
+        vectors,
+    )
+    assert real_reordered.dtype == real_reordered_vectors.dtype == real_dtype
+    np.testing.assert_allclose(
+        real_reordered_vectors @ real_reordered @ real_reordered_vectors.T,
+        matrix,
+        rtol=tolerance,
+        atol=tolerance,
+    )
+
+    metric = np.asarray(
+        [
+            [1.0, 0.15, 0.0],
+            [0.0, 1.5, 0.0],
+            [0.0, 0.0, 2.0],
+        ],
+        dtype=dtype,
+    )
+    s, t, q, z, alpha, beta = kwant.linalg.gen_schur(matrix, metric)
+    assert s.dtype == t.dtype == q.dtype == z.dtype == real_dtype
+    assert alpha.dtype == complex_dtype
+    assert beta.dtype == real_dtype
+    assert s[1, 0] != 0
+    np.testing.assert_allclose(q @ s @ z.T, matrix, rtol=tolerance, atol=tolerance)
+    np.testing.assert_allclose(q @ t @ z.T, metric, rtol=tolerance, atol=tolerance)
+
+    complex_s, complex_t, complex_q, complex_z = (
+        kwant.linalg.convert_r2c_gen_schur(s, t, q, z)
+    )
+    assert {
+        complex_s.dtype,
+        complex_t.dtype,
+        complex_q.dtype,
+        complex_z.dtype,
+    } == {complex_dtype}
+    np.testing.assert_allclose(
+        np.tril(complex_s, -1),
+        0,
+        rtol=0,
+        atol=tolerance,
+    )
+    np.testing.assert_allclose(
+        complex_q @ complex_s @ complex_z.conj().T,
+        matrix,
+        rtol=tolerance,
+        atol=tolerance,
+    )
+    np.testing.assert_allclose(
+        complex_q @ complex_t @ complex_z.conj().T,
+        metric,
+        rtol=tolerance,
+        atol=tolerance,
+    )
+
+    reordered_s, reordered_t, reordered_q, reordered_z, alpha2, beta2 = (
+        kwant.linalg.order_gen_schur(selection, s, t, q, z)
+    )
+    assert {
+        reordered_s.dtype,
+        reordered_t.dtype,
+        reordered_q.dtype,
+        reordered_z.dtype,
+        alpha2.dtype,
+        beta2.dtype,
+    } == {complex_dtype}
+    np.testing.assert_allclose(
+        reordered_q @ reordered_s @ reordered_z.conj().T,
+        matrix,
+        rtol=tolerance,
+        atol=tolerance,
+    )
+    np.testing.assert_allclose(
+        reordered_q @ reordered_t @ reordered_z.conj().T,
+        metric,
+        rtol=tolerance,
+        atol=tolerance,
+    )
+    (
+        real_reordered_s,
+        real_reordered_t,
+        real_reordered_q,
+        real_reordered_z,
+        _,
+        real_reordered_beta,
+    ) = kwant.linalg.order_gen_schur([False, False, True], s, t, q, z)
+    assert {
+        real_reordered_s.dtype,
+        real_reordered_t.dtype,
+        real_reordered_q.dtype,
+        real_reordered_z.dtype,
+        real_reordered_beta.dtype,
+    } == {real_dtype}
+    np.testing.assert_allclose(
+        real_reordered_q @ real_reordered_s @ real_reordered_z.T,
+        matrix,
+        rtol=tolerance,
+        atol=tolerance,
+    )
+    np.testing.assert_allclose(
+        real_reordered_q @ real_reordered_t @ real_reordered_z.T,
+        metric,
+        rtol=tolerance,
+        atol=tolerance,
+    )
+
+
 def test_periodic_bands_execute_without_python_eigensolvers(monkeypatch) -> None:
     kwant = require_compat_module("kwant", ISSUE_URL)
     lattice = kwant.lattice.chain(norbs=1)

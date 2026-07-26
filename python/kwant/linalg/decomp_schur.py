@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from thouless import _core
+from . import lapack
 
 
 def _square_matrix(value, name):
@@ -30,12 +31,33 @@ def _rows(matrix):
     return np.asarray(matrix, dtype=np.complex128).tolist()
 
 
-def _matrix(rows, dimension):
-    return np.asarray(rows, dtype=np.complex128).reshape(dimension, dimension)
+def _real_rows(matrix):
+    return np.asarray(matrix, dtype=np.float64).tolist()
 
 
-def _column_matrix(rows, dimension, columns):
-    return np.asarray(rows, dtype=np.complex128).reshape(dimension, columns)
+def _matrix(rows, dimension, dtype):
+    return np.asarray(rows, dtype=dtype).reshape(dimension, dimension)
+
+
+def _column_matrix(rows, dimension, columns, dtype):
+    return np.asarray(rows, dtype=dtype).reshape(dimension, columns)
+
+
+def _complex_dtype(dtype):
+    dtype = np.dtype(dtype)
+    return np.dtype(
+        np.complex64
+        if dtype in (np.dtype(np.float32), np.dtype(np.complex64))
+        else np.complex128
+    )
+
+
+def _prepared_square_matrices(*values):
+    matrices = _common_square_matrices(*values)
+    prepared = lapack.prepare_for_lapack(False, *matrices)
+    if len(matrices) == 1:
+        return [prepared]
+    return list(prepared)
 
 
 def _selection(select, dimension, default_all=False):
@@ -54,15 +76,23 @@ def _selection(select, dimension, default_all=False):
     return values.tolist()
 
 
-def _requested_eigenvectors(left_rows, right_rows, dimension, selected, left, right):
+def _requested_eigenvectors(
+    left_rows,
+    right_rows,
+    dimension,
+    selected,
+    left,
+    right,
+    dtype,
+):
     columns = sum(selected)
     left_vectors = (
-        _column_matrix(left_rows, dimension, columns)
+        _column_matrix(left_rows, dimension, columns, dtype)
         if left
         else None
     )
     right_vectors = (
-        _column_matrix(right_rows, dimension, columns)
+        _column_matrix(right_rows, dimension, columns, dtype)
         if right
         else None
     )
@@ -77,45 +107,85 @@ def _requested_eigenvectors(left_rows, right_rows, dimension, selected, left, ri
 
 def schur(a, calc_q=True, calc_ev=True, overwrite_a=False):
     del overwrite_a
-    matrix = _square_matrix(a, "a")
+    matrix = _prepared_square_matrices(a)[0]
     dimension = matrix.shape[0]
-    form, vectors, eigenvalues = _core.dense_schur(_rows(matrix))
-    result = (_matrix(form, dimension),)
+    dtype = matrix.dtype
+    eigenvalue_dtype = _complex_dtype(dtype)
+    if np.iscomplexobj(matrix):
+        form, vectors, eigenvalues = _core.dense_schur(_rows(matrix))
+    else:
+        form, vectors, eigenvalues = _core.dense_real_schur(_real_rows(matrix))
+    result = (_matrix(form, dimension, dtype),)
     if calc_q:
-        result += (_matrix(vectors, dimension),)
+        result += (_matrix(vectors, dimension, dtype),)
     if calc_ev:
-        result += (np.asarray(eigenvalues, dtype=np.complex128),)
+        result += (np.asarray(eigenvalues, dtype=eigenvalue_dtype),)
     return result
 
 
 def convert_r2c_schur(t, q):
-    form, vectors = _common_square_matrices(t, q)
-    if np.iscomplexobj(form) and np.iscomplexobj(vectors):
+    form, vectors = _prepared_square_matrices(t, q)
+    if np.iscomplexobj(form):
+        return np.array(form, copy=True), np.array(vectors, copy=True)
+    if not np.any(np.diagonal(form, offset=-1)):
         return np.array(form, copy=True), np.array(vectors, copy=True)
     dimension = form.shape[0]
-    converted, converted_vectors, _ = _core.dense_complexify_schur(
-        _rows(form),
-        _rows(vectors),
+    dtype = _complex_dtype(form.dtype)
+    converted, converted_vectors, _ = _core.dense_complexify_real_schur(
+        _real_rows(form),
+        _real_rows(vectors),
     )
-    return _matrix(converted, dimension), _matrix(converted_vectors, dimension)
+    return (
+        _matrix(converted, dimension, dtype),
+        _matrix(converted_vectors, dimension, dtype),
+    )
 
 
 def order_schur(select, t, q, calc_ev=True, overwrite_tq=False):
     del overwrite_tq
-    form, vectors = _common_square_matrices(t, q)
+    form, vectors = _prepared_square_matrices(t, q)
     dimension = form.shape[0]
     selected = _selection(select, dimension)
-    reordered, reordered_vectors, eigenvalues = _core.dense_reorder_schur(
-        _rows(form),
-        _rows(vectors),
-        selected,
-    )
+    output_dtype = form.dtype
+    if np.iscomplexobj(form):
+        reordered, reordered_vectors, eigenvalues = _core.dense_reorder_schur(
+            _rows(form),
+            _rows(vectors),
+            selected,
+        )
+    else:
+        split_pair = any(
+            form[index + 1, index] != 0
+            and bool(selected[index]) != bool(selected[index + 1])
+            for index in range(max(0, dimension - 1))
+        )
+        if split_pair:
+            complex_form, complex_vectors, _ = _core.dense_complexify_real_schur(
+                _real_rows(form),
+                _real_rows(vectors),
+            )
+            reordered, reordered_vectors, eigenvalues = _core.dense_reorder_schur(
+                complex_form,
+                complex_vectors,
+                selected,
+            )
+            output_dtype = _complex_dtype(form.dtype)
+        else:
+            (
+                reordered,
+                reordered_vectors,
+                eigenvalues,
+            ) = _core.dense_reorder_real_schur(
+                _real_rows(form),
+                _real_rows(vectors),
+                selected,
+            )
     result = (
-        _matrix(reordered, dimension),
-        _matrix(reordered_vectors, dimension),
+        _matrix(reordered, dimension, output_dtype),
+        _matrix(reordered_vectors, dimension, output_dtype),
     )
     if calc_ev:
-        result += (np.asarray(eigenvalues, dtype=np.complex128),)
+        result += (np.asarray(eigenvalues, dtype=_complex_dtype(form.dtype)),)
     return result
 
 
@@ -128,16 +198,25 @@ def evecs_from_schur(
     overwrite_tq=False,
 ):
     del overwrite_tq
-    form, vectors = _common_square_matrices(t, q)
+    form, vectors = _prepared_square_matrices(t, q)
     dimension = form.shape[0]
     selected = _selection(select, dimension, default_all=True)
-    left_rows, right_rows = _core.dense_schur_eigenvectors(
-        _rows(form),
-        _rows(vectors),
-        selected,
-        bool(left),
-        bool(right),
-    )
+    if np.iscomplexobj(form):
+        left_rows, right_rows = _core.dense_schur_eigenvectors(
+            _rows(form),
+            _rows(vectors),
+            selected,
+            bool(left),
+            bool(right),
+        )
+    else:
+        left_rows, right_rows = _core.dense_real_schur_eigenvectors(
+            _real_rows(form),
+            _real_rows(vectors),
+            selected,
+            bool(left),
+            bool(right),
+        )
     return _requested_eigenvectors(
         left_rows,
         right_rows,
@@ -145,6 +224,7 @@ def evecs_from_schur(
         selected,
         bool(left),
         bool(right),
+        _complex_dtype(form.dtype),
     )
 
 
@@ -157,28 +237,44 @@ def gen_schur(
     overwrite_ab=False,
 ):
     del overwrite_ab
-    left, right = _common_square_matrices(a, b)
+    left, right = _prepared_square_matrices(a, b)
     dimension = left.shape[0]
-    (
-        left_form,
-        right_form,
-        left_vectors,
-        right_vectors,
-        alpha,
-        beta,
-    ) = _core.dense_generalized_schur(_rows(left), _rows(right))
+    dtype = left.dtype
+    if np.iscomplexobj(left):
+        (
+            left_form,
+            right_form,
+            left_vectors,
+            right_vectors,
+            alpha,
+            beta,
+        ) = _core.dense_generalized_schur(_rows(left), _rows(right))
+        beta_dtype = dtype
+    else:
+        (
+            left_form,
+            right_form,
+            left_vectors,
+            right_vectors,
+            alpha,
+            beta,
+        ) = _core.dense_generalized_real_schur(
+            _real_rows(left),
+            _real_rows(right),
+        )
+        beta_dtype = dtype
     result = (
-        _matrix(left_form, dimension),
-        _matrix(right_form, dimension),
+        _matrix(left_form, dimension, dtype),
+        _matrix(right_form, dimension, dtype),
     )
     if calc_q:
-        result += (_matrix(left_vectors, dimension),)
+        result += (_matrix(left_vectors, dimension, dtype),)
     if calc_z:
-        result += (_matrix(right_vectors, dimension),)
+        result += (_matrix(right_vectors, dimension, dtype),)
     if calc_ev:
         result += (
-            np.asarray(alpha, dtype=np.complex128),
-            np.asarray(beta, dtype=np.complex128),
+            np.asarray(alpha, dtype=_complex_dtype(dtype)),
+            np.asarray(beta, dtype=beta_dtype),
         )
     return result
 
@@ -189,18 +285,27 @@ def convert_r2c_gen_schur(s, t, q=None, z=None):
         supplied.append(q)
     if z is not None:
         supplied.append(z)
-    matrices = _common_square_matrices(*supplied)
+    matrices = _prepared_square_matrices(*supplied)
     left_form, right_form = matrices[:2]
     dimension = left_form.shape[0]
     index = 2
-    left_vectors = matrices[index] if q is not None else np.eye(dimension)
+    left_vectors = (
+        matrices[index]
+        if q is not None
+        else np.eye(dimension, dtype=left_form.dtype)
+    )
     index += q is not None
-    right_vectors = matrices[index] if z is not None else np.eye(dimension)
+    right_vectors = (
+        matrices[index]
+        if z is not None
+        else np.eye(dimension, dtype=left_form.dtype)
+    )
 
-    if all(np.iscomplexobj(matrix) for matrix in matrices):
+    if np.iscomplexobj(left_form) or not np.any(np.diagonal(left_form, offset=-1)):
         converted = [np.array(matrix, copy=True) for matrix in matrices]
         return tuple(converted)
 
+    dtype = _complex_dtype(left_form.dtype)
     (
         converted_left,
         converted_right,
@@ -208,20 +313,20 @@ def convert_r2c_gen_schur(s, t, q=None, z=None):
         converted_z,
         _,
         _,
-    ) = _core.dense_complexify_generalized_schur(
-        _rows(left_form),
-        _rows(right_form),
-        _rows(left_vectors),
-        _rows(right_vectors),
+    ) = _core.dense_complexify_real_generalized_schur(
+        _real_rows(left_form),
+        _real_rows(right_form),
+        _real_rows(left_vectors),
+        _real_rows(right_vectors),
     )
     result = (
-        _matrix(converted_left, dimension),
-        _matrix(converted_right, dimension),
+        _matrix(converted_left, dimension, dtype),
+        _matrix(converted_right, dimension, dtype),
     )
     if q is not None:
-        result += (_matrix(converted_q, dimension),)
+        result += (_matrix(converted_q, dimension, dtype),)
     if z is not None:
-        result += (_matrix(converted_z, dimension),)
+        result += (_matrix(converted_z, dimension, dtype),)
     return result
 
 
@@ -240,41 +345,101 @@ def order_gen_schur(
         supplied.append(q)
     if z is not None:
         supplied.append(z)
-    matrices = _common_square_matrices(*supplied)
+    matrices = _prepared_square_matrices(*supplied)
     left_form, right_form = matrices[:2]
     dimension = left_form.shape[0]
     index = 2
-    left_vectors = matrices[index] if q is not None else np.eye(dimension)
+    left_vectors = (
+        matrices[index]
+        if q is not None
+        else np.eye(dimension, dtype=left_form.dtype)
+    )
     index += q is not None
-    right_vectors = matrices[index] if z is not None else np.eye(dimension)
+    right_vectors = (
+        matrices[index]
+        if z is not None
+        else np.eye(dimension, dtype=left_form.dtype)
+    )
     selected = _selection(select, dimension)
 
-    (
-        reordered_left,
-        reordered_right,
-        reordered_q,
-        reordered_z,
-        alpha,
-        beta,
-    ) = _core.dense_reorder_generalized_schur(
-        _rows(left_form),
-        _rows(right_form),
-        _rows(left_vectors),
-        _rows(right_vectors),
-        selected,
-    )
+    output_dtype = left_form.dtype
+    if np.iscomplexobj(left_form):
+        (
+            reordered_left,
+            reordered_right,
+            reordered_q,
+            reordered_z,
+            alpha,
+            beta,
+        ) = _core.dense_reorder_generalized_schur(
+            _rows(left_form),
+            _rows(right_form),
+            _rows(left_vectors),
+            _rows(right_vectors),
+            selected,
+        )
+    else:
+        split_pair = any(
+            left_form[index + 1, index] != 0
+            and bool(selected[index]) != bool(selected[index + 1])
+            for index in range(max(0, dimension - 1))
+        )
+        if split_pair:
+            (
+                complex_left,
+                complex_right,
+                complex_q,
+                complex_z,
+                _,
+                _,
+            ) = _core.dense_complexify_real_generalized_schur(
+                _real_rows(left_form),
+                _real_rows(right_form),
+                _real_rows(left_vectors),
+                _real_rows(right_vectors),
+            )
+            (
+                reordered_left,
+                reordered_right,
+                reordered_q,
+                reordered_z,
+                alpha,
+                beta,
+            ) = _core.dense_reorder_generalized_schur(
+                complex_left,
+                complex_right,
+                complex_q,
+                complex_z,
+                selected,
+            )
+            output_dtype = _complex_dtype(left_form.dtype)
+        else:
+            (
+                reordered_left,
+                reordered_right,
+                reordered_q,
+                reordered_z,
+                alpha,
+                beta,
+            ) = _core.dense_reorder_generalized_real_schur(
+                _real_rows(left_form),
+                _real_rows(right_form),
+                _real_rows(left_vectors),
+                _real_rows(right_vectors),
+                selected,
+            )
     result = (
-        _matrix(reordered_left, dimension),
-        _matrix(reordered_right, dimension),
+        _matrix(reordered_left, dimension, output_dtype),
+        _matrix(reordered_right, dimension, output_dtype),
     )
     if q is not None:
-        result += (_matrix(reordered_q, dimension),)
+        result += (_matrix(reordered_q, dimension, output_dtype),)
     if z is not None:
-        result += (_matrix(reordered_z, dimension),)
+        result += (_matrix(reordered_z, dimension, output_dtype),)
     if calc_ev:
         result += (
-            np.asarray(alpha, dtype=np.complex128),
-            np.asarray(beta, dtype=np.complex128),
+            np.asarray(alpha, dtype=_complex_dtype(left_form.dtype)),
+            np.asarray(beta, dtype=output_dtype),
         )
     return result
 
@@ -300,24 +465,46 @@ def evecs_from_gen_schur(
         supplied.append(q)
     if z is not None:
         supplied.append(z)
-    matrices = _common_square_matrices(*supplied)
+    matrices = _prepared_square_matrices(*supplied)
     left_form, right_form = matrices[:2]
     dimension = left_form.shape[0]
     index = 2
-    left_vectors = matrices[index] if q is not None else np.eye(dimension)
+    left_vectors = (
+        matrices[index]
+        if q is not None
+        else np.eye(dimension, dtype=left_form.dtype)
+    )
     index += q is not None
-    right_vectors = matrices[index] if z is not None else np.eye(dimension)
+    right_vectors = (
+        matrices[index]
+        if z is not None
+        else np.eye(dimension, dtype=left_form.dtype)
+    )
     selected = _selection(select, dimension, default_all=True)
 
-    left_rows, right_rows = _core.dense_generalized_schur_eigenvectors(
-        _rows(left_form),
-        _rows(right_form),
-        _rows(left_vectors),
-        _rows(right_vectors),
-        selected,
-        bool(left),
-        bool(right),
-    )
+    if np.iscomplexobj(left_form):
+        left_rows, right_rows = _core.dense_generalized_schur_eigenvectors(
+            _rows(left_form),
+            _rows(right_form),
+            _rows(left_vectors),
+            _rows(right_vectors),
+            selected,
+            bool(left),
+            bool(right),
+        )
+    else:
+        (
+            left_rows,
+            right_rows,
+        ) = _core.dense_generalized_real_schur_eigenvectors(
+            _real_rows(left_form),
+            _real_rows(right_form),
+            _real_rows(left_vectors),
+            _real_rows(right_vectors),
+            selected,
+            bool(left),
+            bool(right),
+        )
     return _requested_eigenvectors(
         left_rows,
         right_rows,
@@ -325,6 +512,7 @@ def evecs_from_gen_schur(
         selected,
         bool(left),
         bool(right),
+        _complex_dtype(left_form.dtype),
     )
 
 

@@ -170,11 +170,10 @@ source_entries = [
 ]
 compat_entry = "python/kwant/linalg"
 rust_capability = "algebra.dense_decomposition"
-public_test = "repository nonnormal ordinary and generalized decomposition, reordering, eigenvector, and optional-output contract"
+public_test = "repository nonnormal ordinary and generalized decomposition plus real float32/float64 quasi-triangular forms, order-preserving conjugate-pair conversion, reordering, eigenvector, and optional-output contracts"
 source_test = "complete pinned linalg decomposition module across float32, float64, complex64, complex128, and integer input"
-actual_result = "40 source tests passed; compatibility currently normalizes outputs to complex128 instead of preserving real quasi-triangular forms and source dtypes"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/5"
+actual_result = "40 source tests passed; native DGEES/DGGES/DTRSEN/DTGSEN paths retain real quasi-triangular forms and float32/float64 API dtypes, complex paths retain complex64/complex128 dtypes, and splitting a conjugate pair performs an order-preserving complex conversion before reordering"
+status = "implemented"
 
 [[interface]]
 name = "optional sparse direct solver backend"

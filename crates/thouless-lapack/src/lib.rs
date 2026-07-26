@@ -10,9 +10,10 @@ mod schur;
 
 pub use schur::{
     complex_schur, complex_schur_eigenvectors, generalized_complex_schur,
-    generalized_complex_schur_eigenvectors, reorder_complex_schur,
-    reorder_generalized_complex_schur, ComplexEigenvectors, ComplexSchur, EigenvectorSides,
-    GeneralizedComplexSchur,
+    generalized_complex_schur_eigenvectors, generalized_real_schur, real_schur,
+    reorder_complex_schur, reorder_generalized_complex_schur, reorder_generalized_real_schur,
+    reorder_real_schur, ComplexEigenvectors, ComplexSchur, EigenvectorSides,
+    GeneralizedComplexSchur, GeneralizedRealSchur, RealSchur,
 };
 
 #[cfg(target_os = "macos")]

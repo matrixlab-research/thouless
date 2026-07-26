@@ -7,8 +7,11 @@ use thouless::continuum::{
     finite_difference_stencil, landau_ladder_coefficient, DifferentialFactor,
 };
 use thouless::decomposition::{
-    complexify_generalized_schur, complexify_schur, eigenvectors_from_generalized_schur,
-    eigenvectors_from_schur, generalized_schur, reorder_generalized_schur, reorder_schur, schur,
+    complexify_generalized_schur, complexify_real_generalized_schur, complexify_real_schur,
+    complexify_schur, eigenvectors_from_generalized_real_schur,
+    eigenvectors_from_generalized_schur, eigenvectors_from_real_schur, eigenvectors_from_schur,
+    generalized_real_schur, generalized_schur, real_schur, reorder_generalized_real_schur,
+    reorder_generalized_schur, reorder_real_schur, reorder_schur, schur,
 };
 use thouless::differentiation::{finite_difference_uniform, DifferenceScheme};
 use thouless::digest::{gaussian as digest_gaussian_value, uniform_pair};
@@ -79,7 +82,7 @@ use thouless::wannier::{
     maximize_localization, operators_in_frames, periodic_overlaps, project_trials,
     spread_decomposition,
 };
-use thouless::{Complex64, ComplexMatrix};
+use thouless::{Complex64, ComplexMatrix, RealMatrix};
 
 create_exception!(thouless_python, NodeDoesNotExistError, PyIndexError);
 create_exception!(thouless_python, EdgeDoesNotExistError, PyIndexError);
@@ -114,6 +117,7 @@ type ModelOutput = (
 type ReciprocalPathOutput = (Vec<Vec<f64>>, Vec<f64>, Vec<f64>);
 type SupercellOutput = (ModelOutput, Vec<Vec<i32>>);
 type MatrixRows = Vec<Vec<Complex64>>;
+type RealMatrixRows = Vec<Vec<f64>>;
 type MatrixGrid = Vec<MatrixRows>;
 type LocalDensityInput = (usize, MatrixRows);
 type BondCurrentInput = (usize, usize, MatrixRows, MatrixRows);
@@ -137,6 +141,7 @@ type ContinuumStencilOutput = (
     Vec<ContinuumCoefficientOutput>,
 );
 type SchurOutput = (MatrixRows, MatrixRows, Vec<Complex64>);
+type RealSchurOutput = (RealMatrixRows, RealMatrixRows, Vec<Complex64>);
 type GeneralizedSchurOutput = (
     MatrixRows,
     MatrixRows,
@@ -144,6 +149,14 @@ type GeneralizedSchurOutput = (
     MatrixRows,
     Vec<Complex64>,
     Vec<Complex64>,
+);
+type GeneralizedRealSchurOutput = (
+    RealMatrixRows,
+    RealMatrixRows,
+    RealMatrixRows,
+    RealMatrixRows,
+    Vec<Complex64>,
+    Vec<f64>,
 );
 type EigenvectorOutput = (Option<MatrixRows>, Option<MatrixRows>);
 type BandOutput = (
@@ -775,6 +788,29 @@ fn matrix_to_rows(matrix: &ComplexMatrix) -> Vec<Vec<Complex64>> {
         .collect()
 }
 
+fn real_matrix_from_rows(rows: RealMatrixRows) -> PyResult<RealMatrix> {
+    let row_count = rows.len();
+    let column_count = rows.first().map_or(0, Vec::len);
+    if rows.iter().any(|row| row.len() != column_count) {
+        return Err(PyValueError::new_err(
+            "matrix rows must all have the same length",
+        ));
+    }
+    let data = rows.into_iter().flatten().collect();
+    RealMatrix::new(row_count, column_count, data).map_err(value_error)
+}
+
+fn real_matrix_to_rows(matrix: &RealMatrix) -> RealMatrixRows {
+    if matrix.columns() == 0 {
+        return vec![Vec::new(); matrix.rows()];
+    }
+    matrix
+        .as_slice()
+        .chunks(matrix.columns())
+        .map(<[f64]>::to_vec)
+        .collect()
+}
+
 fn matrices_from_rows(matrices: MatrixGrid) -> PyResult<Vec<ComplexMatrix>> {
     matrices
         .into_iter()
@@ -950,6 +986,16 @@ fn schur_output(decomposition: thouless::decomposition::SchurDecomposition) -> S
     )
 }
 
+fn real_schur_output(
+    decomposition: thouless::decomposition::RealSchurDecomposition,
+) -> RealSchurOutput {
+    (
+        real_matrix_to_rows(decomposition.form()),
+        real_matrix_to_rows(decomposition.vectors()),
+        decomposition.eigenvalues().to_vec(),
+    )
+}
+
 fn generalized_schur_output(
     decomposition: thouless::decomposition::GeneralizedSchurDecomposition,
 ) -> GeneralizedSchurOutput {
@@ -958,6 +1004,19 @@ fn generalized_schur_output(
         matrix_to_rows(decomposition.right_form()),
         matrix_to_rows(decomposition.left_vectors()),
         matrix_to_rows(decomposition.right_vectors()),
+        decomposition.alpha().to_vec(),
+        decomposition.beta().to_vec(),
+    )
+}
+
+fn generalized_real_schur_output(
+    decomposition: thouless::decomposition::GeneralizedRealSchurDecomposition,
+) -> GeneralizedRealSchurOutput {
+    (
+        real_matrix_to_rows(decomposition.left_form()),
+        real_matrix_to_rows(decomposition.right_form()),
+        real_matrix_to_rows(decomposition.left_vectors()),
+        real_matrix_to_rows(decomposition.right_vectors()),
         decomposition.alpha().to_vec(),
         decomposition.beta().to_vec(),
     )
@@ -1587,6 +1646,60 @@ fn square_strip_self_energy(width: usize, hopping: f64, fermi_energy: f64) -> Py
 }
 
 #[pyfunction]
+fn dense_real_schur(matrix: RealMatrixRows) -> PyResult<RealSchurOutput> {
+    real_schur(&real_matrix_from_rows(matrix)?)
+        .map(real_schur_output)
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn dense_reorder_real_schur(
+    form: RealMatrixRows,
+    vectors: RealMatrixRows,
+    selected: Vec<bool>,
+) -> PyResult<RealSchurOutput> {
+    reorder_real_schur(
+        &real_matrix_from_rows(form)?,
+        &real_matrix_from_rows(vectors)?,
+        &selected,
+    )
+    .map(real_schur_output)
+    .map_err(value_error)
+}
+
+#[pyfunction]
+fn dense_real_schur_eigenvectors(
+    form: RealMatrixRows,
+    vectors: RealMatrixRows,
+    selected: Vec<bool>,
+    compute_left: bool,
+    compute_right: bool,
+) -> PyResult<EigenvectorOutput> {
+    eigenvectors_from_real_schur(
+        &real_matrix_from_rows(form)?,
+        &real_matrix_from_rows(vectors)?,
+        &selected,
+        compute_left,
+        compute_right,
+    )
+    .map(eigenvector_output)
+    .map_err(value_error)
+}
+
+#[pyfunction]
+fn dense_complexify_real_schur(
+    form: RealMatrixRows,
+    vectors: RealMatrixRows,
+) -> PyResult<SchurOutput> {
+    complexify_real_schur(
+        &real_matrix_from_rows(form)?,
+        &real_matrix_from_rows(vectors)?,
+    )
+    .map(schur_output)
+    .map_err(value_error)
+}
+
+#[pyfunction]
 fn dense_schur(matrix: MatrixRows) -> PyResult<SchurOutput> {
     schur(&matrix_from_rows(matrix)?)
         .map(schur_output)
@@ -1632,6 +1745,79 @@ fn dense_complexify_schur(form: MatrixRows, vectors: MatrixRows) -> PyResult<Sch
     complexify_schur(&matrix_from_rows(form)?, &matrix_from_rows(vectors)?)
         .map(schur_output)
         .map_err(value_error)
+}
+
+#[pyfunction]
+fn dense_generalized_real_schur(
+    left: RealMatrixRows,
+    right: RealMatrixRows,
+) -> PyResult<GeneralizedRealSchurOutput> {
+    generalized_real_schur(
+        &real_matrix_from_rows(left)?,
+        &real_matrix_from_rows(right)?,
+    )
+    .map(generalized_real_schur_output)
+    .map_err(value_error)
+}
+
+#[pyfunction]
+fn dense_reorder_generalized_real_schur(
+    left_form: RealMatrixRows,
+    right_form: RealMatrixRows,
+    left_vectors: RealMatrixRows,
+    right_vectors: RealMatrixRows,
+    selected: Vec<bool>,
+) -> PyResult<GeneralizedRealSchurOutput> {
+    reorder_generalized_real_schur(
+        &real_matrix_from_rows(left_form)?,
+        &real_matrix_from_rows(right_form)?,
+        &real_matrix_from_rows(left_vectors)?,
+        &real_matrix_from_rows(right_vectors)?,
+        &selected,
+    )
+    .map(generalized_real_schur_output)
+    .map_err(value_error)
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn dense_generalized_real_schur_eigenvectors(
+    left_form: RealMatrixRows,
+    right_form: RealMatrixRows,
+    left_vectors: RealMatrixRows,
+    right_vectors: RealMatrixRows,
+    selected: Vec<bool>,
+    compute_left: bool,
+    compute_right: bool,
+) -> PyResult<EigenvectorOutput> {
+    eigenvectors_from_generalized_real_schur(
+        &real_matrix_from_rows(left_form)?,
+        &real_matrix_from_rows(right_form)?,
+        &real_matrix_from_rows(left_vectors)?,
+        &real_matrix_from_rows(right_vectors)?,
+        &selected,
+        compute_left,
+        compute_right,
+    )
+    .map(eigenvector_output)
+    .map_err(value_error)
+}
+
+#[pyfunction]
+fn dense_complexify_real_generalized_schur(
+    left_form: RealMatrixRows,
+    right_form: RealMatrixRows,
+    left_vectors: RealMatrixRows,
+    right_vectors: RealMatrixRows,
+) -> PyResult<GeneralizedSchurOutput> {
+    complexify_real_generalized_schur(
+        &real_matrix_from_rows(left_form)?,
+        &real_matrix_from_rows(right_form)?,
+        &real_matrix_from_rows(left_vectors)?,
+        &real_matrix_from_rows(right_vectors)?,
+    )
+    .map(generalized_schur_output)
+    .map_err(value_error)
 }
 
 #[pyfunction]
@@ -3355,10 +3541,27 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(lead_symmetric_projected_modes, module)?)?;
     module.add_function(wrap_pyfunction!(lead_retarded_self_energy, module)?)?;
     module.add_function(wrap_pyfunction!(square_strip_self_energy, module)?)?;
+    module.add_function(wrap_pyfunction!(dense_real_schur, module)?)?;
+    module.add_function(wrap_pyfunction!(dense_reorder_real_schur, module)?)?;
+    module.add_function(wrap_pyfunction!(dense_real_schur_eigenvectors, module)?)?;
+    module.add_function(wrap_pyfunction!(dense_complexify_real_schur, module)?)?;
     module.add_function(wrap_pyfunction!(dense_schur, module)?)?;
     module.add_function(wrap_pyfunction!(dense_reorder_schur, module)?)?;
     module.add_function(wrap_pyfunction!(dense_schur_eigenvectors, module)?)?;
     module.add_function(wrap_pyfunction!(dense_complexify_schur, module)?)?;
+    module.add_function(wrap_pyfunction!(dense_generalized_real_schur, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        dense_reorder_generalized_real_schur,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        dense_generalized_real_schur_eigenvectors,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        dense_complexify_real_generalized_schur,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(dense_generalized_schur, module)?)?;
     module.add_function(wrap_pyfunction!(dense_reorder_generalized_schur, module)?)?;
     module.add_function(wrap_pyfunction!(

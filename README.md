@@ -49,10 +49,12 @@ self-energies are assembled as canonical CSR operators and solved using
 Rust-native zero-fill incomplete-LU right preconditioning with restarted GMRES;
 100000-dimensional native and 20000-dimensional compatibility contracts reject
 dense device materialization, while the pinned quantum Hall workflow verifies
-quantized transport. Complete semantic parity for remaining Kwant construction,
-lead-mode, decomposition, and optional-backend details, broader Wannier
-differential fixtures, realistic material-scale validation, complete topology
-and response theory, and isolated held-out validation remain open.
+quantized transport. Real and complex ordinary and generalized Schur paths
+preserve source dtypes, real quasi-triangular blocks, conjugate-pair order, and
+invariant-subspace reordering. Remaining work comprises the optional
+Rust-native sparse-direct backend, broader Wannier90 and Quantum ESPRESSO
+fixtures, realistic material-scale Wannier validation, broader intrinsic
+response theory, and isolated held-out validation.
 
 A green CI run currently means:
 

@@ -173,9 +173,9 @@ status = "implemented"
 
 [[capability]]
 id = "algebra.dense_decomposition"
-description = "Complex Schur and generalized Schur decompositions, invariant-subspace reordering, and left and right eigenvectors"
+description = "Real quasi-triangular and complex triangular Schur and generalized Schur decompositions, order-preserving conjugate-pair conversion, invariant-subspace reordering, and left and right eigenvectors"
 native_api = "thouless::decomposition"
-test = "src/decomposition.rs property tests, thouless-lapack reconstruction tests, repository nonnormal-matrix contracts, and complete pinned Kwant linalg decomposition module"
+test = "src/decomposition.rs real and complex reconstruction and eigenvector tests, thouless-lapack reconstruction tests, repository dtype and nonnormal-matrix contracts, and complete pinned Kwant linalg decomposition module"
 status = "implemented"
 
 [[capability]]

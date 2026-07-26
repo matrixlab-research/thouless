@@ -41,5 +41,5 @@ pub use error::{
     DifferentiationError, GeometryError, MatrixError, ModelError, ObservableError, SpectrumError,
     TopologyError,
 };
-pub use matrix::ComplexMatrix;
+pub use matrix::{ComplexMatrix, RealMatrix};
 pub use num_complex::Complex64;
