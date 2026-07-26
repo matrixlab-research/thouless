@@ -47,6 +47,10 @@ def main() -> None:
             ROOT / "crates" / "thouless-capi" / "include" / "thouless.h",
             include / "thouless.h",
         )
+        shutil.copy2(
+            ROOT / "THIRD_PARTY_LICENSES.md",
+            root / "THIRD_PARTY_LICENSES.md",
+        )
         metadata = {
             "package_version": "0.1.0",
             "abi_version": "1.0",

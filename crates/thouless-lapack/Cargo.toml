@@ -14,5 +14,8 @@ num-complex = "0.4.6"
 [target.'cfg(target_os = "macos")'.dependencies]
 lapack-src = { version = "0.13.0", default-features = false, features = ["accelerate"] }
 
-[target.'cfg(not(target_os = "macos"))'.dependencies]
+[target.'cfg(all(not(target_os = "macos"), not(target_os = "windows")))'.dependencies]
 lapack-src = { version = "0.13.0", default-features = false, features = ["netlib"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+lapack-src = { version = "0.13.0", default-features = false, features = ["intel-mkl-static-sequential"] }
