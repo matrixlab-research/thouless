@@ -103,6 +103,70 @@ def test_mixed_orbital_submatrices_use_the_rust_block_assembler(
     assert calls == [(rows, columns), (rows, columns)]
 
 
+def test_lattice_geometry_and_translation_domains_use_rust(
+    monkeypatch,
+) -> None:
+    kwant = require_compat_module("kwant", ISSUE_URL)
+    called = set()
+    for name in (
+        "validate_embedded_lattice",
+        "embedded_lattice_position",
+        "embedded_lattice_neighbors",
+        "translation_fundamental_domain",
+        "translation_contains_subgroup",
+        "translation_group_coordinates",
+        "translation_group_shift",
+    ):
+        original = getattr(kwant.lattice._core, name)
+
+        def traced(*args, _name=name, _original=original, **kwargs):
+            called.add(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(kwant.lattice._core, name, traced)
+
+    def disabled_numpy_lattice_algebra(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("lattice geometry used NumPy linear algebra")
+
+    for name in ("matrix_rank", "pinv", "inv", "det"):
+        monkeypatch.setattr(
+            np.linalg,
+            name,
+            disabled_numpy_lattice_algebra,
+        )
+
+    honeycomb = kwant.lattice.honeycomb(norbs=1)
+    np.testing.assert_allclose(
+        honeycomb.a(2, -1).pos,
+        honeycomb.vec((2, -1)),
+    )
+    assert [len(honeycomb.neighbors(order)) for order in range(5)] == [
+        2,
+        3,
+        6,
+        3,
+        6,
+    ]
+
+    square = kwant.lattice.square(norbs=1)
+    symmetry = kwant.lattice.TranslationalSymmetry((10, 0), (7, 7))
+    site = square(31, -20)
+    assert symmetry.which(site) == (5, -3)
+    assert symmetry.to_fd(site) == square(2, 1)
+    subgroup = kwant.lattice.TranslationalSymmetry((20, 0), (14, 14))
+    assert symmetry.has_subgroup(subgroup)
+    assert called == {
+        "validate_embedded_lattice",
+        "embedded_lattice_position",
+        "embedded_lattice_neighbors",
+        "translation_fundamental_domain",
+        "translation_contains_subgroup",
+        "translation_group_coordinates",
+        "translation_group_shift",
+    }
+
+
 def test_low_level_system_protocol_and_plotter_iterators() -> None:
     kwant = require_compat_module("kwant", ISSUE_URL)
     lattice = kwant.lattice.chain(norbs=1)

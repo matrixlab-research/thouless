@@ -34,6 +34,9 @@ use thouless::kpm::{
     scalar_moments_with_operator, sparse_velocity_operator, velocity_operator, Kernel,
     RescaledLinearOperator, SpectralScale,
 };
+use thouless::lattice_geometry::{
+    contains_translation_subgroup, translation_coordinates, translation_shift, EmbeddedLattice,
+};
 use thouless::lattice_reduction::{
     closest_lattice_vectors, gram_schmidt, gram_schmidt_coefficient, is_c_reduced, lll_reduce,
     voronoi_neighbors,
@@ -91,6 +94,8 @@ type LeadInput = (
 type LocalizedSelfEnergyInput = (Vec<usize>, MatrixRows);
 type SiteBlockInput = (usize, usize, MatrixRows);
 type BlockCsrOutput = ((usize, usize), Vec<usize>, Vec<usize>, Vec<Complex64>);
+type LatticeNeighborOutput = (Vec<i64>, usize, usize);
+type TranslationDomainOutput = (Vec<Vec<i64>>, Vec<Vec<i64>>, i64);
 type OpenSystemOutput = (
     Vec<Vec<Complex64>>,
     Vec<Vec<Vec<Complex64>>>,
@@ -2971,6 +2976,96 @@ fn lattice_voronoi(
 }
 
 #[pyfunction]
+fn validate_embedded_lattice(
+    primitive_vectors: Vec<Vec<f64>>,
+    basis_offsets: Vec<Vec<f64>>,
+) -> PyResult<()> {
+    EmbeddedLattice::new(primitive_vectors, basis_offsets)
+        .map(|_| ())
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn embedded_lattice_position(
+    primitive_vectors: Vec<Vec<f64>>,
+    basis_offset: Vec<f64>,
+    tag: Vec<i64>,
+) -> PyResult<Vec<f64>> {
+    EmbeddedLattice::new(primitive_vectors, vec![basis_offset])
+        .and_then(|lattice| lattice.position(0, &tag))
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn embedded_lattice_neighbors(
+    primitive_vectors: Vec<Vec<f64>>,
+    basis_offsets: Vec<Vec<f64>>,
+    order: usize,
+    relative_tolerance: f64,
+) -> PyResult<Vec<LatticeNeighborOutput>> {
+    EmbeddedLattice::new(primitive_vectors, basis_offsets)
+        .and_then(|lattice| lattice.neighbor_shell(order, relative_tolerance))
+        .map(|relations| {
+            relations
+                .into_iter()
+                .map(|relation| {
+                    (
+                        relation.displacement().to_vec(),
+                        relation.first_basis_site(),
+                        relation.second_basis_site(),
+                    )
+                })
+                .collect()
+        })
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn translation_fundamental_domain(
+    primitive_vectors: Vec<Vec<f64>>,
+    cartesian_periods: Vec<Vec<f64>>,
+    other_vectors: Vec<Vec<i64>>,
+    tolerance: f64,
+) -> PyResult<TranslationDomainOutput> {
+    let ambient_dimension = primitive_vectors.first().map_or(0, Vec::len);
+    EmbeddedLattice::new(primitive_vectors, vec![vec![0.0; ambient_dimension]])
+        .and_then(|lattice| {
+            lattice.translation_domain(&cartesian_periods, &other_vectors, tolerance)
+        })
+        .map(|domain| {
+            (
+                domain.period_vectors().to_vec(),
+                domain.adjugate_rows().to_vec(),
+                domain.determinant(),
+            )
+        })
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn translation_contains_subgroup(
+    group_periods: Vec<Vec<f64>>,
+    other_periods: Vec<Vec<f64>>,
+    tolerance: f64,
+) -> PyResult<bool> {
+    contains_translation_subgroup(&group_periods, &other_periods, tolerance).map_err(value_error)
+}
+
+#[pyfunction]
+fn translation_group_coordinates(
+    adjugate_rows: Vec<Vec<i64>>,
+    determinant: i64,
+    tag: Vec<i64>,
+) -> PyResult<Vec<i64>> {
+    translation_coordinates(&adjugate_rows, determinant, &tag).map_err(value_error)
+}
+
+#[pyfunction]
+fn translation_group_shift(period_vectors: Vec<Vec<i64>>, element: Vec<i64>) -> PyResult<Vec<i64>> {
+    translation_shift(&period_vectors, &element).map_err(value_error)
+}
+
+#[pyfunction]
 fn gauge_surface_quadrature(loop_points: Vec<Vec<f64>>) -> PyResult<GaugeQuadratureOutput> {
     surface_quadrature(&loop_points)
         .map(|quadrature| {
@@ -3332,6 +3427,13 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(lattice_lll, module)?)?;
     module.add_function(wrap_pyfunction!(lattice_cvp, module)?)?;
     module.add_function(wrap_pyfunction!(lattice_voronoi, module)?)?;
+    module.add_function(wrap_pyfunction!(validate_embedded_lattice, module)?)?;
+    module.add_function(wrap_pyfunction!(embedded_lattice_position, module)?)?;
+    module.add_function(wrap_pyfunction!(embedded_lattice_neighbors, module)?)?;
+    module.add_function(wrap_pyfunction!(translation_fundamental_domain, module)?)?;
+    module.add_function(wrap_pyfunction!(translation_contains_subgroup, module)?)?;
+    module.add_function(wrap_pyfunction!(translation_group_coordinates, module)?)?;
+    module.add_function(wrap_pyfunction!(translation_group_shift, module)?)?;
     module.add_function(wrap_pyfunction!(gauge_surface_quadrature, module)?)?;
     module.add_function(wrap_pyfunction!(gauge_line_quadrature, module)?)?;
     module.add_function(wrap_pyfunction!(gauge_axial_line_quadrature, module)?)?;

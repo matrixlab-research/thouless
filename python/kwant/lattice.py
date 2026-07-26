@@ -7,6 +7,7 @@ from collections import deque
 
 import numpy as np
 import tinyarray as ta
+from thouless import _core
 
 from .builder import HoppingKind, SiteFamily, Symmetry
 
@@ -18,8 +19,6 @@ class Monatomic(SiteFamily):
         primitive = np.asarray(prim_vecs, dtype=float)
         if primitive.ndim != 2 or primitive.shape[0] == 0:
             raise ValueError("Primitive vectors must form a nonempty 2D array.")
-        if np.linalg.matrix_rank(primitive) < primitive.shape[0]:
-            raise ValueError("Primitive vectors must be linearly independent.")
         self.prim_vecs = primitive
         self._prim_vecs = primitive
         self.lattice_dim = primitive.shape[0]
@@ -31,6 +30,10 @@ class Monatomic(SiteFamily):
         )
         if self.offset.shape != (self.space_dim,):
             raise ValueError("Basis offset has wrong dimension.")
+        _core.validate_embedded_lattice(
+            self.prim_vecs.tolist(),
+            [self.offset.tolist()],
+        )
         canonical = (
             f"Monatomic({self.prim_vecs.tolist()!r}, {self.offset.tolist()!r}, "
             f"{name!r}, {norbs!r})"
@@ -49,13 +52,24 @@ class Monatomic(SiteFamily):
         return ta.array([int(value) for value in array], int)
 
     def pos(self, tag):
+        tag = self.normalize_tag(tag)
         return ta.array(
-            np.asarray(tag, dtype=float) @ self.prim_vecs + self.offset
+            _core.embedded_lattice_position(
+                self.prim_vecs.tolist(),
+                self.offset.tolist(),
+                list(tag),
+            )
         )
 
     def vec(self, tag):
         tag = self.normalize_tag(tag)
-        return ta.array(np.asarray(tag, dtype=float) @ self.prim_vecs)
+        return ta.array(
+            _core.embedded_lattice_position(
+                self.prim_vecs.tolist(),
+                [0.0] * self.space_dim,
+                list(tag),
+            )
+        )
 
     def closest(self, position):
         return ta.array(self.n_closest(position)[0], int)
@@ -111,10 +125,12 @@ class Polyatomic:
         basis = np.asarray(basis, dtype=float)
         if primitive.ndim != 2 or primitive.shape[0] == 0:
             raise ValueError("Primitive vectors must form a nonempty 2D array.")
-        if np.linalg.matrix_rank(primitive) < primitive.shape[0]:
-            raise ValueError("Primitive vectors must be linearly independent.")
         if basis.ndim != 2 or basis.shape[1] != primitive.shape[1]:
             raise ValueError("Basis positions have wrong dimensionality.")
+        _core.validate_embedded_lattice(
+            primitive.tolist(),
+            basis.tolist(),
+        )
         self.prim_vecs = primitive
         self._prim_vecs = primitive
         self.lattice_dim = primitive.shape[0]
@@ -199,61 +215,32 @@ class Polyatomic:
         n = int(n)
         if n < 0:
             raise ValueError("Neighbor order must be nonnegative.")
-        search = max(2, n + 1)
-        length_scale = min(
-            np.linalg.norm(vector)
-            for vector in self.prim_vecs
-            if np.linalg.norm(vector) > 0
+        basis = [
+            sublattice.offset.tolist()
+            for sublattice in self.sublattices
+        ]
+        relations = _core.embedded_lattice_neighbors(
+            self.prim_vecs.tolist(),
+            basis,
+            n,
+            float(eps),
         )
-        candidates = []
-        origin = np.zeros(self.lattice_dim, dtype=int)
-        for first_index, first in enumerate(self.sublattices):
-            for second_index in range(first_index, len(self.sublattices)):
-                second = self.sublattices[second_index]
-                for delta in itertools.product(
-                    range(-search, search + 1), repeat=self.lattice_dim
-                ):
-                    displacement = (
-                        np.asarray(delta) @ self.prim_vecs
-                        + first.offset
-                        - second.offset
-                    )
-                    distance = float(np.linalg.norm(displacement) / length_scale)
-                    candidates.append(
-                        (distance, tuple(int(value) for value in delta), first, second)
-                    )
-        distance_groups = []
-        for distance in sorted(distance for distance, _, _, _ in candidates):
-            if not distance_groups or abs(distance - distance_groups[-1]) > eps:
-                distance_groups.append(distance)
-        if n >= len(distance_groups):
-            return []
-        target_distance = distance_groups[n]
-        result = []
-        seen = set()
-        for distance, delta, first, second in sorted(
-            candidates,
-            key=lambda entry: (
-                entry[2].canonical_repr,
-                entry[3].canonical_repr,
-                entry[1],
+        result = [
+            HoppingKind(
+                displacement,
+                self.sublattices[first],
+                self.sublattices[second],
+            )
+            for displacement, first, second in relations
+        ]
+        return sorted(
+            result,
+            key=lambda hopping: (
+                hopping.family_a.canonical_repr,
+                hopping.family_b.canonical_repr,
+                hopping.delta,
             ),
-        ):
-            if abs(distance - target_distance) > eps:
-                continue
-            if first == second:
-                opposite = tuple(-value for value in delta)
-                canonical_delta = max(delta, opposite)
-                key = (canonical_delta, first, second)
-                if key in seen:
-                    continue
-                delta = canonical_delta
-            key = (delta, first, second)
-            if key in seen:
-                continue
-            seen.add(key)
-            result.append(HoppingKind(delta, first, second))
-        return result
+        )
 
 
 class TranslationalSymmetry(Symmetry):
@@ -263,8 +250,10 @@ class TranslationalSymmetry(Symmetry):
         array = np.asarray(periods, dtype=float)
         if array.ndim != 2 or array.shape[0] == 0:
             raise ValueError("At least one translation period is required.")
-        if np.linalg.matrix_rank(array) < array.shape[0]:
-            raise ValueError("Translation periods must be linearly independent.")
+        _core.validate_embedded_lattice(
+            array.tolist(),
+            [[0.0] * array.shape[1]],
+        )
         self.periods = array
         self.site_family_data = {}
         self.is_reversed = False
@@ -281,59 +270,26 @@ class TranslationalSymmetry(Symmetry):
             raise ValueError(
                 "Lattice and symmetry have different spatial dimensions"
             )
-        lattice_periods = self.periods @ np.linalg.pinv(primitive)
-        integer_periods = np.rint(lattice_periods).astype(int)
-        if not np.allclose(
-            lattice_periods, integer_periods, atol=1e-8
-        ) or not np.allclose(
-            integer_periods @ primitive, self.periods, atol=1e-8
-        ):
-            raise ValueError("Symmetry periods are not commensurate with the lattice.")
-
-        lattice_dimension = primitive.shape[0]
-        columns = [
-            np.asarray(period, dtype=int)
-            for period in integer_periods
-        ]
         if other_vectors is not None:
             other_vectors = np.asarray(other_vectors)
             if other_vectors.ndim != 2:
                 raise ValueError("other_vectors must be a two-dimensional array")
             if not np.all(other_vectors == np.rint(other_vectors)):
                 raise ValueError("other_vectors must contain only integers")
-            columns.extend(
-                np.asarray(vector, dtype=int)
-                for vector in other_vectors
+            other_vectors = other_vectors.astype(int).tolist()
+        else:
+            other_vectors = []
+        period_vectors, adjugate_rows, determinant = (
+            _core.translation_fundamental_domain(
+                primitive.tolist(),
+                self.periods.tolist(),
+                other_vectors,
+                1e-8,
             )
-        if (
-            len(columns) > lattice_dimension
-            or np.linalg.matrix_rank(np.column_stack(columns))
-            < len(columns)
-        ):
-            raise ValueError(
-                "Symmetry periods and other_vectors must be independent"
-            )
-        for axis in range(lattice_dimension):
-            if len(columns) == lattice_dimension:
-                break
-            candidate = np.eye(lattice_dimension, dtype=int)[:, axis]
-            trial = np.column_stack([*columns, candidate])
-            if np.linalg.matrix_rank(trial) > len(columns):
-                columns.append(candidate)
-        basis = np.column_stack(columns)
-        determinant = int(round(np.linalg.det(basis)))
-        if determinant == 0:
-            raise ValueError("Could not construct a lattice fundamental domain")
-        adjugate = np.rint(
-            determinant * np.linalg.inv(basis)
-        ).astype(int)
-        if determinant < 0:
-            determinant = -determinant
-            adjugate = -adjugate
-        direction_count = self.num_directions
+        )
         self.site_family_data[family] = (
-            ta.array(basis[:, :direction_count], int),
-            ta.array(adjugate[:direction_count, :], int),
+            ta.array(np.asarray(period_vectors, dtype=int).T, int),
+            ta.array(adjugate_rows, int),
             determinant,
         )
 
@@ -350,13 +306,13 @@ class TranslationalSymmetry(Symmetry):
         _, adjugate_rows, determinant = self.site_family_data[
             site.family
         ]
-        numerators = (
-            np.asarray(adjugate_rows, dtype=int)
-            @ np.asarray(site.tag, dtype=int)
+        result = _core.translation_group_coordinates(
+            np.asarray(adjugate_rows, dtype=int).tolist(),
+            int(determinant),
+            list(site.tag),
         )
-        result = np.floor_divide(numerators, determinant)
         if self.is_reversed:
-            result = -result
+            result = [-value for value in result]
         return ta.array(result, int)
 
     def act(self, element, a, b=None):
@@ -373,7 +329,13 @@ class TranslationalSymmetry(Symmetry):
             periods = np.asarray(
                 self.site_family_data[site.family][0], dtype=int
             )
-            delta = periods @ element
+            delta = np.asarray(
+                _core.translation_group_shift(
+                    periods.T.tolist(),
+                    element.tolist(),
+                ),
+                dtype=int,
+            )
             if self.is_reversed:
                 delta = -delta
             return site.family(*(np.asarray(site.tag) + delta))
@@ -402,10 +364,10 @@ class TranslationalSymmetry(Symmetry):
             return True
         if not isinstance(other, TranslationalSymmetry):
             return False
-        coefficients = other.periods @ np.linalg.pinv(self.periods)
-        rounded = np.rint(coefficients)
-        return np.allclose(coefficients, rounded, atol=1e-8) and np.allclose(
-            rounded @ self.periods, other.periods, atol=1e-8
+        return _core.translation_contains_subgroup(
+            self.periods.tolist(),
+            other.periods.tolist(),
+            1e-8,
         )
 
     def subgroup(self, *generators):
@@ -414,11 +376,14 @@ class TranslationalSymmetry(Symmetry):
             array.ndim != 2
             or array.shape[1] != self.num_directions
             or array.dtype.kind not in "iu"
-            or np.linalg.matrix_rank(array) != array.shape[0]
         ):
             raise ValueError(
                 "Subgroup generators must be independent integer sequences"
             )
+        _core.validate_embedded_lattice(
+            array.astype(float).tolist(),
+            [[0.0] * self.num_directions],
+        )
         return type(self)(*(array.astype(int) @ self.periods))
 
 

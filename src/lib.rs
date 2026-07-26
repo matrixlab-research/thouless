@@ -20,6 +20,7 @@ pub mod geometry;
 pub mod graph;
 pub mod interpolation;
 pub mod kpm;
+pub mod lattice_geometry;
 pub mod lattice_reduction;
 pub mod lead_modes;
 pub mod linear_operator;

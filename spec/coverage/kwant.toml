@@ -31,11 +31,10 @@ name = "lattice families"
 source_entries = ["general", "chain", "square", "triangular", "honeycomb", "cubic"]
 compat_entry = "python/kwant/lattice"
 rust_capability = "model.structure"
-public_test = "compat-tests/test_kwant_api.py"
+public_test = "compat-tests/test_kwant_api.py traced embedded geometry, neighbor-shell, exact fundamental-domain, and subgroup calls with NumPy rank, pseudoinverse, inverse, and determinant routines disabled"
 source_test = "complete pinned lattice module: construction, neighbors, constraints, exact translational fundamental domains, reversal, and norbs"
-actual_result = "18 source tests passed"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/5"
+actual_result = "18 source tests passed; Rust owns embedded primitive and basis validation, integer-tag positions, metric-complete neighbor-shell enumeration, exact nonunimodular translation domains, and integer subgroup containment; Python retains source family names, norbs metadata, site-object construction, and arbitrary shape-predicate traversal"
+status = "implemented"
 
 [[interface]]
 name = "steady-state solvers"
