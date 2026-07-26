@@ -10,7 +10,7 @@ interfaces while calling the same Rust core.
 
 ## Current status
 
-**Incomplete implementation.**
+**Public implementation complete; isolated held-out validation pending.**
 
 The repository currently implements reusable model construction, dense
 Hermitian assembly, eigensolvers, momentum derivatives, discrete Wilson phases,
@@ -32,11 +32,15 @@ Wannier projection, sampled-frame overlaps, multidimensional FFTs, spread
 decomposition, and periodic matrix interpolation, including a native
 multidimensional maximal-localization optimizer and fixed-rank SMV
 disentanglement with frozen subspaces. The native response core additionally
-evaluates band-resolved Kubo Berry curvature,
-occupation-weighted Hall geometry, and finite-temperature Berry-curvature
-dipoles from explicit Hamiltonian derivatives and quadrature weights. The Python
-extension and compatibility layers pass all 98 pinned PythTB 2.0 tests and all
-398 pinned Kwant 1.5 tests without changing their tolerances. Executable API
+evaluates band-resolved Kubo Berry curvature, gauge-invariant
+occupation-weighted Hall geometry across internally degenerate subspaces, and
+finite-temperature Berry-curvature dipoles from explicit Hamiltonian
+derivatives and quadrature weights. Real silicon fixtures exercise an
+eight-orbital, 93-shell Wannier90 Hamiltonian, a 4x4x4 material-scale
+localization workflow, and the official 72-point, eight-band Quantum ESPRESSO
+7.6 `bands.x` output. The Python extension and compatibility layers pass all 98
+pinned PythTB 2.0 tests and all 398 pinned Kwant 1.5 tests without changing
+their tolerances. Executable API
 manifests cover the public modules, exports, and core object members of both
 source packages, including Wannier, visualization, low-level system, solver,
 linear-algebra, and local-operator entry points. Kwant density, current, and
@@ -55,9 +59,8 @@ invariant-subspace reordering. The optional Kwant sparse-direct interface now
 uses Rust-native fill-reducing symbolic analysis, reusable complex sparse LU,
 multiple-right-hand-side solves, and ordered principal Schur complements;
 compatibility statistics expose portable storage counts without claiming
-MUMPS-internal measurements. Remaining work comprises broader Wannier90 and
-Quantum ESPRESSO fixtures, realistic material-scale Wannier validation,
-broader intrinsic response theory, and isolated held-out validation.
+MUMPS-internal measurements. The remaining validation gap is the
+evaluator-owned, isolated held-out project.
 
 A green CI run currently means:
 
@@ -69,8 +72,7 @@ A green CI run currently means:
   layers;
 - every intentionally skipped compatibility suite links to an open issue.
 
-It does **not** mean that the scientific package or compatibility targets are
-complete.
+It does **not** mean that independent held-out validation has passed.
 
 ## Agent instructions
 
@@ -122,7 +124,7 @@ let model = builder.build()?;
 - `spec/api/` contains executable public API inventories for the pinned source
   versions.
 - Exact upstream source and test baselines are pinned in `spec/upstream/`.
-  Remaining PythTB semantic and validation work is tracked in
+  Completed PythTB compatibility work retains its audit trail in
   [issue #4](https://github.com/matrixlab-research/thouless/issues/4);
   completed Kwant backend work retains its audit trail in
   [issue #5](https://github.com/matrixlab-research/thouless/issues/5).
@@ -149,19 +151,19 @@ PYTHONPATH=python python -m pytest -q -ra compat-tests
 The strict runners execute all 398 collected Kwant tests and all 98 collected
 PythTB tests through the repository-built extension. The API checker separately
 validates the pinned public surfaces, so a green source-test run cannot hide a
-missing untested export. Deeper PythTB semantic parity, Wannier and file-format
-differential fixtures, and scientific-scale validation remain tracked in issue
-#4. The completed Kwant sparse-direct backend retains its implementation audit
-trail in issue #5. A skip without a linked issue is a CI error.
+missing untested export. Real Wannier90, Quantum ESPRESSO, and material-scale
+Wannier validation augment the source suites; completed PythTB and Kwant work
+retains its audit trail in issues #4 and #5. A skip without a linked issue is a
+CI error.
 
 ## Source baselines
 
 - [PythTB 2.0.0](https://pythtb.readthedocs.io/en/stable/)
 - [Kwant 1.5.0](https://kwant-project.org/doc/latest/)
 
-No source implementation or source test has been copied into this bootstrap.
-Any future vendoring of upstream tests must retain its original license and
-provenance.
+No source implementation or source test has been copied into this repository.
+Vendored upstream reference fixtures retain exact provenance and their original
+licenses.
 
 ## License
 

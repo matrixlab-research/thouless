@@ -723,8 +723,12 @@ pub fn make_supercell(
             let source_index = paired_translation * source_orbital_count + hopping.source().index();
             let mut offset = supercell_offset;
             if move_periodic_to_home {
-                for axis in 0..dimension {
-                    offset[axis] += shifts[source_index][axis] - shifts[target_index][axis];
+                for ((component, &source_shift), &target_shift) in offset
+                    .iter_mut()
+                    .zip(&shifts[source_index])
+                    .zip(&shifts[target_index])
+                {
+                    *component += source_shift - target_shift;
                 }
             }
             builder.add_hopping_block_sum(

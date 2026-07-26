@@ -54,21 +54,36 @@ def _lines(path):
         raise W90ParseError(f"Missing file: {path}") from error
 
 
+def _block_marker(line, keyword, name):
+    """Return text following a flexible Wannier90 block marker."""
+    match = re.match(
+        rf"^{re.escape(keyword)}\s*:?\s*{re.escape(name)}\b(.*)$",
+        line,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    return match.group(1).strip().lstrip(":").strip()
+
+
 def _block(lines, name):
-    begin = f"begin {name}".lower()
-    end = f"end {name}".lower()
     result = []
     collecting = False
     for raw in lines:
         line = raw.split("!", 1)[0].strip()
-        lowered = line.lower()
-        if not collecting and lowered.startswith(begin):
-            collecting = True
+        if not line:
             continue
-        if collecting and lowered.startswith(end):
+        if not collecting:
+            remainder = _block_marker(line, "begin", name)
+            if remainder is None:
+                continue
+            collecting = True
+            if remainder:
+                result.append(remainder.replace(",", " "))
+            continue
+        if _block_marker(line, "end", name) is not None:
             return result
-        if collecting and line:
-            result.append(line.replace(",", " "))
+        result.append(line.replace(",", " "))
     return result
 
 

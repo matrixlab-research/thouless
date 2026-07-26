@@ -219,6 +219,8 @@ class W90:
         return_k_cart=False,
         return_meta=False,
         return_kdist=False,
+        *,
+        alat=None,
     ):
         """Read Quantum ESPRESSO bands and convert markers to reduced k."""
         markers, energy_rows, metadata = read_bands_qe(
@@ -232,7 +234,13 @@ class W90:
         energies = np.full((len(markers), band_count), np.nan)
         for index, row in enumerate(energy_rows):
             energies[index, : min(len(row), band_count)] = row[:band_count]
-        lattice_scale = np.linalg.norm(self.lattice.lat_vecs[0])
+        lattice_scale = (
+            np.linalg.norm(self.lattice.lat_vecs[0])
+            if alat is None
+            else float(alat)
+        )
+        if not np.isfinite(lattice_scale) or lattice_scale <= 0:
+            raise ValueError("alat must be a positive finite length")
         cartesian = markers * (2 * np.pi / lattice_scale)
         reduced = cartesian @ np.linalg.inv(self.lattice.recip_lat_vecs)
         result = [reduced, energies]

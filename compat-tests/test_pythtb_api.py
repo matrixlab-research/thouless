@@ -5,6 +5,10 @@ These tests are not a substitute for the pinned upstream test suite.
 
 from __future__ import annotations
 
+import importlib
+from pathlib import Path
+import shutil
+
 import numpy as np
 import pytest
 
@@ -12,6 +16,73 @@ from conftest import require_compat_module
 
 
 ISSUE_URL = "https://github.com/matrixlab-research/thouless/issues/4"
+SILICON_W90_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "tbmodels-silicon"
+)
+SILICON_QE_FIXTURE = Path(__file__).parent / "fixtures" / "qe-silicon"
+SILICON_W90_KPOINTS = np.asarray(
+    [
+        [0.0, 0.0, 0.0],
+        [0.5, 0.0, 0.5],
+        [0.5, 0.5, 0.5],
+        [0.375, -0.375, 0.0],
+        [0.123412512, 0.6234615, 0.72435235],
+    ]
+)
+SILICON_W90_ENERGIES = np.asarray(
+    [
+        [
+            -5.821847625730,
+            6.228502840555,
+            6.228510285666,
+            6.228517778114,
+            8.799324572597,
+            8.799329653979,
+            8.799339601613,
+            9.705551893206,
+        ],
+        [
+            -1.609988329929,
+            -1.609985100203,
+            3.325543637861,
+            3.325548518744,
+            6.859979869083,
+            6.859993046514,
+            16.383275229553,
+            16.383282128377,
+        ],
+        [
+            -3.430983304099,
+            -0.829821847284,
+            5.015092500369,
+            5.015098048016,
+            7.790667996080,
+            9.561055396470,
+            9.561278011862,
+            13.823818198585,
+        ],
+        [
+            -2.014008220763,
+            -0.979392737407,
+            1.862318394303,
+            3.731134510780,
+            7.182089980436,
+            11.122916084593,
+            13.654866259971,
+            13.851012369236,
+        ],
+        [
+            -3.145238703294,
+            0.092856767608,
+            2.735996980358,
+            3.385336096791,
+            8.354703132316,
+            9.180819953903,
+            13.583515783063,
+            14.311396289525,
+        ],
+    ]
+)
 
 
 def test_periodic_model_construction_and_spectrum_contract() -> None:
@@ -420,6 +491,279 @@ def test_wannier90_and_qe_text_import_builds_a_general_model(tmp_path) -> None:
     np.testing.assert_allclose(qe_k, [[0, 0, 0], [0.5, 0, 0]])
     np.testing.assert_allclose(qe_energies, [[-1.5], [2.5]])
     assert metadata == {"nbnd": 1, "nks": 2}
+
+
+def test_real_silicon_wannier90_import_and_rust_spectrum(
+    monkeypatch,
+) -> None:
+    pythtb = require_compat_module("pythtb", ISSUE_URL)
+    from pythtb.io.w90 import read_kpoint_path, read_win
+
+    imported = pythtb.W90(SILICON_W90_FIXTURE, "silicon")
+    assert imported.num_wan == 8
+    assert len(imported.ham_r) == 93
+    np.testing.assert_allclose(
+        imported.lat,
+        [
+            [-2.6988, 0.0, 2.6988],
+            [0.0, 2.6988, 2.6988],
+            [-2.6988, 2.6988, 0.0],
+        ],
+        atol=1e-12,
+    )
+    assert imported.xyz_cen.shape == (8, 3)
+    np.testing.assert_allclose(
+        imported.red_cen[[0, -1]],
+        [
+            [0.08535249, -0.25608288, 0.08537316],
+            [0.00607598, 0.66462586, -0.33534919],
+        ],
+        atol=1e-8,
+    )
+
+    nodes, labels = read_kpoint_path(
+        read_win(SILICON_W90_FIXTURE, "silicon"),
+        latex=True,
+    )
+    np.testing.assert_allclose(
+        nodes,
+        [
+            [0.5, 0.5, 0.5],
+            [0.0, 0.0, 0.0],
+            [0.5, 0.0, 0.5],
+            [0.5, -0.5, 0.0],
+            [0.375, -0.375, 0.0],
+            [0.0, 0.0, 0.0],
+        ],
+    )
+    assert labels == [
+        "$L$",
+        r"$\Gamma$",
+        "$X$",
+        "$X$",
+        "$K$",
+        r"$\Gamma$",
+    ]
+
+    model = imported.model()
+    assert model.nhops == 2972
+    matrix = model.hamiltonian(SILICON_W90_KPOINTS[-1])[0]
+    np.testing.assert_allclose(matrix, matrix.conj().T, atol=5e-13)
+
+    def reject_python_eigensolver(*_args, **_kwargs):
+        raise AssertionError("the material spectrum must use the Rust eigensolver")
+
+    monkeypatch.setattr(np.linalg, "eigh", reject_python_eigensolver)
+    monkeypatch.setattr(np.linalg, "eigvalsh", reject_python_eigensolver)
+    np.testing.assert_allclose(
+        model.solve_ham(SILICON_W90_KPOINTS),
+        SILICON_W90_ENERGIES,
+        atol=2e-10,
+        rtol=0.0,
+    )
+
+    simplified = imported.model(min_hopping_norm=0.1)
+    assert simplified.nhops == 217
+    assert np.all(np.isfinite(simplified.solve_ham(SILICON_W90_KPOINTS)))
+
+
+def test_real_quantum_espresso_bands_and_wannier_comparison(tmp_path) -> None:
+    pythtb = require_compat_module("pythtb", ISSUE_URL)
+    from pythtb.io.qe import read_bands_qe
+
+    markers, energy_rows, metadata = read_bands_qe(
+        SILICON_QE_FIXTURE,
+        "si",
+    )
+    energies = np.asarray(energy_rows)
+    assert metadata == {"nbnd": 8, "nks": 72}
+    assert markers.shape == (72, 3)
+    assert energies.shape == (72, 8)
+    np.testing.assert_allclose(markers[0], [0.5, 0.5, 0.5])
+    np.testing.assert_allclose(
+        energies[0],
+        [-3.418, -0.822, 5.029, 5.029, 7.814, 9.597, 9.597, 13.838],
+    )
+    np.testing.assert_allclose(markers[-1], [0.0, 0.0, 0.0])
+    np.testing.assert_allclose(
+        energies[-1],
+        [-5.810, 6.255, 6.255, 6.255, 8.822, 8.822, 8.822, 9.723],
+    )
+
+    for name in ("silicon.win", "silicon_centres.xyz", "silicon_hr.dat"):
+        shutil.copyfile(SILICON_W90_FIXTURE / name, tmp_path / name)
+    shutil.copyfile(
+        SILICON_QE_FIXTURE / "si_bands.dat",
+        tmp_path / "silicon_bands.dat",
+    )
+    imported = pythtb.W90(tmp_path, "silicon")
+    reduced, parsed_energies, parsed_metadata = imported.bands_qe(
+        return_meta=True,
+        alat=5.3976,
+    )
+    np.testing.assert_allclose(parsed_energies, energies)
+    assert parsed_metadata == metadata
+    np.testing.assert_allclose(
+        reduced[[0, 20, 40, 41, 71]],
+        [
+            [0.0, 0.5, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.0, 0.5, 0.5],
+            [-0.5, 0.5, 0.0],
+            [0.0, 0.0, 0.0],
+        ],
+        atol=1e-12,
+    )
+
+    endpoint_indices = [0, 20, 40, 41, 71]
+    interpolated = imported.model().solve_ham(reduced[endpoint_indices])
+    np.testing.assert_allclose(
+        interpolated,
+        energies[endpoint_indices],
+        atol=0.04,
+        rtol=0.0,
+    )
+    with pytest.raises(ValueError, match="positive finite"):
+        imported.bands_qe(alat=0.0)
+
+
+def test_real_silicon_eight_band_wannier_localization_uses_rust(
+    monkeypatch,
+) -> None:
+    pythtb = require_compat_module("pythtb", ISSUE_URL)
+    wannier_module = importlib.import_module("pythtb.wannier")
+    calls = {}
+
+    for name in (
+        "wannier_project_trials",
+        "wannier_inverse_bloch_transform",
+        "wannier_periodic_overlaps",
+        "wannier_spread_decomposition",
+        "wannier_maximize_localization",
+        "wannier_operators_in_frames",
+        "wannier_interpolate_matrices",
+    ):
+        original = getattr(wannier_module._core, name)
+
+        def traced(*args, _name=name, _original=original, **kwargs):
+            calls[_name] = calls.get(_name, 0) + 1
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(wannier_module._core, name, traced)
+
+    imported = pythtb.W90(SILICON_W90_FIXTURE, "silicon")
+    model = imported.model()
+    mesh = pythtb.Mesh(
+        ["k", "k", "k"],
+        axis_names=["kx", "ky", "kz"],
+        dim_k=3,
+    )
+    mesh.build_grid((4, 4, 4), k_endpoints=False)
+    states = pythtb.WFArray(
+        model.lattice,
+        mesh,
+        nstates=model.nstate,
+        spinful=False,
+    )
+    states.solve_model(model)
+
+    trials = [[(orbital, 1.0)] for orbital in range(model.norb)]
+    localized = pythtb.Wannier(states)
+    localized.project(trials, band_idxs=list(range(model.nstate)))
+
+    np.testing.assert_allclose(
+        np.sum(np.abs(localized.wannier) ** 2, axis=(0, 1, 2, 4)),
+        np.ones(model.norb),
+        atol=2e-14,
+    )
+    np.testing.assert_allclose(
+        localized.get_centers(cartesian=False),
+        imported.red_cen,
+        atol=1e-12,
+    )
+    assert np.max(np.abs(localized.spread)) < 2e-13
+    assert abs(localized.Omega_I) < 2e-13
+    assert abs(localized.Omega_D) < 2e-13
+    assert abs(localized.Omega_OD) < 2e-13
+
+    source = states.states(flatten_spin_axis=True)
+    phase = np.exp(
+        0.137j
+        * np.arange(int(np.prod(source.shape[:-1]))).reshape(source.shape[:-1])
+    )
+    gauged_states = pythtb.WFArray(
+        model.lattice,
+        mesh,
+        nstates=model.nstate,
+        spinful=False,
+    )
+    gauged_states.set_states(
+        source * phase[..., np.newaxis],
+        is_cell_periodic=True,
+        is_spin_axis_flat=True,
+    )
+    gauge_localized = pythtb.Wannier(gauged_states)
+    gauge_localized.project(trials, band_idxs=list(range(model.nstate)))
+    np.testing.assert_allclose(
+        gauge_localized.get_centers(cartesian=False),
+        imported.red_cen,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        gauge_localized.spread,
+        localized.spread,
+        atol=2e-13,
+    )
+
+    localized.maxloc(
+        max_iter=5,
+        tol=1e-12,
+        grad_min=1e-10,
+    )
+    assert localized._localization_report["converged"]
+    assert localized._localization_report["final_spread"] < 2e-13
+    interpolated = localized.interp_bands(
+        [
+            [0.0, 0.0, 0.0],
+            [0.137, 0.281, 0.193],
+            [0.5, 0.0, 0.5],
+        ],
+        n_interp=3,
+    )
+    assert np.all(np.isfinite(interpolated))
+    np.testing.assert_allclose(
+        interpolated[[0, -1]],
+        SILICON_W90_ENERGIES[[0, 1]],
+        atol=2e-10,
+        rtol=0.0,
+    )
+    assert calls["wannier_project_trials"] == 2
+    assert calls["wannier_inverse_bloch_transform"] >= 3
+    assert calls["wannier_periodic_overlaps"] >= 3
+    assert calls["wannier_spread_decomposition"] >= 3
+    assert calls["wannier_maximize_localization"] == 1
+    assert calls["wannier_operators_in_frames"] == 1
+    assert calls["wannier_interpolate_matrices"] == 1
+
+
+def test_qe_reader_distinguishes_three_band_rows_from_kpoints(
+    tmp_path,
+) -> None:
+    require_compat_module("pythtb", ISSUE_URL)
+    from pythtb.io.qe import read_bands_qe
+
+    (tmp_path / "three_bands.dat").write_text(
+        "&plot nbnd=3, nks=2 /\n"
+        "0.0 0.0 0.0\n"
+        "1.0D+00 2.0D+00 3.0D+00\n"
+        "0.5 0.0 0.0\n"
+        "4.0 5.0 6.0\n",
+        encoding="utf-8",
+    )
+    markers, rows, metadata = read_bands_qe(tmp_path, "three")
+    np.testing.assert_allclose(markers, [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]])
+    np.testing.assert_allclose(rows, [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    assert metadata == {"nbnd": 3, "nks": 2}
 
 
 def test_model_mutation_neighbor_shells_and_parameter_copies_are_general() -> None:

@@ -89,17 +89,15 @@ status = "implemented"
 id = "geometry.wannier"
 description = "Gauge-covariant trial projection, fixed-rank SMV subspace disentanglement with frozen manifolds, periodic sampled-frame overlaps, Marzari-Vanderbilt spread decomposition and maximal localization, multidimensional Bloch transforms, frame-projected operators, and periodic matrix interpolation"
 native_api = "thouless::wannier::{project_trials,disentangle_subspace,periodic_overlaps,spread_decomposition,maximize_localization,inverse_bloch_transform,operators_in_frames,interpolate_periodic_matrices}"
-test = "tests/native_wannier.rs gauge independence, frozen-manifold preservation, embedded atomic zero-spread invariant, two-dimensional composite-gauge localization, and unseen off-mesh matrix interpolation plus PythTB SSH differential workflow"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/2"
+test = "tests/native_wannier.rs gauge independence, frozen-manifold preservation, embedded atomic zero-spread invariant, two-dimensional composite-gauge localization, unseen off-mesh matrix interpolation, and even-grid Nyquist Hermiticity; compat-tests/test_pythtb_api.py SSH differential workflow plus a 4x4x4 eight-band real silicon Wannier90 projection that recovers all external centers and zero spreads under arbitrary source-band gauges, exercises maximal localization, and performs finite Hermitian off-mesh interpolation"
+status = "implemented"
 
 [[capability]]
 id = "response.intrinsic"
-description = "Band-resolved Kubo Berry curvature, coordinate-consistent uniform-mesh integration of linear Hall geometry, and finite-temperature Berry-curvature-dipole integrals"
-native_api = "thouless::response::{band_response_from_hamiltonian_derivatives,band_response_from_model,occupation_weighted_berry_curvature,berry_curvature_dipole,FermiDistribution,BandResponsePoint,UniformMeshBandResponse}"
-test = "tests/native_response.rs massive-Dirac analytic curvature, constant-basis invariance, reduced-versus-Cartesian model derivatives and mesh measures, quantized Qi-Wu-Zhang integral, inversion cancellation of the dipole, tilted-Dirac Fermi-surface dipole, degeneracy rejection, and zero-temperature distribution boundary"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/2"
+description = "Band-resolved Kubo Berry curvature, gauge-invariant occupation-weighted curvature across internally degenerate subspaces, coordinate-consistent uniform-mesh integration of linear Hall geometry, and finite-temperature Berry-curvature-dipole integrals"
+native_api = "thouless::response::{band_response_from_hamiltonian_derivatives,band_response_from_model,intrinsic_berry_curvature_from_hamiltonian_derivatives,intrinsic_berry_curvature_from_model,uniform_mesh_intrinsic_berry_curvature,occupation_weighted_berry_curvature,berry_curvature_dipole,FermiDistribution,BandResponsePoint,UniformMeshBandResponse}"
+test = "tests/native_response.rs massive-Dirac analytic curvature, constant-basis invariance, exact occupied- and empty-subspace gauge invariance, reduced-versus-Cartesian model derivatives and mesh measures, quantized single- and exactly spin-degenerate doubled Qi-Wu-Zhang integrals, inversion cancellation of the dipole, tilted-Dirac Fermi-surface dipole, explicit band-resolved degeneracy rejection, and zero-temperature distribution boundary"
+status = "implemented"
 
 [[capability]]
 id = "observables.local"

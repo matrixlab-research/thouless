@@ -464,18 +464,22 @@ pub fn periodic_overlaps(
             let right = &frames[flat_index(&shifted_coordinates, mesh_shape)];
             let mut basis_twists = vec![Complex64::new(1.0, 0.0); basis_size];
             for (axis_twists, &count) in boundary_twists.iter().zip(&wrap_counts) {
-                if count > 0 {
-                    let exponent =
-                        i32::try_from(count).map_err(|_| WannierError::InvalidDisplacements)?;
-                    for (total, &twist) in basis_twists.iter_mut().zip(axis_twists) {
-                        *total *= twist.powi(exponent);
+                match count.cmp(&0) {
+                    std::cmp::Ordering::Greater => {
+                        let exponent =
+                            i32::try_from(count).map_err(|_| WannierError::InvalidDisplacements)?;
+                        for (total, &twist) in basis_twists.iter_mut().zip(axis_twists) {
+                            *total *= twist.powi(exponent);
+                        }
                     }
-                } else if count < 0 {
-                    let exponent =
-                        i32::try_from(-count).map_err(|_| WannierError::InvalidDisplacements)?;
-                    for (total, &twist) in basis_twists.iter_mut().zip(axis_twists) {
-                        *total *= twist.conj().powi(exponent);
+                    std::cmp::Ordering::Less => {
+                        let exponent = i32::try_from(-count)
+                            .map_err(|_| WannierError::InvalidDisplacements)?;
+                        for (total, &twist) in basis_twists.iter_mut().zip(axis_twists) {
+                            *total *= twist.conj().powi(exponent);
+                        }
                     }
+                    std::cmp::Ordering::Equal => {}
                 }
             }
             let mut overlap = ComplexMatrix::zeros(state_count, state_count);
@@ -632,14 +636,18 @@ fn shifted_projector(
         let wrap_count = shifted.div_euclid(extent);
         let exponent =
             i32::try_from(wrap_count.unsigned_abs()).map_err(|_| WannierError::InvalidMesh)?;
-        if wrap_count > 0 {
-            for (total, &twist) in total_twist.iter_mut().zip(&boundary_twists[axis]) {
-                *total *= twist.powi(exponent);
+        match wrap_count.cmp(&0) {
+            std::cmp::Ordering::Greater => {
+                for (total, &twist) in total_twist.iter_mut().zip(&boundary_twists[axis]) {
+                    *total *= twist.powi(exponent);
+                }
             }
-        } else if wrap_count < 0 {
-            for (total, &twist) in total_twist.iter_mut().zip(&boundary_twists[axis]) {
-                *total *= twist.conj().powi(exponent);
+            std::cmp::Ordering::Less => {
+                for (total, &twist) in total_twist.iter_mut().zip(&boundary_twists[axis]) {
+                    *total *= twist.conj().powi(exponent);
+                }
             }
+            std::cmp::Ordering::Equal => {}
         }
     }
     let source = &projectors[flat_index(&shifted_coordinates, mesh_shape)];
@@ -1273,11 +1281,13 @@ pub fn interpolate_periodic_matrices(
                 .zip(mesh_shape)
                 .map(|(coordinate, &extent)| {
                     let cutoff = (extent - 1) / 2;
-                    if coordinate <= cutoff {
+                    let mode = if coordinate <= cutoff {
                         coordinate as isize
                     } else {
                         coordinate as isize - extent as isize
-                    }
+                    };
+                    let is_nyquist = extent % 2 == 0 && coordinate == extent / 2;
+                    (mode, is_nyquist)
                 })
                 .collect::<Vec<_>>()
         })
@@ -1286,13 +1296,22 @@ pub fn interpolate_periodic_matrices(
     for point in points {
         let mut interpolated = ComplexMatrix::zeros(rows, columns);
         for (frequency, coefficient) in frequencies.iter().zip(&coefficients) {
-            let angle = TAU
-                * frequency
-                    .iter()
-                    .zip(point)
-                    .map(|(&mode, &coordinate)| mode as f64 * coordinate)
-                    .sum::<f64>();
-            let phase = Complex64::from_polar(1.0, angle);
+            let phase = frequency.iter().zip(point).fold(
+                Complex64::new(1.0, 0.0),
+                |phase, (&(mode, is_nyquist), &coordinate)| {
+                    if is_nyquist {
+                        // At an even-grid Nyquist frequency, +N/2 and -N/2
+                        // are the same sampled mode. Split its coefficient
+                        // evenly between the two signs. This is the unique
+                        // symmetric extension and keeps real scalar fields
+                        // real and Hermitian matrix fields Hermitian away
+                        // from the original mesh.
+                        phase * (TAU * mode as f64 * coordinate).cos()
+                    } else {
+                        phase * Complex64::from_polar(1.0, TAU * mode as f64 * coordinate)
+                    }
+                },
+            );
             for row in 0..rows {
                 for column in 0..columns {
                     interpolated
@@ -1439,6 +1458,41 @@ mod tests {
             interpolate_periodic_matrices(&[sample_count], &samples, &[vec![point]]).unwrap();
         assert!((interpolated[0].as_slice()[0].re + 2.0 * (TAU * point).cos()).abs() < 1.0e-12);
         assert!(interpolated[0].as_slice()[0].im.abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn even_mesh_nyquist_interpolation_preserves_hermiticity() {
+        let sample_count = 4;
+        let base = matrix(
+            2,
+            2,
+            vec![
+                Complex64::new(1.0, 0.0),
+                Complex64::new(0.5, 0.7),
+                Complex64::new(0.5, -0.7),
+                Complex64::new(-0.25, 0.0),
+            ],
+        );
+        let samples = (0..sample_count)
+            .map(|sample| {
+                let sign = if sample % 2 == 0 { 1.0 } else { -1.0 };
+                matrix(
+                    2,
+                    2,
+                    base.as_slice().iter().map(|value| *value * sign).collect(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let point = 0.137;
+
+        let interpolated =
+            interpolate_periodic_matrices(&[sample_count], &samples, &[vec![point]]).unwrap();
+
+        let expected_scale = (TAU * (sample_count / 2) as f64 * point).cos();
+        assert!(interpolated[0].is_hermitian(1.0e-12).unwrap());
+        for (actual, expected) in interpolated[0].as_slice().iter().zip(base.as_slice()) {
+            assert!((*actual - *expected * expected_scale).norm() < 1.0e-12);
+        }
     }
 
     #[test]

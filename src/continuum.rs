@@ -291,19 +291,23 @@ pub fn landau_ladder_coefficient(
         } else {
             encoded_power
         };
-        if power > 0 {
-            for _ in 0..power {
-                level = level.checked_add(1).ok_or(ContinuumError::Overflow)?;
-                coefficient *= (level as f64).sqrt();
-            }
-        } else if power < 0 {
-            for _ in power..0 {
-                if level == 0 {
-                    return Ok(0.0);
+        match power.cmp(&0) {
+            std::cmp::Ordering::Greater => {
+                for _ in 0..power {
+                    level = level.checked_add(1).ok_or(ContinuumError::Overflow)?;
+                    coefficient *= (level as f64).sqrt();
                 }
-                coefficient *= (level as f64).sqrt();
-                level -= 1;
             }
+            std::cmp::Ordering::Less => {
+                for _ in power..0 {
+                    if level == 0 {
+                        return Ok(0.0);
+                    }
+                    coefficient *= (level as f64).sqrt();
+                    level -= 1;
+                }
+            }
+            std::cmp::Ordering::Equal => {}
         }
     }
     Ok(coefficient)

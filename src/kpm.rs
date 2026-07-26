@@ -637,10 +637,9 @@ pub fn reconstruct(
                 moments[moment][0][component] =
                     sum / (vector_count as f64 * scale.half_width()) * weights[moment];
             } else {
-                for vector in 0..vector_count {
-                    moments[moment][vector][component] = raw_moments[vector][moment][component]
-                        / scale.half_width()
-                        * weights[moment];
+                for (vector, raw_vector) in raw_moments.iter().enumerate() {
+                    moments[moment][vector][component] =
+                        raw_vector[moment][component] / scale.half_width() * weights[moment];
                 }
             }
         }
@@ -739,11 +738,10 @@ pub fn integrate(
     }
     let factor = scale.half_width() / sample_count as f64;
     let mut result = vec![vec![Complex64::new(0.0, 0.0); component_count]; channel_count];
-    for sample in 0..sample_count {
-        for channel in 0..channel_count {
-            for component in 0..component_count {
-                result[channel][component] +=
-                    gammas[sample][channel][component] * distribution[sample] * factor;
+    for (sample, &distribution_value) in gammas.iter().zip(distribution) {
+        for (result_channel, sample_channel) in result.iter_mut().zip(sample) {
+            for (result_component, &gamma) in result_channel.iter_mut().zip(sample_channel) {
+                *result_component += gamma * distribution_value * factor;
             }
         }
     }

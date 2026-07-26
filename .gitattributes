@@ -1,0 +1,4 @@
+# Preserve byte-identical upstream scientific fixtures, including whitespace.
+compat-tests/fixtures/tbmodels-silicon/silicon.win -whitespace
+compat-tests/fixtures/tbmodels-silicon/silicon_centres.xyz -whitespace
+compat-tests/fixtures/tbmodels-silicon/silicon_hr.dat -whitespace

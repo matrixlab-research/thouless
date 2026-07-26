@@ -1,10 +1,11 @@
 //! Rust-native building blocks for tight-binding, topology, and steady-state
 //! quantum transport.
 //!
-//! The implementation is incomplete, but already includes model construction,
-//! dense spectral algorithms, reciprocal geometry, discrete topology,
-//! observables, and structure-preserving model transformations. Remaining
-//! capabilities are tracked in the repository coverage matrices and issues.
+//! The implementation includes model construction, dense and sparse spectral
+//! algorithms, reciprocal geometry, topology, intrinsic response, Wannier
+//! localization, observables, structure-preserving transformations, and
+//! steady-state transport. Executable coverage and independent validation
+//! status are tracked in the repository coverage matrices and issues.
 
 #![forbid(unsafe_code)]
 

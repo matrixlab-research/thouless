@@ -387,7 +387,7 @@ impl DiscreteSymmetry {
             } else {
                 operator * operator
             };
-            if !almost_identity(&square, 1.0) && !(antiunitary && almost_identity(&square, -1.0)) {
+            if !(almost_identity(&square, 1.0) || antiunitary && almost_identity(&square, -1.0)) {
                 return Err(SymmetryError::InvalidOperatorSquare { name });
             }
         }

@@ -468,8 +468,10 @@ fn size_reduce(
                 .ok_or(LatticeReductionError::UnstableReduction)?;
         }
         let previous_coefficients = coefficients[previous].clone();
-        for column in 0..coefficients[row].len() {
-            coefficients[row][column] -= multiple * previous_coefficients[column];
+        for (coefficient, previous_coefficient) in
+            coefficients[row].iter_mut().zip(previous_coefficients)
+        {
+            *coefficient -= multiple * previous_coefficient;
         }
     }
     Ok(())

@@ -568,12 +568,10 @@ fn workspace_length(value: f64) -> Result<usize, Error> {
 }
 
 fn check_info(info: i32) -> Result<(), Error> {
-    if info < 0 {
-        Err(Error::InvalidLapackArgument { argument: -info })
-    } else if info > 0 {
-        Err(Error::NoConvergence { detail: info })
-    } else {
-        Ok(())
+    match info.cmp(&0) {
+        std::cmp::Ordering::Less => Err(Error::InvalidLapackArgument { argument: -info }),
+        std::cmp::Ordering::Greater => Err(Error::NoConvergence { detail: info }),
+        std::cmp::Ordering::Equal => Ok(()),
     }
 }
 

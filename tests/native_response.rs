@@ -2,7 +2,8 @@ use nalgebra::DMatrix;
 use thouless::model::{Lattice, ModelBuilder};
 use thouless::response::{
     band_response_from_hamiltonian_derivatives, band_response_from_model, berry_curvature_dipole,
-    occupation_weighted_berry_curvature, FermiDistribution, IntrinsicResponseError,
+    intrinsic_berry_curvature_from_hamiltonian_derivatives, occupation_weighted_berry_curvature,
+    uniform_mesh_intrinsic_berry_curvature, FermiDistribution, IntrinsicResponseError,
     MomentumCoordinates, UniformMeshBandResponse,
 };
 use thouless::{Complex64, ComplexMatrix};
@@ -67,7 +68,7 @@ fn massive_dirac_response_matches_the_analytic_kubo_curvature() {
     let fermi = FermiDistribution::new(0.0, 0.0).unwrap();
     let point = band_response_from_hamiltonian_derivatives(
         &hamiltonian,
-        &[sigma_x, sigma_y],
+        &[sigma_x.clone(), sigma_y.clone()],
         fermi,
         1.0e-12,
     )
@@ -84,6 +85,14 @@ fn massive_dirac_response_matches_the_analytic_kubo_curvature() {
 
     let integral = occupation_weighted_berry_curvature(&[point], &[0.25], 0, 1).unwrap();
     assert!((integral - 0.25 * lower_curvature).abs() < 1.0e-12);
+    let subspace_curvature = intrinsic_berry_curvature_from_hamiltonian_derivatives(
+        &hamiltonian,
+        &[sigma_x, sigma_y],
+        fermi,
+        1.0e-12,
+    )
+    .unwrap();
+    assert!((subspace_curvature.get(0, 1).unwrap() - lower_curvature).abs() < 1.0e-12);
 }
 
 #[test]
@@ -137,6 +146,115 @@ fn response_is_invariant_under_a_constant_basis_change() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn degenerate_subspace_curvature_is_gauge_invariant() {
+    let mass = 1.7_f64;
+    let hamiltonian = ComplexMatrix::new(
+        4,
+        4,
+        vec![
+            Complex64::new(-mass, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(-mass, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(mass, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(mass, 0.0),
+        ],
+    )
+    .unwrap();
+    let mut first_derivative = ComplexMatrix::zeros(4, 4);
+    let mut second_derivative = ComplexMatrix::zeros(4, 4);
+    for (occupied, empty) in [(0, 2), (1, 3)] {
+        first_derivative
+            .set(occupied, empty, Complex64::new(1.0, 0.0))
+            .unwrap();
+        first_derivative
+            .set(empty, occupied, Complex64::new(1.0, 0.0))
+            .unwrap();
+        second_derivative
+            .set(occupied, empty, Complex64::new(0.0, 1.0))
+            .unwrap();
+        second_derivative
+            .set(empty, occupied, Complex64::new(0.0, -1.0))
+            .unwrap();
+    }
+    let fermi = FermiDistribution::new(0.0, 0.0).unwrap();
+    assert!(matches!(
+        band_response_from_hamiltonian_derivatives(
+            &hamiltonian,
+            &[first_derivative.clone(), second_derivative.clone()],
+            fermi,
+            1.0e-12,
+        ),
+        Err(IntrinsicResponseError::DegenerateBands {
+            first: 0,
+            second: 1
+        })
+    ));
+
+    let reference = intrinsic_berry_curvature_from_hamiltonian_derivatives(
+        &hamiltonian,
+        &[first_derivative.clone(), second_derivative.clone()],
+        fermi,
+        1.0e-12,
+    )
+    .unwrap();
+    assert!((reference.get(0, 1).unwrap() + 1.0 / mass.powi(2)).abs() < 1.0e-12);
+    assert!((reference.get(1, 0).unwrap() - 1.0 / mass.powi(2)).abs() < 1.0e-12);
+
+    let occupied_angle = 0.37_f64;
+    let empty_angle = -0.23_f64;
+    let occupied_cosine = occupied_angle.cos();
+    let occupied_sine = occupied_angle.sin();
+    let empty_cosine = empty_angle.cos();
+    let empty_sine = empty_angle.sin();
+    let unitary = DMatrix::from_row_slice(
+        4,
+        4,
+        &[
+            Complex64::new(occupied_cosine, 0.0),
+            Complex64::new(0.0, occupied_sine),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, occupied_sine),
+            Complex64::new(occupied_cosine, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(empty_cosine, 0.0),
+            Complex64::new(empty_sine, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(-empty_sine, 0.0),
+            Complex64::new(empty_cosine, 0.0),
+        ],
+    );
+    let transformed = intrinsic_berry_curvature_from_hamiltonian_derivatives(
+        &transform(&hamiltonian, &unitary),
+        &[
+            transform(&first_derivative, &unitary),
+            transform(&second_derivative, &unitary),
+        ],
+        fermi,
+        1.0e-12,
+    )
+    .unwrap();
+    for (actual, expected) in transformed.as_slice().iter().zip(reference.as_slice()) {
+        assert!((actual - expected).abs() < 1.0e-12);
     }
 }
 
@@ -273,11 +391,19 @@ fn add_scaled(
 }
 
 fn qi_wu_zhang_model() -> thouless::model::TightBindingModel {
+    qi_wu_zhang_model_with_copies(1)
+}
+
+fn qi_wu_zhang_model_with_copies(copies: usize) -> thouless::model::TightBindingModel {
     let lattice = Lattice::new(vec![vec![1.0, 0.0], vec![0.0, 1.0]], vec![0, 1]).unwrap();
     let mut builder = ModelBuilder::new(lattice);
-    let orbital = builder
-        .add_orbital_with_dof("spinor", [0.0, 0.0], 2)
-        .unwrap();
+    let orbitals = (0..copies)
+        .map(|copy| {
+            builder
+                .add_orbital_with_dof(format!("spinor-{copy}"), [0.0, 0.0], 2)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
     let sigma_x = ComplexMatrix::new(
         2,
         2,
@@ -311,25 +437,27 @@ fn qi_wu_zhang_model() -> thouless::model::TightBindingModel {
         ],
     )
     .unwrap();
-    builder
-        .set_onsite_block(orbital, scaled(&sigma_z, -1.0))
-        .unwrap();
-    builder
-        .add_hopping_block(
-            orbital,
-            orbital,
-            [1, 0],
-            add_scaled(&sigma_z, 0.5, &sigma_x, Complex64::new(0.0, -0.5)),
-        )
-        .unwrap();
-    builder
-        .add_hopping_block(
-            orbital,
-            orbital,
-            [0, 1],
-            add_scaled(&sigma_z, 0.5, &sigma_y, Complex64::new(0.0, -0.5)),
-        )
-        .unwrap();
+    for orbital in orbitals {
+        builder
+            .set_onsite_block(orbital, scaled(&sigma_z, -1.0))
+            .unwrap();
+        builder
+            .add_hopping_block(
+                orbital,
+                orbital,
+                [1, 0],
+                add_scaled(&sigma_z, 0.5, &sigma_x, Complex64::new(0.0, -0.5)),
+            )
+            .unwrap();
+        builder
+            .add_hopping_block(
+                orbital,
+                orbital,
+                [0, 1],
+                add_scaled(&sigma_z, 0.5, &sigma_y, Complex64::new(0.0, -0.5)),
+            )
+            .unwrap();
+    }
     builder.build().unwrap()
 }
 
@@ -371,4 +499,33 @@ fn uniform_mesh_response_recovers_chern_integral_and_inversion_cancellation() {
     )
     .unwrap();
     assert!(centered.berry_curvature_dipole(0, 0, 1).unwrap().abs() < 1.0e-12);
+}
+
+#[test]
+fn uniform_intrinsic_curvature_handles_exact_spin_degeneracy() {
+    let model = qi_wu_zhang_model_with_copies(2);
+    let fermi = FermiDistribution::new(0.0, 0.0).unwrap();
+    assert!(matches!(
+        UniformMeshBandResponse::from_model(
+            &model,
+            &[7, 7],
+            &[0.0, 0.0],
+            fermi,
+            MomentumCoordinates::Cartesian,
+            1.0e-10,
+        ),
+        Err(IntrinsicResponseError::DegenerateBands { .. })
+    ));
+
+    let integrated = uniform_mesh_intrinsic_berry_curvature(
+        &model,
+        &[31, 31],
+        &[0.0, 0.0],
+        fermi,
+        MomentumCoordinates::Cartesian,
+        1.0e-10,
+    )
+    .unwrap();
+    assert!((integrated.get(0, 1).unwrap().abs() / std::f64::consts::TAU - 2.0).abs() < 2.0e-8);
+    assert!((integrated.get(0, 1).unwrap() + integrated.get(1, 0).unwrap()).abs() < 1.0e-10);
 }

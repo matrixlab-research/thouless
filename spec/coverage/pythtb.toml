@@ -158,11 +158,10 @@ source_entries = [
 ]
 compat_entry = "python/pythtb/w90.py and python/pythtb/io"
 rust_capability = "model.structure through the shared TBModel Hamiltonian representation"
-public_test = "compat-tests/test_pythtb_api.py synthetic scalar-chain Wannier90 and Quantum ESPRESSO import contract"
+public_test = "compat-tests/test_pythtb_api.py synthetic scalar-chain contract, real eight-orbital 93-shell silicon Wannier90 import with independently assembled reference energies, and official Quantum ESPRESSO 7.6 72-point eight-band silicon bands.x output"
 source_test = "no collected source tests"
-actual_result = "the public W90 adapter and w90/qe text readers build and evaluate a general model; broader real-output differential fixtures remain to be added"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/4"
+actual_result = "the public W90 adapter and w90/qe text readers build and evaluate general models; the real Wannier90 fixture validates nonorthogonal lattice and center conversion, flexible colon and inline block syntax, Wigner-Seitz degeneracies, hopping filtering, Rust Hamiltonian assembly, and Rust eigensolution at five fixed k-points, while the official QE fixture validates header-shaped stateful parsing, Fortran exponents, explicit alat conversion, and endpoint agreement with the Wannier interpolation"
+status = "implemented"
 
 [[interface]]
 name = "Wannier projection and localization"
@@ -176,11 +175,10 @@ source_entries = [
 ]
 compat_entry = "python/pythtb/wannier.py"
 rust_capability = "geometry.wannier plus shared eigensystem and Hamiltonian evaluation"
-public_test = "compat-tests/test_pythtb_api.py SSH projection, normalization, center, spread decomposition, Fourier interpolation, and nonincreasing-localization contract"
+public_test = "compat-tests/test_pythtb_api.py SSH projection, normalization, center, spread decomposition, Fourier interpolation, and nonincreasing-localization contract plus a 4x4x4 eight-band real silicon material workflow"
 source_test = "no collected source tests"
-actual_result = "trial projection, self-consistent fixed-rank SMV disentanglement with outer and frozen energy windows, periodic overlaps, real-space FFT, first-shell spread decomposition, multidimensional Marzari-Vanderbilt maximal-localization gradients and unitary updates, frame rotation, and arbitrary-path matrix interpolation run in the Rust core; a 31-point SSH workflow matches the PythTB 2.0 center and spread decomposition, while broader differential fixtures and realistic material-scale validation remain open"
-status = "partial"
-issue = "https://github.com/matrixlab-research/thouless/issues/4"
+actual_result = "trial projection, self-consistent fixed-rank SMV disentanglement with outer and frozen energy windows, periodic overlaps, real-space FFT, first-shell spread decomposition, multidimensional Marzari-Vanderbilt maximal-localization gradients and unitary updates, frame rotation, and arbitrary-path matrix interpolation run in the Rust core; a 31-point SSH workflow matches the PythTB 2.0 center and spread decomposition, and the real three-dimensional silicon workflow recovers all eight external Wannier centers and zero spreads under arbitrary band gauges, preserves even-grid Hermiticity, and interpolates finite endpoint-exact bands"
+status = "implemented"
 
 [[interface]]
 name = "model, lattice, and Wannier visualization"

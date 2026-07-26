@@ -10,7 +10,7 @@ use nalgebra::DMatrix;
 use crate::geometry::UniformReciprocalMesh;
 use crate::model::TightBindingModel;
 use crate::spectrum::hermitian_eigensystem;
-use crate::{Complex64, ComplexMatrix, GeometryError, ModelError};
+use crate::{Complex64, ComplexMatrix, GeometryError, ModelError, RealMatrix};
 
 const HERMITIAN_TOLERANCE: f64 = 1.0e-8;
 
@@ -295,6 +295,8 @@ pub enum IntrinsicResponseError {
     InvalidDirections,
     /// A pointwise Fermi-surface integral was requested at zero temperature.
     ZeroTemperatureFermiSurface,
+    /// A finite input produced a non-finite response through numerical overflow.
+    NonFiniteResult,
 }
 
 impl std::fmt::Display for IntrinsicResponseError {
@@ -339,6 +341,9 @@ impl std::fmt::Display for IntrinsicResponseError {
                 formatter,
                 "pointwise Fermi-surface response requires positive temperature"
             ),
+            Self::NonFiniteResult => {
+                write!(formatter, "intrinsic-response evaluation overflowed")
+            }
         }
     }
 }
@@ -378,32 +383,9 @@ pub fn band_response_from_hamiltonian_derivatives(
     fermi: FermiDistribution,
     degeneracy_tolerance: f64,
 ) -> Result<BandResponsePoint, IntrinsicResponseError> {
-    let dimension = hamiltonian.rows();
-    if dimension == 0
-        || hamiltonian.shape() != (dimension, dimension)
-        || !hamiltonian
-            .is_hermitian(HERMITIAN_TOLERANCE)
-            .unwrap_or(false)
-    {
-        return Err(IntrinsicResponseError::InvalidHamiltonian);
-    }
-    if derivatives.is_empty()
-        || derivatives.iter().any(|derivative| {
-            derivative.shape() != (dimension, dimension)
-                || !derivative
-                    .is_hermitian(HERMITIAN_TOLERANCE)
-                    .unwrap_or(false)
-        })
-    {
-        return Err(IntrinsicResponseError::InvalidDerivatives);
-    }
-    if !degeneracy_tolerance.is_finite() || degeneracy_tolerance <= 0.0 {
-        return Err(IntrinsicResponseError::InvalidDegeneracyTolerance);
-    }
-
-    let eigensystem = hermitian_eigensystem(hamiltonian, HERMITIAN_TOLERANCE)
-        .map_err(|_| IntrinsicResponseError::EigensystemFailure)?;
-    let energies = eigensystem.eigenvalues().to_vec();
+    let (energies, rotated_derivatives) =
+        rotated_response_data(hamiltonian, derivatives, degeneracy_tolerance)?;
+    let dimension = energies.len();
     for first in 0..dimension {
         for second in (first + 1)..dimension {
             if (energies[first] - energies[second]).abs() <= degeneracy_tolerance {
@@ -412,12 +394,6 @@ pub fn band_response_from_hamiltonian_derivatives(
         }
     }
 
-    let eigenvectors = dmatrix(eigensystem.eigenvectors());
-    let eigenvectors_adjoint = eigenvectors.adjoint();
-    let rotated_derivatives = derivatives
-        .iter()
-        .map(|derivative| &eigenvectors_adjoint * dmatrix(derivative) * &eigenvectors)
-        .collect::<Vec<_>>();
     let direction_count = derivatives.len();
 
     let mut occupations = Vec::with_capacity(dimension);
@@ -495,6 +471,116 @@ pub fn band_response_from_model(
         fermi,
         degeneracy_tolerance,
     )
+}
+
+/// Computes the occupation-weighted intrinsic Berry-curvature tensor.
+///
+/// Unlike [`band_response_from_hamiltonian_derivatives`], this observable is
+/// defined for exact degeneracies. Terms within a degenerate subspace cancel
+/// pairwise, while couplings between distinct-energy subspaces are accumulated
+/// as traces. The result is therefore invariant under arbitrary unitary basis
+/// changes inside each degenerate subspace.
+///
+/// For nondegenerate bands this is exactly
+/// `Σ_n f_n Ω_n^{ab}`. `degeneracy_tolerance` declares which numerically
+/// indistinguishable levels belong to the same subspace.
+pub fn intrinsic_berry_curvature_from_hamiltonian_derivatives(
+    hamiltonian: &ComplexMatrix,
+    derivatives: &[ComplexMatrix],
+    fermi: FermiDistribution,
+    degeneracy_tolerance: f64,
+) -> Result<RealMatrix, IntrinsicResponseError> {
+    let (energies, rotated_derivatives) =
+        rotated_response_data(hamiltonian, derivatives, degeneracy_tolerance)?;
+    let occupations = energies
+        .iter()
+        .map(|&energy| fermi.occupation(energy))
+        .collect::<Result<Vec<_>, _>>()?;
+    let direction_count = derivatives.len();
+    let mut curvature = vec![0.0; direction_count * direction_count];
+
+    for first_band in 0..energies.len() {
+        for second_band in (first_band + 1)..energies.len() {
+            let gap = energies[first_band] - energies[second_band];
+            if gap.abs() <= degeneracy_tolerance {
+                continue;
+            }
+            let occupation_difference = occupations[first_band] - occupations[second_band];
+            for first_direction in 0..direction_count {
+                for second_direction in 0..direction_count {
+                    let matrix_element = rotated_derivatives[first_direction]
+                        [(first_band, second_band)]
+                        * rotated_derivatives[second_direction][(second_band, first_band)];
+                    curvature[first_direction * direction_count + second_direction] +=
+                        2.0 * occupation_difference * matrix_element.im / (gap * gap);
+                }
+            }
+        }
+    }
+
+    RealMatrix::new(direction_count, direction_count, curvature)
+        .map_err(|_| IntrinsicResponseError::NonFiniteResult)
+}
+
+/// Evaluates the gauge-invariant intrinsic curvature of a tight-binding model.
+///
+/// `momentum` is supplied in reduced coordinates; `coordinates` selects the
+/// derivative basis of the returned tensor.
+pub fn intrinsic_berry_curvature_from_model(
+    model: &TightBindingModel,
+    momentum: &[f64],
+    fermi: FermiDistribution,
+    coordinates: MomentumCoordinates,
+    degeneracy_tolerance: f64,
+) -> Result<RealMatrix, IntrinsicResponseError> {
+    let hamiltonian = model.hamiltonian(momentum)?;
+    let derivatives = match coordinates {
+        MomentumCoordinates::Reduced => model.reduced_momentum_derivatives(momentum)?,
+        MomentumCoordinates::Cartesian => model.cartesian_momentum_derivatives(momentum)?,
+    };
+    intrinsic_berry_curvature_from_hamiltonian_derivatives(
+        &hamiltonian,
+        &derivatives,
+        fermi,
+        degeneracy_tolerance,
+    )
+}
+
+/// Integrates gauge-invariant intrinsic curvature on a uniform reciprocal mesh.
+///
+/// The returned tensor uses the unit reduced-cell measure for reduced
+/// derivatives and the primitive reciprocal-cell volume for Cartesian
+/// derivatives. It remains defined when occupied or empty bands are internally
+/// degenerate, including spin-degenerate copies.
+pub fn uniform_mesh_intrinsic_berry_curvature(
+    model: &TightBindingModel,
+    shape: &[usize],
+    fractional_offsets: &[f64],
+    fermi: FermiDistribution,
+    coordinates: MomentumCoordinates,
+    degeneracy_tolerance: f64,
+) -> Result<RealMatrix, IntrinsicResponseError> {
+    let mesh = UniformReciprocalMesh::new(model.lattice(), shape, fractional_offsets)?;
+    let direction_count = model.lattice().periodic_dimension();
+    let mut integrated = vec![0.0; direction_count * direction_count];
+    let weight = match coordinates {
+        MomentumCoordinates::Reduced => mesh.normalized_weight(),
+        MomentumCoordinates::Cartesian => mesh.cartesian_weight(),
+    };
+    for momentum in mesh.reduced_points() {
+        let point = intrinsic_berry_curvature_from_model(
+            model,
+            momentum,
+            fermi,
+            coordinates,
+            degeneracy_tolerance,
+        )?;
+        for (total, value) in integrated.iter_mut().zip(point.as_slice()) {
+            *total += weight * value;
+        }
+    }
+    RealMatrix::new(direction_count, direction_count, integrated)
+        .map_err(|_| IntrinsicResponseError::NonFiniteResult)
 }
 
 /// Integrates the occupation-weighted Berry curvature.
@@ -605,6 +691,46 @@ fn validate_samples(
         return Err(IntrinsicResponseError::InvalidSamples);
     }
     Ok(())
+}
+
+fn rotated_response_data(
+    hamiltonian: &ComplexMatrix,
+    derivatives: &[ComplexMatrix],
+    degeneracy_tolerance: f64,
+) -> Result<(Vec<f64>, Vec<DMatrix<Complex64>>), IntrinsicResponseError> {
+    let dimension = hamiltonian.rows();
+    if dimension == 0
+        || hamiltonian.shape() != (dimension, dimension)
+        || !hamiltonian
+            .is_hermitian(HERMITIAN_TOLERANCE)
+            .unwrap_or(false)
+    {
+        return Err(IntrinsicResponseError::InvalidHamiltonian);
+    }
+    if derivatives.is_empty()
+        || derivatives.iter().any(|derivative| {
+            derivative.shape() != (dimension, dimension)
+                || !derivative
+                    .is_hermitian(HERMITIAN_TOLERANCE)
+                    .unwrap_or(false)
+        })
+    {
+        return Err(IntrinsicResponseError::InvalidDerivatives);
+    }
+    if !degeneracy_tolerance.is_finite() || degeneracy_tolerance <= 0.0 {
+        return Err(IntrinsicResponseError::InvalidDegeneracyTolerance);
+    }
+
+    let eigensystem = hermitian_eigensystem(hamiltonian, HERMITIAN_TOLERANCE)
+        .map_err(|_| IntrinsicResponseError::EigensystemFailure)?;
+    let energies = eigensystem.eigenvalues().to_vec();
+    let eigenvectors = dmatrix(eigensystem.eigenvectors());
+    let eigenvectors_adjoint = eigenvectors.adjoint();
+    let rotated_derivatives = derivatives
+        .iter()
+        .map(|derivative| &eigenvectors_adjoint * dmatrix(derivative) * &eigenvectors)
+        .collect();
+    Ok((energies, rotated_derivatives))
 }
 
 fn dmatrix(matrix: &ComplexMatrix) -> DMatrix<Complex64> {
