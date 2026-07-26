@@ -1,10 +1,11 @@
 [package]
 name = "thouless-lapack"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.81"
 license = "MIT"
-publish = false
+description = "LAPACK-backed decomposition kernels for Thouless"
+repository = "https://github.com/matrixlab-research/thouless"
 
 [dependencies]
 lapack = "0.20.0"

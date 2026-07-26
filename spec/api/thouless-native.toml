@@ -1,0 +1,166 @@
+schema_version = 1
+contract_version = "0.1.0"
+crate = "thouless"
+status = "stable"
+public_api_test = "tests/native_public_api.rs"
+stability_document = "docs/api-stability.md"
+precision = "real and complex binary64"
+ownership = "scientific objects own structural data; accessors borrow; computed results are owned"
+coordinates = "primitive vectors are Cartesian rows; orbital positions and momenta are reduced unless explicitly Cartesian"
+errors = "Result with non-exhaustive domain errors"
+
+[[workflow]]
+id = "model.structure"
+module = "thouless::model"
+symbols = ["Lattice", "OrbitalId", "ModelBuilder", "TightBindingModel"]
+validation = ["tests/native_model.rs"]
+
+[[workflow]]
+id = "spectrum.periodic"
+module = "thouless::model; thouless::spectrum"
+symbols = ["TightBindingModel::hamiltonian", "TightBindingModel::eigensystem", "TightBindingModel::band_structure", "Eigensystem"]
+validation = ["tests/native_model.rs"]
+
+[[workflow]]
+id = "spectrum.kernel_polynomial"
+module = "thouless::linear_operator; thouless::kpm"
+symbols = ["LinearOperator", "CsrMatrix", "SpectralScale", "rescale_sparse_hamiltonian", "chebyshev_vectors", "reconstruct"]
+validation = ["tests/native_kpm.rs", "src/kpm.rs"]
+
+[[workflow]]
+id = "spectrum.lead_bands"
+module = "thouless::bands"
+symbols = ["PeriodicBands", "BandEvaluation"]
+validation = ["src/bands.rs"]
+
+[[workflow]]
+id = "geometry.finite"
+module = "thouless::transform"
+symbols = ["FiniteSite", "FiniteGeometry", "make_finite_geometry", "make_finite_cluster", "make_supercell", "remove_orbitals"]
+validation = ["tests/native_transform.rs"]
+
+[[workflow]]
+id = "geometry.periodic_folding"
+module = "thouless::periodic"
+symbols = ["PeriodicTerm", "bloch_phase", "fold_terms"]
+validation = ["tests/native_periodic.rs", "src/periodic.rs"]
+
+[[workflow]]
+id = "visualization.regular_field"
+module = "thouless::interpolation"
+symbols = ["SmoothingOptions", "RegularField", "interpolate_density", "interpolate_current"]
+validation = ["src/interpolation.rs"]
+
+[[workflow]]
+id = "continuum.finite_difference"
+module = "thouless::continuum"
+symbols = ["DifferentialFactor", "DifferentialStencilTerm", "finite_difference_stencil", "landau_ladder_coefficient"]
+validation = ["src/continuum.rs"]
+
+[[workflow]]
+id = "geometry.reciprocal_sampling"
+module = "thouless::geometry"
+symbols = ["ReciprocalPath", "UniformReciprocalMesh"]
+validation = ["tests/native_geometry.rs"]
+
+[[workflow]]
+id = "geometry.topology"
+module = "thouless::topology"
+symbols = ["wilson_line_phase", "wilson_loop_eigenphases", "chern_numbers_on_uniform_grid", "z2_invariant_on_uniform_grid", "second_chern_from_hamiltonian_derivatives"]
+validation = ["tests/native_topology.rs"]
+
+[[workflow]]
+id = "geometry.quantum_geometric_tensor"
+module = "thouless::topology"
+symbols = ["QuantumGeometricTensor", "quantum_geometric_tensor_from_hamiltonian_derivatives"]
+validation = ["tests/native_topology.rs"]
+
+[[workflow]]
+id = "geometry.local_chern_marker"
+module = "thouless::topology"
+symbols = ["local_chern_marker_from_projector", "local_chern_marker_from_hamiltonian"]
+validation = ["tests/native_topology.rs"]
+
+[[workflow]]
+id = "geometry.wannier"
+module = "thouless::wannier"
+symbols = ["project_trials", "disentangle_subspace", "periodic_overlaps", "spread_decomposition", "maximize_localization", "inverse_bloch_transform", "interpolate_periodic_matrices"]
+validation = ["tests/native_wannier.rs"]
+
+[[workflow]]
+id = "response.intrinsic"
+module = "thouless::response"
+symbols = ["FermiDistribution", "BandResponsePoint", "UniformMeshBandResponse", "band_response_from_model", "berry_curvature_dipole"]
+validation = ["tests/native_response.rs"]
+
+[[workflow]]
+id = "observables.local"
+module = "thouless::observables"
+symbols = ["LocalBasisLayout", "LocalOperatorSet", "local_densities", "bond_currents", "local_sources", "project_diagonal_observable"]
+validation = ["tests/native_observables.rs"]
+
+[[workflow]]
+id = "transport.steady_state"
+module = "thouless::transport"
+symbols = ["LeadContact", "LocalizedSelfEnergy", "SparseOpenSystem", "ScatteringSolution", "solve_open_system"]
+validation = ["tests/native_transport.rs"]
+
+[[workflow]]
+id = "transport.propagating_modes"
+module = "thouless::lead_modes"
+symbols = ["LeadLinearSystem", "PropagatingLeadModes", "setup_lead_linear_system", "propagating_modes"]
+validation = ["src/lead_modes.rs"]
+
+[[workflow]]
+id = "transport.lead_self_energy"
+module = "thouless::transport"
+symbols = ["SurfaceGreenOptions", "retarded_lead_self_energy", "regularize_retarded_self_energy", "square_lattice_self_energy"]
+validation = ["tests/native_transport.rs"]
+
+[[workflow]]
+id = "symmetry.discrete"
+module = "thouless::symmetry"
+symbols = ["DiscreteSymmetry", "SymmetryViolation"]
+validation = ["src/symmetry.rs"]
+
+[[workflow]]
+id = "symmetry.particle_hole_basis"
+module = "thouless::symmetry"
+symbols = ["ParticleHoleBasis", "particle_hole_symmetric_basis"]
+validation = ["src/symmetry.rs"]
+
+[[workflow]]
+id = "ensembles.random_matrix"
+module = "thouless::random_matrix"
+symbols = ["SymmetryClass", "gaussian_from_components", "circular_from_components"]
+validation = ["src/random_matrix.rs"]
+
+[[workflow]]
+id = "utility.random_access_variates"
+module = "thouless::digest"
+symbols = ["uniform_pair", "uniform", "gaussian"]
+validation = ["src/digest.rs"]
+
+[[workflow]]
+id = "geometry.lattice_reduction"
+module = "thouless::lattice_reduction"
+symbols = ["ReducedBasis", "gram_schmidt", "lll_reduce", "closest_lattice_vectors", "voronoi_neighbors"]
+validation = ["src/lattice_reduction.rs"]
+
+[[workflow]]
+id = "graph.compressed"
+module = "thouless::graph"
+symbols = ["DirectedEdge", "DirectedGraphBuilder", "CompressedGraph", "CompressionOptions"]
+validation = ["src/graph.rs"]
+
+[[workflow]]
+id = "algebra.dense_decomposition"
+module = "thouless::decomposition"
+symbols = ["SchurDecomposition", "RealSchurDecomposition", "schur", "real_schur", "generalized_schur"]
+validation = ["src/decomposition.rs"]
+
+[[workflow]]
+id = "algebra.sparse_direct"
+module = "thouless::sparse_direct"
+symbols = ["SparseLuAnalysis", "SparseLuFactorization", "schur_complement"]
+validation = ["src/sparse_direct.rs"]

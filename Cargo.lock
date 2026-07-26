@@ -931,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "thouless"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "faer",
  "md-5",
@@ -942,8 +942,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "thouless-capi"
+version = "0.1.0"
+dependencies = [
+ "thouless",
+]
+
+[[package]]
 name = "thouless-lapack"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "lapack",
  "lapack-src",
@@ -952,7 +959,7 @@ dependencies = [
 
 [[package]]
 name = "thouless-python"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "pyo3",
  "thouless",

@@ -10,10 +10,12 @@ interfaces while calling the same Rust core.
 
 ## Current status
 
-**Rust scientific implementation and source compatibility complete;
-language-native product APIs and isolated held-out validation pending.**
+**Rust scientific implementation, first-class Rust/Python/Julia APIs, stable C
+ABI, and source compatibility complete; isolated held-out validation pending.**
 
-The repository currently implements reusable model construction, dense
+The repository currently exposes the same Rust scientific core through a
+versioned Rust contract, an installable typed Python API, a versioned C ABI,
+and `Thouless.jl`. It implements reusable model construction, dense
 Hermitian assembly, eigensolvers, momentum derivatives, discrete Wilson phases,
 Berry fluxes and uniform-grid Chern numbers, metric-aware reciprocal paths and
 uniform meshes with explicit quadrature measures, parallel transport,
@@ -63,10 +65,18 @@ compatibility statistics expose portable storage counts without claiming
 MUMPS-internal measurements. The remaining validation gap is the
 evaluator-owned, isolated held-out project.
 
-A green CI run currently means:
+A green pull-request CI run means:
 
-- the implemented Rust model and spectral invariants pass;
-- the coverage matrices are internally consistent;
+- the Rust contract, formatting, lint, tests, and documentation pass on all
+  supported operating systems;
+- built Python wheels install into clean environments and all 26 public
+  workflow rows pass without repository `PYTHONPATH`;
+- the generated C header links against the built library and `Thouless.jl`
+  runs against that exact artifact on Julia LTS and current releases;
+- generated SSH, Chern, vacancy, transport, Wilson, and error cases agree
+  through Rust, Python, and Julia;
+- all native-language and compatibility coverage matrices are internally
+  consistent;
 - the PythTB and Kwant public API inventories remain importable;
 - compatibility tests cannot accidentally run against the original packages;
 - all pinned PythTB and Kwant source tests execute through the compatibility
@@ -90,25 +100,27 @@ CI verifies that this instruction remains present and reachable from
 ## Architecture
 
 ```text
-PythTB caller/test -> thin Python compatibility layer --+
-                                                       |
-Kwant caller/test  -> thin Python compatibility layer --+-> Rust core
-                                                       |
-Rust caller        -> native Rust API ------------------+
+PythTB caller/test -> thin Python compatibility layer ----+
+                                                          |
+Kwant caller/test  -> thin Python compatibility layer ----+
+                                                          |
+Python caller      -> typed first-class Python API --------+-> Rust core
+                                                          |
+Julia caller       -> Thouless.jl -> versioned C ABI ------+
+                                                          |
+Rust caller        -> versioned native Rust API -----------+
 ```
 
 The compatibility layers may convert data, map state, and translate errors.
 They must not contain separate scientific algorithms.
 
-The target first-class Rust, Python, and Julia interfaces are specified in
+The first-class Rust, Python, and Julia interfaces are specified in
 [`docs/native-language-api-design.md`](docs/native-language-api-design.md).
-The design keeps PyO3 as the Python boundary, adds a stable C ABI for Julia,
-and requires all three language surfaces to cover the same scientific
-workflows. The machine-readable namespace mapping is
+PyO3 is the private Python boundary and the stable C ABI is the Julia boundary;
+all three language surfaces cover the same 26 scientific workflows. The
+machine-readable namespace mapping is
 [`spec/api/thouless-native-languages.toml`](spec/api/thouless-native-languages.toml).
-This is a target contract: the public Python-native API, C ABI, Julia package,
-and their artifact and parity CI remain unimplemented. The corresponding gaps
-are tracked in issues
+The implementation audit trail is retained in issues
 [#7](https://github.com/matrixlab-research/thouless/issues/7),
 [#8](https://github.com/matrixlab-research/thouless/issues/8),
 [#9](https://github.com/matrixlab-research/thouless/issues/9), and
@@ -157,10 +169,14 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 python tools/check_contracts.py
-python -m pip install maturin numpy pytest
-maturin develop
-python tools/check_python_api.py
-PYTHONPATH=python python -m pytest -q -ra compat-tests
+python tools/check_native_api.py
+python tools/check_capi_julia.py
+maturin build --release --out dist
+python tools/test_built_wheel.py
+cargo build --release -p thouless-capi
+python tools/run_c_smoke.py --profile release
+python tools/install_julia_library.py --profile release
+julia --project=julia/Thouless -e 'using Pkg; Pkg.test()'
 ```
 
 The strict runners execute all 398 collected Kwant tests and all 98 collected

@@ -1,0 +1,66 @@
+schema_version = 1
+contract_version = "0.1.0"
+package = "Thouless"
+status = "stable"
+documentation = "docs/julia-api.md"
+project = "julia/Thouless/Project.toml"
+
+[[module]]
+name = "Thouless"
+symbols = ["Lattice", "ModelBuilder", "Model", "ThoulessError", "Spectrum", "KPM", "Geometry", "Visualization", "Continuum", "Topology", "Wannier", "Response", "Observables", "Transport", "Symmetry", "Random", "Graph", "LinearAlgebra"]
+
+[[module]]
+name = "Thouless.Spectrum"
+symbols = ["hermitian_eigensystem", "lead_bands"]
+
+[[module]]
+name = "Thouless.KPM"
+symbols = ["rescale"]
+
+[[module]]
+name = "Thouless.Geometry"
+symbols = ["finite_cluster", "finite_geometry", "remove_orbitals", "bloch_phase", "reciprocal_path", "lll_reduce"]
+
+[[module]]
+name = "Thouless.Visualization"
+symbols = ["interpolate_density"]
+
+[[module]]
+name = "Thouless.Continuum"
+symbols = ["momentum_stencil"]
+
+[[module]]
+name = "Thouless.Topology"
+symbols = ["wilson_phase", "chern_numbers", "quantum_geometric_tensor", "local_chern_marker"]
+
+[[module]]
+name = "Thouless.Wannier"
+symbols = ["project_trials"]
+
+[[module]]
+name = "Thouless.Response"
+symbols = ["intrinsic_curvature"]
+
+[[module]]
+name = "Thouless.Observables"
+symbols = ["project_diagonal"]
+
+[[module]]
+name = "Thouless.Transport"
+symbols = ["Lead", "transmissions", "propagating_modes", "lead_self_energy"]
+
+[[module]]
+name = "Thouless.Symmetry"
+symbols = ["validate_chiral", "particle_hole_basis"]
+
+[[module]]
+name = "Thouless.Random"
+symbols = ["gaussian_matrix", "uniform", "gaussian"]
+
+[[module]]
+name = "Thouless.Graph"
+symbols = ["compress"]
+
+[[module]]
+name = "Thouless.LinearAlgebra"
+symbols = ["schur", "sparse_solve"]

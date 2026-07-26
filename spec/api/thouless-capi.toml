@@ -1,0 +1,111 @@
+schema_version = 1
+contract_version = "1.0"
+package_version = "0.1.0"
+status = "stable"
+header = "crates/thouless-capi/include/thouless.h"
+documentation = "docs/c-api.md"
+library = "thouless_capi"
+
+[[workflow]]
+id = "model.structure"
+symbols = ["thouless_model_builder_create", "thouless_model_builder_build"]
+
+[[workflow]]
+id = "spectrum.periodic"
+symbols = ["thouless_model_hamiltonian", "thouless_model_eigensystem"]
+
+[[workflow]]
+id = "spectrum.kernel_polynomial"
+symbols = ["thouless_kpm_rescale_dense"]
+
+[[workflow]]
+id = "spectrum.lead_bands"
+symbols = ["thouless_lead_bands"]
+
+[[workflow]]
+id = "geometry.finite"
+symbols = ["thouless_model_finite_cluster", "thouless_model_finite_geometry", "thouless_model_remove_orbitals"]
+
+[[workflow]]
+id = "geometry.periodic_folding"
+symbols = ["thouless_bloch_phase"]
+
+[[workflow]]
+id = "visualization.regular_field"
+symbols = ["thouless_interpolate_density"]
+
+[[workflow]]
+id = "continuum.finite_difference"
+symbols = ["thouless_continuum_momentum_stencil"]
+
+[[workflow]]
+id = "geometry.reciprocal_sampling"
+symbols = ["thouless_reciprocal_path"]
+
+[[workflow]]
+id = "geometry.topology"
+symbols = ["thouless_wilson_phase", "thouless_model_chern_numbers"]
+
+[[workflow]]
+id = "geometry.quantum_geometric_tensor"
+symbols = ["thouless_quantum_geometric_tensor"]
+
+[[workflow]]
+id = "geometry.local_chern_marker"
+symbols = ["thouless_local_chern_marker"]
+
+[[workflow]]
+id = "geometry.wannier"
+symbols = ["thouless_wannier_project_trials"]
+
+[[workflow]]
+id = "response.intrinsic"
+symbols = ["thouless_model_intrinsic_curvature"]
+
+[[workflow]]
+id = "observables.local"
+symbols = ["thouless_project_diagonal_observable"]
+
+[[workflow]]
+id = "transport.steady_state"
+symbols = ["thouless_open_system_transmissions"]
+
+[[workflow]]
+id = "transport.propagating_modes"
+symbols = ["thouless_lead_mode_count", "thouless_lead_modes"]
+
+[[workflow]]
+id = "transport.lead_self_energy"
+symbols = ["thouless_lead_self_energy"]
+
+[[workflow]]
+id = "symmetry.discrete"
+symbols = ["thouless_validate_chiral_symmetry"]
+
+[[workflow]]
+id = "symmetry.particle_hole_basis"
+symbols = ["thouless_particle_hole_basis"]
+
+[[workflow]]
+id = "ensembles.random_matrix"
+symbols = ["thouless_random_gaussian_matrix"]
+
+[[workflow]]
+id = "utility.random_access_variates"
+symbols = ["thouless_digest_uniform", "thouless_digest_gaussian"]
+
+[[workflow]]
+id = "geometry.lattice_reduction"
+symbols = ["thouless_lll_reduce"]
+
+[[workflow]]
+id = "graph.compressed"
+symbols = ["thouless_graph_compress"]
+
+[[workflow]]
+id = "algebra.dense_decomposition"
+symbols = ["thouless_dense_schur"]
+
+[[workflow]]
+id = "algebra.sparse_direct"
+symbols = ["thouless_sparse_solve"]

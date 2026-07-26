@@ -14,12 +14,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  rust:
-    name: Rust (${{ matrix.os }})
+  contracts:
+    name: Versioned API contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Validate Rust, C ABI, Julia, and compatibility inventories
+        run: |
+          python tools/check_contracts.py
+          python tools/check_native_api.py --base-ref origin/main
+          python tools/check_capi_julia.py
+          python tools/generate_c_header.py --check
+
+  rust-core:
+    name: Rust core (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -30,20 +47,121 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - name: Install the Linux Fortran linker
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gfortran
       - name: Check formatting
+        if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
-      - name: Lint
+      - name: Lint all public targets
+        if: runner.os == 'Linux'
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - name: Test native API
+      - name: Test the complete Rust workspace
         run: cargo test --workspace --all-features
-      - name: Build documentation
-        if: matrix.os == 'ubuntu-latest'
+      - name: Build warning-free documentation
+        if: runner.os == 'Linux'
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --all-features --no-deps
 
-  contracts:
-    name: Python compatibility and source-test slice
+  python-native:
+    name: Python ${{ matrix.python }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: macos-latest
+            python: "3.12"
+          - os: windows-latest
+            python: "3.12"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the Linux Fortran linker
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Install the wheel builder
+        run: python -m pip install maturin==1.14.1
+      - name: Build the Python wheel
+        run: maturin build --release --out dist
+      - name: Install and test only the produced wheel
+        run: python tools/test_built_wheel.py
+
+  c-abi:
+    name: C ABI (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Install the Linux Fortran linker
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Build and test the ABI library
+        run: |
+          cargo test -p thouless-capi
+          cargo build --release -p thouless-capi
+      - name: Validate the generated header
+        run: python tools/generate_c_header.py --check
+      - name: Compile and run a C11 client
+        run: python tools/run_c_smoke.py --profile release
+
+  julia-native:
+    name: Julia ${{ matrix.julia }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            julia: "1.10"
+          - os: ubuntu-latest
+            julia: "1"
+          - os: macos-latest
+            julia: "1"
+          - os: windows-latest
+            julia: "1"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.julia }}
+      - uses: julia-actions/cache@v2
+      - name: Install the Linux Fortran linker
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Build and install the exact Julia native artifact
+        run: |
+          cargo build --release -p thouless-capi
+          python tools/install_julia_library.py --profile release
+      - name: Test Thouless.jl as an installed package
+        run: julia --startup-file=no --project=julia/Thouless -e "using Pkg; Pkg.test()"
+
+  language-parity:
+    name: Rust/Python/Julia semantic parity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -52,55 +170,64 @@ jobs:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Create the compatibility virtual environment
-        run: python -m venv .venv
-      - name: Install extension builder and test dependencies
-        run: >-
-          .venv/bin/python -m pip install
-          matplotlib==3.8.4
-          maturin==1.14.1
-          numpy==2.2.6
-          plotly==6.9.0
-          pytest==8.3.5
-          qsymm==1.4.0
-          scipy==1.13.1
-          setuptools==83.0.0
-          sympy==1.14.0
-          tinyarray==1.2.5
-      - name: Build the repository compatibility extension
-        run: .venv/bin/maturin develop
-      - name: Validate coverage and compatibility API manifests
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1"
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Build installed language artifacts
         run: |
-          .venv/bin/python tools/check_contracts.py
-          .venv/bin/python tools/check_python_api.py
-      - name: Run compatibility smoke contracts
+          python -m pip install maturin==1.14.1
+          maturin build --release --out dist
+          python tools/test_built_wheel.py --keep .parity-venv --skip-tests
+          cargo build --release -p thouless-capi
+          python tools/install_julia_library.py --profile release
+      - name: Generate the same scientific cases through each public API
+        run: |
+          cargo run --release --quiet --example language_conformance > rust-report.txt
+          .parity-venv/bin/python python-tests/conformance/report.py > python-report.txt
+          julia --startup-file=no --project=julia/Thouless julia/Thouless/test/conformance_report.jl > julia-report.txt
+      - name: Compare analytic invariants and cross-language values
+        run: python tools/compare_conformance.py rust-report.txt python-report.txt julia-report.txt
+
+  source-compatibility:
+    name: PythTB 2.0 and Kwant 1.5 source suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Build and install the compatibility wheel
+        run: |
+          python -m pip install maturin==1.14.1
+          maturin build --release --out dist
+          python tools/test_built_wheel.py --keep .compat-venv --extra compat-test --skip-tests
+      - name: Validate compatibility manifests and smoke contracts
         env:
-          PYTHONPATH: ${{ github.workspace }}/python
-          THOULESS_COMPAT_ROOT: ${{ github.workspace }}/python
-        run: .venv/bin/python -m pytest -q -ra compat-tests
-      - name: Fetch the pinned PythTB source tests
-        run: >-
-          git clone
-          --branch v2.0.0
-          --depth 1
-          https://github.com/pythtb/pythtb.git
-          /tmp/pythtb-upstream
-      - name: Run the strict PythTB 2.0 source-test slice
+          PYTHONPATH: ""
+          THOULESS_COMPAT_ROOT: ${{ github.workspace }}/.compat-venv/lib/python3.12/site-packages
+        run: |
+          python tools/check_contracts.py
+          .compat-venv/bin/python tools/check_python_api.py
+          .compat-venv/bin/python -m pytest -q -ra compat-tests
+      - name: Fetch pinned PythTB 2.0
+        run: git clone --branch v2.0.0 --depth 1 https://github.com/pythtb/pythtb.git /tmp/pythtb-upstream
+      - name: Run all 98 pinned PythTB tests
         env:
-          PYTHONPATH: ${{ github.workspace }}/python
+          PYTHONPATH: ""
           PYTHONDONTWRITEBYTECODE: "1"
-        run: .venv/bin/python tools/run_upstream_pythtb.py /tmp/pythtb-upstream
-      - name: Fetch the pinned Kwant source tests
-        run: >-
-          git clone
-          --branch v1.5.0
-          --depth 1
-          https://gitlab.kwant-project.org/kwant/kwant.git
-          /tmp/kwant-upstream
-      - name: Run the strict Kwant 1.5 source-test slice
+        run: .compat-venv/bin/python tools/run_upstream_pythtb.py /tmp/pythtb-upstream
+      - name: Fetch pinned Kwant 1.5
+        run: git clone --branch v1.5.0 --depth 1 https://gitlab.kwant-project.org/kwant/kwant.git /tmp/kwant-upstream
+      - name: Run all 398 pinned Kwant tests
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-          PYTHONPATH: ${{ github.workspace }}/python
+          PYTHONPATH: ""
           PYTHONDONTWRITEBYTECODE: "1"
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
-        run: .venv/bin/python tools/run_upstream_kwant.py /tmp/kwant-upstream
+        run: .compat-venv/bin/python tools/run_upstream_kwant.py /tmp/kwant-upstream

@@ -4,10 +4,10 @@ build-backend = "maturin"
 
 [project]
 name = "thouless"
-version = "0.0.0"
+version = "0.1.0"
 description = "Rust-native tight-binding, topology, and steady-state quantum transport"
 requires-python = ">=3.12"
-dependencies = ["numpy>=2.0", "scipy>=1.10", "tinyarray>=1.2"]
+dependencies = ["numpy>=2.0", "scipy>=1.10,<1.16", "tinyarray>=1.2"]
 
 [project.optional-dependencies]
 continuum = ["sympy>=1.14,<2"]
@@ -18,11 +18,13 @@ compat-test = [
   "plotly>=6,<7",
   "pytest>=8.3,<9",
   "qsymm>=1.4,<2",
+  "setuptools>=75",
   "sympy>=1.14,<2",
 ]
 
 [tool.maturin]
 manifest-path = "crates/thouless-python/Cargo.toml"
 python-source = "python"
+python-packages = ["thouless", "pythtb", "kwant"]
 module-name = "thouless._core"
 features = ["pyo3/extension-module"]

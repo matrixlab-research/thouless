@@ -1,6 +1,6 @@
 [package]
 name = "thouless"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.81"
 license = "MIT"
@@ -9,10 +9,14 @@ repository = "https://github.com/matrixlab-research/thouless"
 readme = "README.md"
 keywords = ["tight-binding", "topology", "quantum-transport"]
 categories = ["science"]
-publish = false
 
 [workspace]
-members = [".", "crates/thouless-lapack", "crates/thouless-python"]
+members = [
+  ".",
+  "crates/thouless-capi",
+  "crates/thouless-lapack",
+  "crates/thouless-python",
+]
 resolver = "2"
 
 [dependencies]
@@ -21,4 +25,4 @@ md-5 = "0.10.6"
 nalgebra = "0.33.2"
 num-complex = "0.4.6"
 rustfft = "6.2.0"
-thouless-lapack = { path = "crates/thouless-lapack" }
+thouless-lapack = { version = "0.1.0", path = "crates/thouless-lapack" }

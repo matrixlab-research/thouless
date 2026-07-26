@@ -1,0 +1,106 @@
+name: Release artifacts
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  python-wheels:
+    name: Wheel Python ${{ matrix.python }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: macos-latest
+            python: "3.12"
+          - os: windows-latest
+            python: "3.12"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the Linux Fortran linker
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - run: python -m pip install maturin==1.14.1
+      - name: Build and clean-install test the wheel
+        run: |
+          maturin build --release --out dist
+          python tools/test_built_wheel.py
+      - uses: actions/upload-artifact@v6
+        with:
+          name: wheel-${{ matrix.os }}-py${{ matrix.python }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  julia-bundles:
+    name: Julia/C bundle (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1"
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Install the Linux Fortran linker
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Build, install, and test the native artifact
+        run: |
+          cargo build --release -p thouless-capi
+          python tools/generate_c_header.py --check
+          python tools/run_c_smoke.py --profile release
+          python tools/install_julia_library.py --profile release
+          julia --startup-file=no --project=julia/Thouless -e "using Pkg; Pkg.test()"
+      - name: Package the tested Julia/C artifact
+        run: python tools/package_julia_release.py --profile release --output dist
+      - uses: actions/upload-artifact@v6
+        with:
+          name: julia-${{ matrix.os }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  manifest:
+    name: Release checksums and publication
+    needs: [python-wheels, julia-bundles]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          path: release-artifacts
+          merge-multiple: true
+      - name: Record checksums and language contract versions
+        run: |
+          python tools/write_artifact_checksums.py release-artifacts --output release-artifacts/SHA256SUMS
+          python tools/check_native_api.py
+          python tools/check_capi_julia.py
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-manifest
+          path: release-artifacts/SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            release-artifacts/*

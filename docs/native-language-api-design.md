@@ -2,20 +2,21 @@
 
 ## Status
 
-This document defines the target language-native API contract for Thouless.
-It is an architectural contract, not a claim that the Python or Julia APIs are
-already implemented.
-
-At commit `0d87773278183ddc7c254438dccbda1face04fb2`:
+This document defines the implemented language-native API contract for
+Thouless. The versioned inventories and coverage matrices are executable
+acceptance evidence.
 
 - the Rust core implements the public scientific capabilities recorded in
   `spec/coverage/native.toml`, except isolated held-out validation;
-- the Python extension exposes a broad internal `thouless._core` bridge used by
-  the PythTB and Kwant compatibility packages;
-- the installed Python package does not yet expose a supported native API;
-- no public Thouless C ABI or Julia package exists;
-- CI validates Rust and the source-compatibility layers, but does not validate
-  installable Python or Julia native packages.
+- the installed Python wheel exposes a typed supported API while retaining
+  `thouless._core` as a private implementation bridge;
+- `thouless-capi` provides a generated versioned C header and `Thouless.jl`
+  exposes the same 26 workflows;
+- pull-request CI installs produced artifacts, exercises Rust/Python/Julia
+  parity, and retains all pinned source-package tests;
+- release CI builds install-tested wheels and platform Julia/C bundles;
+- scheduled CI records ownership, scientific-scale, performance, and
+  allocation evidence.
 
 The project therefore remains `Incomplete`.
 

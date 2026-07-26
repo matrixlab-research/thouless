@@ -1,5 +1,55 @@
-"""Python access to the Thouless Rust numerical core."""
+"""First-class Python API for Rust-native scientific workflows."""
 
-from . import _core
+from . import (
+    continuum,
+    geometry,
+    graph,
+    kpm,
+    linalg,
+    observables,
+    random,
+    response,
+    spectrum,
+    symmetry,
+    topology,
+    transport,
+    visualization,
+    wannier,
+)
+from .errors import (
+    InternalError,
+    InvalidInputError,
+    NumericalError,
+    ResourceError,
+    ShapeError,
+    ThoulessError,
+    UnsupportedError,
+)
+from .model import Lattice, Model, ModelBuilder
 
-__all__ = ["_core"]
+__all__ = [
+    "InternalError",
+    "InvalidInputError",
+    "Lattice",
+    "Model",
+    "ModelBuilder",
+    "NumericalError",
+    "ResourceError",
+    "ShapeError",
+    "ThoulessError",
+    "UnsupportedError",
+    "continuum",
+    "geometry",
+    "graph",
+    "kpm",
+    "linalg",
+    "observables",
+    "random",
+    "response",
+    "spectrum",
+    "symmetry",
+    "topology",
+    "transport",
+    "visualization",
+    "wannier",
+]
