@@ -1,0 +1,15 @@
+[package]
+name = "thouless-capi"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+license = "MIT"
+description = "Stable C ABI for the Thouless scientific core"
+repository = "https://github.com/matrixlab-research/thouless"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+thouless = { version = "0.1.0", path = "../.." }

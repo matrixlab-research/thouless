@@ -1,0 +1,70 @@
+schema_version = 1
+contract_version = "0.1.0"
+package = "thouless"
+status = "stable"
+documentation = "docs/python-api.md"
+typing_marker = "python/thouless/py.typed"
+
+[[module]]
+name = "thouless"
+symbols = ["Lattice", "ModelBuilder", "Model", "ThoulessError", "geometry", "spectrum", "kpm", "topology", "wannier", "response", "observables", "transport", "continuum", "visualization", "symmetry", "random", "graph", "linalg"]
+
+[[module]]
+name = "thouless.model"
+symbols = ["Lattice", "ModelBuilder", "Model"]
+
+[[module]]
+name = "thouless.geometry"
+symbols = ["finite_cluster", "finite_geometry", "supercell", "remove_orbitals", "reciprocal_path", "fold_terms", "lll_reduce", "closest_lattice_vectors", "voronoi_neighbors"]
+
+[[module]]
+name = "thouless.spectrum"
+symbols = ["Eigensystem", "PeriodicBands", "BandEvaluation", "hermitian_eigensystem"]
+
+[[module]]
+name = "thouless.kpm"
+symbols = ["RescaledHamiltonian", "Reconstruction", "rescale", "chebyshev_vectors", "scalar_moments", "reconstruct"]
+
+[[module]]
+name = "thouless.topology"
+symbols = ["wilson_phase", "wilson_eigenphases", "parallel_transport", "berry_flux", "chern_numbers", "quantum_geometric_tensor", "local_chern_marker", "second_chern"]
+
+[[module]]
+name = "thouless.wannier"
+symbols = ["project_trials", "periodic_overlaps", "spread_decomposition", "maximize_localization", "inverse_bloch_transform", "interpolate_matrices"]
+
+[[module]]
+name = "thouless.response"
+symbols = ["BandResponse", "band_response", "intrinsic_curvature", "integrated_intrinsic_curvature", "occupation_weighted_curvature", "berry_curvature_dipole"]
+
+[[module]]
+name = "thouless.observables"
+symbols = ["LocalOperatorSet", "densities", "currents", "sources", "project_diagonal", "pauli_coefficients"]
+
+[[module]]
+name = "thouless.transport"
+symbols = ["Lead", "ScatteringResult", "PropagatingModes", "solve", "lead_self_energy", "propagating_modes", "partition_shot_noise"]
+
+[[module]]
+name = "thouless.continuum"
+symbols = ["StencilTerm", "finite_difference_stencil", "landau_ladder_coefficient"]
+
+[[module]]
+name = "thouless.visualization"
+symbols = ["RegularField", "interpolate_density", "interpolate_current"]
+
+[[module]]
+name = "thouless.symmetry"
+symbols = ["DiscreteSymmetry", "particle_hole_basis"]
+
+[[module]]
+name = "thouless.random"
+symbols = ["uniform_pair", "uniform", "gaussian", "gaussian_matrix", "circular_matrix"]
+
+[[module]]
+name = "thouless.graph"
+symbols = ["GraphBuilder", "CompressedGraph"]
+
+[[module]]
+name = "thouless.linalg"
+symbols = ["SchurDecomposition", "GeneralizedSchurDecomposition", "SparseLU", "schur", "real_schur", "generalized_schur", "sparse_schur_complement"]

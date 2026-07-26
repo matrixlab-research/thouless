@@ -1,6 +1,6 @@
 schema_version = 1
-contract_version = "0.1-draft"
-status = "design"
+contract_version = "0.1.0"
+status = "stable"
 description = "Target namespaces for the stable Rust, Python, and Julia scientific workflows"
 
 [languages]

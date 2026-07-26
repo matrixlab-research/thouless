@@ -161,8 +161,8 @@ def check_native_language_contract() -> None:
 
     with NATIVE_LANGUAGE_CONTRACT.open("rb") as source:
         contract = tomllib.load(source)
-    if contract.get("status") != "design":
-        fail("native language contract must remain an explicit design")
+    if contract.get("status") not in {"design", "stable"}:
+        fail("native language contract status must be design or stable")
     if not contract.get("contract_version"):
         fail("native language contract has no version")
     if set(contract.get("languages", {})) != {"rust", "python", "julia"}:

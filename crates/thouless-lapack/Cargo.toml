@@ -1,10 +1,11 @@
 [package]
 name = "thouless-lapack"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.81"
 license = "MIT"
-publish = false
+description = "LAPACK-backed decomposition kernels for Thouless"
+repository = "https://github.com/matrixlab-research/thouless"
 
 [dependencies]
 lapack = "0.20.0"
@@ -14,4 +15,4 @@ num-complex = "0.4.6"
 lapack-src = { version = "0.13.0", default-features = false, features = ["accelerate"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-lapack-src = { version = "0.13.0", default-features = false, features = ["netlib"] }
+lapack-src = { version = "0.13.0", default-features = false, features = ["intel-mkl-static-sequential"] }

@@ -1,0 +1,14 @@
+name = "Thouless"
+uuid = "8f1690d9-cc52-4d32-b40f-cb641fa75f8e"
+authors = ["Matrix Lab"]
+version = "0.1.0"
+
+[compat]
+julia = "1.10"
+
+[extras]
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["LinearAlgebra", "Test"]

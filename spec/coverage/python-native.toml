@@ -1,0 +1,160 @@
+schema_version = 1
+overall_status = "implemented"
+artifact = "maturin-built wheel installed without repository PYTHONPATH"
+documentation = "docs/python-api.md"
+
+[[capability]]
+id = "model.structure"
+public_api = "thouless.{Lattice,ModelBuilder,Model}"
+test = "python-tests/native/test_model_spectrum_geometry.py"
+status = "implemented"
+
+[[capability]]
+id = "spectrum.periodic"
+public_api = "thouless.Model.{hamiltonian,eigensystem,band_structure}"
+test = "python-tests/native/test_model_spectrum_geometry.py"
+status = "implemented"
+
+[[capability]]
+id = "spectrum.kernel_polynomial"
+public_api = "thouless.kpm"
+test = "python-tests/native/test_supporting_workflows.py"
+status = "implemented"
+
+[[capability]]
+id = "spectrum.lead_bands"
+public_api = "thouless.spectrum.PeriodicBands"
+test = "python-tests/native/test_model_spectrum_geometry.py"
+status = "implemented"
+
+[[capability]]
+id = "geometry.finite"
+public_api = "thouless.geometry.{finite_cluster,finite_geometry,remove_orbitals,supercell}"
+test = "python-tests/native/test_model_spectrum_geometry.py"
+status = "implemented"
+
+[[capability]]
+id = "geometry.periodic_folding"
+public_api = "thouless.geometry.fold_terms"
+test = "python-tests/native/test_model_spectrum_geometry.py"
+status = "implemented"
+
+[[capability]]
+id = "visualization.regular_field"
+public_api = "thouless.visualization"
+test = "python-tests/native/test_supporting_workflows.py"
+status = "implemented"
+
+[[capability]]
+id = "continuum.finite_difference"
+public_api = "thouless.continuum"
+test = "python-tests/native/test_supporting_workflows.py"
+status = "implemented"
+
+[[capability]]
+id = "geometry.reciprocal_sampling"
+public_api = "thouless.geometry.reciprocal_path"
+test = "python-tests/native/test_model_spectrum_geometry.py"
+status = "implemented"
+
+[[capability]]
+id = "geometry.topology"
+public_api = "thouless.topology"
+test = "python-tests/native/test_topology_wannier_response.py"
+status = "implemented"
+
+[[capability]]
+id = "geometry.quantum_geometric_tensor"
+public_api = "thouless.topology.quantum_geometric_tensor"
+test = "python-tests/native/test_topology_wannier_response.py"
+status = "implemented"
+
+[[capability]]
+id = "geometry.local_chern_marker"
+public_api = "thouless.topology.local_chern_marker"
+test = "python-tests/native/test_topology_wannier_response.py"
+status = "implemented"
+
+[[capability]]
+id = "geometry.wannier"
+public_api = "thouless.wannier"
+test = "python-tests/native/test_topology_wannier_response.py"
+status = "implemented"
+
+[[capability]]
+id = "response.intrinsic"
+public_api = "thouless.response"
+test = "python-tests/native/test_topology_wannier_response.py"
+status = "implemented"
+
+[[capability]]
+id = "observables.local"
+public_api = "thouless.observables"
+test = "python-tests/native/test_supporting_workflows.py"
+status = "implemented"
+
+[[capability]]
+id = "transport.steady_state"
+public_api = "thouless.transport.solve"
+test = "python-tests/native/test_transport.py"
+status = "implemented"
+
+[[capability]]
+id = "transport.propagating_modes"
+public_api = "thouless.transport.propagating_modes"
+test = "python-tests/native/test_transport.py"
+status = "implemented"
+
+[[capability]]
+id = "transport.lead_self_energy"
+public_api = "thouless.transport.lead_self_energy"
+test = "python-tests/native/test_transport.py"
+status = "implemented"
+
+[[capability]]
+id = "symmetry.discrete"
+public_api = "thouless.symmetry.DiscreteSymmetry"
+test = "python-tests/native/test_supporting_workflows.py"
+status = "implemented"
+
+[[capability]]
+id = "symmetry.particle_hole_basis"
+public_api = "thouless.symmetry.particle_hole_basis"
+test = "python-tests/native/test_supporting_workflows.py"
+status = "implemented"
+
+[[capability]]
+id = "ensembles.random_matrix"
+public_api = "thouless.random.{gaussian_matrix,circular_matrix}"
+test = "python-tests/native/test_supporting_workflows.py"
+status = "implemented"
+
+[[capability]]
+id = "utility.random_access_variates"
+public_api = "thouless.random.{uniform_pair,uniform,gaussian}"
+test = "python-tests/native/test_supporting_workflows.py"
+status = "implemented"
+
+[[capability]]
+id = "geometry.lattice_reduction"
+public_api = "thouless.geometry.{lll_reduce,closest_lattice_vectors,voronoi_neighbors}"
+test = "python-tests/native/test_model_spectrum_geometry.py"
+status = "implemented"
+
+[[capability]]
+id = "graph.compressed"
+public_api = "thouless.graph"
+test = "python-tests/native/test_supporting_workflows.py"
+status = "implemented"
+
+[[capability]]
+id = "algebra.dense_decomposition"
+public_api = "thouless.linalg.{schur,real_schur,generalized_schur}"
+test = "python-tests/native/test_supporting_workflows.py"
+status = "implemented"
+
+[[capability]]
+id = "algebra.sparse_direct"
+public_api = "thouless.linalg.{SparseLU,sparse_schur_complement}"
+test = "python-tests/native/test_supporting_workflows.py"
+status = "implemented"

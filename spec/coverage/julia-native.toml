@@ -1,0 +1,160 @@
+schema_version = 1
+overall_status = "implemented"
+artifact = "Thouless C dynamic library loaded through THOULESS_LIBRARY or release bundle"
+documentation = "docs/julia-api.md"
+
+[[capability]]
+id = "model.structure"
+public_api = "Thouless.{Lattice,ModelBuilder,Model}"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "spectrum.periodic"
+public_api = "Thouless.{hamiltonian,eigensystem}"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "spectrum.kernel_polynomial"
+public_api = "Thouless.KPM.rescale"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "spectrum.lead_bands"
+public_api = "Thouless.Spectrum.lead_bands"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "geometry.finite"
+public_api = "Thouless.Geometry"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "geometry.periodic_folding"
+public_api = "Thouless.Geometry.bloch_phase"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "visualization.regular_field"
+public_api = "Thouless.Visualization.interpolate_density"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "continuum.finite_difference"
+public_api = "Thouless.Continuum.momentum_stencil"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "geometry.reciprocal_sampling"
+public_api = "Thouless.Geometry.reciprocal_path"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "geometry.topology"
+public_api = "Thouless.Topology.{wilson_phase,chern_numbers}"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "geometry.quantum_geometric_tensor"
+public_api = "Thouless.Topology.quantum_geometric_tensor"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "geometry.local_chern_marker"
+public_api = "Thouless.Topology.local_chern_marker"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "geometry.wannier"
+public_api = "Thouless.Wannier.project_trials"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "response.intrinsic"
+public_api = "Thouless.Response.intrinsic_curvature"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "observables.local"
+public_api = "Thouless.Observables.project_diagonal"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "transport.steady_state"
+public_api = "Thouless.Transport.transmissions"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "transport.propagating_modes"
+public_api = "Thouless.Transport.propagating_modes"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "transport.lead_self_energy"
+public_api = "Thouless.Transport.lead_self_energy"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "symmetry.discrete"
+public_api = "Thouless.Symmetry.validate_chiral"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "symmetry.particle_hole_basis"
+public_api = "Thouless.Symmetry.particle_hole_basis"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "ensembles.random_matrix"
+public_api = "Thouless.Random.gaussian_matrix"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "utility.random_access_variates"
+public_api = "Thouless.Random.{uniform,gaussian}"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "geometry.lattice_reduction"
+public_api = "Thouless.Geometry.lll_reduce"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "graph.compressed"
+public_api = "Thouless.Graph.compress"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "algebra.dense_decomposition"
+public_api = "Thouless.LinearAlgebra.schur"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
+id = "algebra.sparse_direct"
+public_api = "Thouless.LinearAlgebra.sparse_solve"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"

@@ -14,7 +14,9 @@ use thouless::decomposition::{
     reorder_generalized_schur, reorder_real_schur, reorder_schur, schur,
 };
 use thouless::differentiation::{finite_difference_uniform, DifferenceScheme};
-use thouless::digest::{gaussian as digest_gaussian_value, uniform_pair};
+use thouless::digest::{
+    gaussian as digest_gaussian_value, uniform as digest_uniform_value, uniform_pair,
+};
 use thouless::gauge::{
     axial_line_phase_quadrature, fundamental_cycles, graph_is_connected, integrate_surface_samples,
     interface_constraints_are_acyclic, line_phase_quadrature, minimum_cycle_basis,
@@ -58,6 +60,12 @@ use thouless::observables::{
 };
 use thouless::periodic::{fold_terms, PeriodicTerm};
 use thouless::random_matrix::{circular_from_components, gaussian_from_components, SymmetryClass};
+use thouless::response::{
+    band_response_from_model, berry_curvature_dipole as native_berry_curvature_dipole,
+    intrinsic_berry_curvature_from_model, occupation_weighted_berry_curvature,
+    uniform_mesh_intrinsic_berry_curvature, BandResponsePoint, FermiDistribution,
+    MomentumCoordinates,
+};
 use thouless::sparse_direct::{
     schur_complement as native_sparse_schur_complement, SparseDirectError, SparseLuAnalysis,
     SparseLuFactorization,
@@ -72,7 +80,10 @@ use thouless::topology::{
     second_chern_from_hamiltonian_derivatives, unitary_matrix_power, wilson_line_phase,
     wilson_loop_eigenphases,
 };
-use thouless::transform::{change_nonperiodic_vector, make_supercell, remove_orbitals};
+use thouless::transform::{
+    change_nonperiodic_vector, make_finite_cluster, make_finite_geometry, make_supercell,
+    remove_orbitals, FiniteSite,
+};
 use thouless::transport::{
     extrapolated_lead_self_energy,
     open_system_extrapolated_self_energies as native_extrapolated_self_energies,
@@ -1176,6 +1187,11 @@ fn digest_uniform_pair(input: Vec<u8>, salt: Vec<u8>) -> (f64, f64) {
 }
 
 #[pyfunction]
+fn digest_uniform(input: Vec<u8>, salt: Vec<u8>) -> f64 {
+    digest_uniform_value(&input, &salt)
+}
+
+#[pyfunction]
 fn digest_gaussian(input: Vec<u8>, salt: Vec<u8>) -> f64 {
     digest_gaussian_value(&input, &salt)
 }
@@ -1991,6 +2007,449 @@ fn dense_complexify_generalized_schur(
 
 fn optional_matrix(rows: Option<MatrixRows>) -> PyResult<Option<ComplexMatrix>> {
     rows.map(matrix_from_rows).transpose()
+}
+
+#[pyclass(name = "NativeModelBuilder")]
+struct PyNativeModelBuilder {
+    inner: Option<ModelBuilder>,
+    orbitals: Vec<OrbitalId>,
+}
+
+#[pymethods]
+impl PyNativeModelBuilder {
+    #[new]
+    fn new(primitive_vectors: Vec<Vec<f64>>, periodic_axes: Vec<usize>) -> PyResult<Self> {
+        let lattice =
+            thouless::model::Lattice::new(primitive_vectors, periodic_axes).map_err(value_error)?;
+        Ok(Self {
+            inner: Some(ModelBuilder::new(lattice)),
+            orbitals: Vec::new(),
+        })
+    }
+
+    #[pyo3(signature = (label, reduced_position, degrees_of_freedom=1))]
+    fn add_orbital(
+        &mut self,
+        label: String,
+        reduced_position: Vec<f64>,
+        degrees_of_freedom: usize,
+    ) -> PyResult<usize> {
+        let builder = self.inner.as_mut().ok_or_else(|| {
+            PyRuntimeError::new_err("the model builder has already been consumed")
+        })?;
+        let orbital = builder
+            .add_orbital_with_dof(label, reduced_position, degrees_of_freedom)
+            .map_err(value_error)?;
+        self.orbitals.push(orbital);
+        Ok(self.orbitals.len() - 1)
+    }
+
+    fn set_onsite(&mut self, orbital: usize, energy: f64) -> PyResult<()> {
+        let identifier = orbital_id(&self.orbitals, orbital)?;
+        self.inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("the model builder has already been consumed"))?
+            .set_onsite(identifier, energy)
+            .map_err(value_error)
+    }
+
+    fn set_onsite_block(&mut self, orbital: usize, block: MatrixRows) -> PyResult<()> {
+        let identifier = orbital_id(&self.orbitals, orbital)?;
+        let block = matrix_from_rows(block)?;
+        self.inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("the model builder has already been consumed"))?
+            .set_onsite_block(identifier, block)
+            .map_err(value_error)
+    }
+
+    fn add_hopping(
+        &mut self,
+        target: usize,
+        source: usize,
+        cell_offset: Vec<i32>,
+        amplitude: Complex64,
+    ) -> PyResult<()> {
+        let target = orbital_id(&self.orbitals, target)?;
+        let source = orbital_id(&self.orbitals, source)?;
+        self.inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("the model builder has already been consumed"))?
+            .add_hopping(target, source, cell_offset, amplitude)
+            .map_err(value_error)
+    }
+
+    fn add_hopping_block(
+        &mut self,
+        target: usize,
+        source: usize,
+        cell_offset: Vec<i32>,
+        amplitude: MatrixRows,
+    ) -> PyResult<()> {
+        let target = orbital_id(&self.orbitals, target)?;
+        let source = orbital_id(&self.orbitals, source)?;
+        let amplitude = matrix_from_rows(amplitude)?;
+        self.inner
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("the model builder has already been consumed"))?
+            .add_hopping_block(target, source, cell_offset, amplitude)
+            .map_err(value_error)
+    }
+
+    fn build(&mut self) -> PyResult<PyNativeModel> {
+        let builder = self.inner.take().ok_or_else(|| {
+            PyRuntimeError::new_err("the model builder has already been consumed")
+        })?;
+        builder
+            .build()
+            .map(|inner| PyNativeModel { inner })
+            .map_err(value_error)
+    }
+}
+
+#[pyclass(name = "NativeModel", frozen)]
+struct PyNativeModel {
+    inner: TightBindingModel,
+}
+
+#[pymethods]
+impl PyNativeModel {
+    #[getter]
+    fn state_count(&self) -> usize {
+        self.inner.state_count()
+    }
+
+    #[getter]
+    fn real_dimension(&self) -> usize {
+        self.inner.lattice().real_dimension()
+    }
+
+    #[getter]
+    fn periodic_dimension(&self) -> usize {
+        self.inner.lattice().periodic_dimension()
+    }
+
+    #[getter]
+    fn primitive_vectors(&self) -> Vec<Vec<f64>> {
+        self.inner.lattice().primitive_vectors().to_vec()
+    }
+
+    #[getter]
+    fn periodic_axes(&self) -> Vec<usize> {
+        self.inner.lattice().periodic_axes().to_vec()
+    }
+
+    fn hamiltonian(&self, py: Python<'_>, momentum: Vec<f64>) -> PyResult<MatrixRows> {
+        py.allow_threads(|| self.inner.hamiltonian(&momentum))
+            .map(|matrix| matrix_to_rows(&matrix))
+            .map_err(value_error)
+    }
+
+    fn eigensystem(&self, py: Python<'_>, momentum: Vec<f64>) -> PyResult<(Vec<f64>, MatrixRows)> {
+        let solution = py
+            .allow_threads(|| self.inner.eigensystem(&momentum))
+            .map_err(value_error)?;
+        Ok((
+            solution.eigenvalues().to_vec(),
+            matrix_to_rows(solution.eigenvectors()),
+        ))
+    }
+
+    #[pyo3(signature = (momentum, cartesian=false))]
+    fn momentum_derivatives(
+        &self,
+        py: Python<'_>,
+        momentum: Vec<f64>,
+        cartesian: bool,
+    ) -> PyResult<MatrixGrid> {
+        let result = py.allow_threads(|| {
+            if cartesian {
+                self.inner.cartesian_momentum_derivatives(&momentum)
+            } else {
+                self.inner.reduced_momentum_derivatives(&momentum)
+            }
+        });
+        result
+            .map(|matrices| matrices_to_rows(&matrices))
+            .map_err(value_error)
+    }
+
+    fn band_structure(
+        &self,
+        py: Python<'_>,
+        momenta: Vec<Vec<f64>>,
+    ) -> PyResult<Vec<(Vec<f64>, MatrixRows)>> {
+        let solutions = py
+            .allow_threads(|| self.inner.band_structure(&momenta))
+            .map_err(value_error)?;
+        Ok(solutions
+            .iter()
+            .map(|solution| {
+                (
+                    solution.eigenvalues().to_vec(),
+                    matrix_to_rows(solution.eigenvectors()),
+                )
+            })
+            .collect())
+    }
+
+    fn finite_cluster(&self, py: Python<'_>, cells: Vec<Vec<i32>>) -> PyResult<PyNativeModel> {
+        py.allow_threads(|| make_finite_cluster(&self.inner, &cells))
+            .map(|geometry| PyNativeModel {
+                inner: geometry.into_model(),
+            })
+            .map_err(value_error)
+    }
+
+    fn finite_geometry(
+        &self,
+        py: Python<'_>,
+        sites: Vec<(Vec<i32>, usize)>,
+    ) -> PyResult<PyNativeModel> {
+        let sites = sites
+            .into_iter()
+            .map(|(cell, orbital)| FiniteSite::new(cell, orbital))
+            .collect::<Vec<_>>();
+        py.allow_threads(|| make_finite_geometry(&self.inner, &sites))
+            .map(|geometry| PyNativeModel {
+                inner: geometry.into_model(),
+            })
+            .map_err(value_error)
+    }
+
+    fn remove_orbitals(&self, py: Python<'_>, removed: Vec<usize>) -> PyResult<PyNativeModel> {
+        py.allow_threads(|| remove_orbitals(&self.inner, &removed))
+            .map(|inner| PyNativeModel { inner })
+            .map_err(value_error)
+    }
+
+    #[pyo3(signature = (integer_basis, move_periodic_to_home=true))]
+    fn supercell(
+        &self,
+        py: Python<'_>,
+        integer_basis: Vec<Vec<i32>>,
+        move_periodic_to_home: bool,
+    ) -> PyResult<(PyNativeModel, Vec<Vec<i32>>)> {
+        py.allow_threads(|| make_supercell(&self.inner, &integer_basis, move_periodic_to_home))
+            .map(|result| {
+                let translations = result.translations().to_vec();
+                (
+                    PyNativeModel {
+                        inner: result.into_model(),
+                    },
+                    translations,
+                )
+            })
+            .map_err(value_error)
+    }
+
+    #[pyo3(signature = (
+        momentum,
+        chemical_potential,
+        temperature,
+        cartesian=false,
+        degeneracy_tolerance=1.0e-10
+    ))]
+    fn band_response(
+        &self,
+        py: Python<'_>,
+        momentum: Vec<f64>,
+        chemical_potential: f64,
+        temperature: f64,
+        cartesian: bool,
+        degeneracy_tolerance: f64,
+    ) -> PyResult<PyNativeBandResponse> {
+        let fermi = FermiDistribution::new(chemical_potential, temperature).map_err(value_error)?;
+        let coordinates = if cartesian {
+            MomentumCoordinates::Cartesian
+        } else {
+            MomentumCoordinates::Reduced
+        };
+        py.allow_threads(|| {
+            band_response_from_model(
+                &self.inner,
+                &momentum,
+                fermi,
+                coordinates,
+                degeneracy_tolerance,
+            )
+        })
+        .map(|inner| PyNativeBandResponse { inner })
+        .map_err(value_error)
+    }
+
+    #[pyo3(signature = (
+        momentum,
+        chemical_potential,
+        temperature,
+        cartesian=false,
+        degeneracy_tolerance=1.0e-10
+    ))]
+    fn intrinsic_curvature(
+        &self,
+        py: Python<'_>,
+        momentum: Vec<f64>,
+        chemical_potential: f64,
+        temperature: f64,
+        cartesian: bool,
+        degeneracy_tolerance: f64,
+    ) -> PyResult<RealMatrixRows> {
+        let fermi = FermiDistribution::new(chemical_potential, temperature).map_err(value_error)?;
+        let coordinates = if cartesian {
+            MomentumCoordinates::Cartesian
+        } else {
+            MomentumCoordinates::Reduced
+        };
+        py.allow_threads(|| {
+            intrinsic_berry_curvature_from_model(
+                &self.inner,
+                &momentum,
+                fermi,
+                coordinates,
+                degeneracy_tolerance,
+            )
+        })
+        .map(|matrix| real_matrix_to_rows(&matrix))
+        .map_err(value_error)
+    }
+
+    #[pyo3(signature = (
+        shape,
+        fractional_offsets,
+        chemical_potential,
+        temperature,
+        cartesian=false,
+        degeneracy_tolerance=1.0e-10
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn integrated_intrinsic_curvature(
+        &self,
+        py: Python<'_>,
+        shape: Vec<usize>,
+        fractional_offsets: Vec<f64>,
+        chemical_potential: f64,
+        temperature: f64,
+        cartesian: bool,
+        degeneracy_tolerance: f64,
+    ) -> PyResult<RealMatrixRows> {
+        let fermi = FermiDistribution::new(chemical_potential, temperature).map_err(value_error)?;
+        let coordinates = if cartesian {
+            MomentumCoordinates::Cartesian
+        } else {
+            MomentumCoordinates::Reduced
+        };
+        py.allow_threads(|| {
+            uniform_mesh_intrinsic_berry_curvature(
+                &self.inner,
+                &shape,
+                &fractional_offsets,
+                fermi,
+                coordinates,
+                degeneracy_tolerance,
+            )
+        })
+        .map(|matrix| real_matrix_to_rows(&matrix))
+        .map_err(value_error)
+    }
+
+    fn export(&self) -> ModelOutput {
+        model_to_output(&self.inner)
+    }
+}
+
+#[pyclass(name = "NativeBandResponse", frozen)]
+struct PyNativeBandResponse {
+    inner: BandResponsePoint,
+}
+
+#[pymethods]
+impl PyNativeBandResponse {
+    #[getter]
+    fn energies(&self) -> Vec<f64> {
+        self.inner.energies().to_vec()
+    }
+
+    #[getter]
+    fn occupations(&self) -> Vec<f64> {
+        self.inner.occupations().to_vec()
+    }
+
+    #[getter]
+    fn negative_occupation_derivatives(&self) -> Option<Vec<f64>> {
+        self.inner
+            .negative_occupation_derivatives()
+            .map(<[f64]>::to_vec)
+    }
+
+    #[getter]
+    fn group_velocities(&self) -> Vec<Vec<f64>> {
+        (0..self.inner.band_count())
+            .map(|band| {
+                (0..self.inner.direction_count())
+                    .map(|direction| {
+                        self.inner
+                            .group_velocity(band, direction)
+                            .expect("validated response direction")
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[getter]
+    fn berry_curvatures(&self) -> Vec<Vec<Vec<f64>>> {
+        (0..self.inner.band_count())
+            .map(|band| {
+                (0..self.inner.direction_count())
+                    .map(|first| {
+                        (0..self.inner.direction_count())
+                            .map(|second| {
+                                self.inner
+                                    .berry_curvature(band, first, second)
+                                    .expect("validated response direction")
+                            })
+                            .collect()
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+}
+
+#[pyfunction]
+fn native_response_curvature_integral(
+    samples: Vec<PyRef<'_, PyNativeBandResponse>>,
+    weights: Vec<f64>,
+    first: usize,
+    second: usize,
+) -> PyResult<f64> {
+    let points = samples
+        .iter()
+        .map(|sample| sample.inner.clone())
+        .collect::<Vec<_>>();
+    occupation_weighted_berry_curvature(&points, &weights, first, second).map_err(value_error)
+}
+
+#[pyfunction]
+fn native_response_dipole(
+    samples: Vec<PyRef<'_, PyNativeBandResponse>>,
+    weights: Vec<f64>,
+    derivative_direction: usize,
+    curvature_first: usize,
+    curvature_second: usize,
+) -> PyResult<f64> {
+    let points = samples
+        .iter()
+        .map(|sample| sample.inner.clone())
+        .collect::<Vec<_>>();
+    native_berry_curvature_dipole(
+        &points,
+        &weights,
+        derivative_direction,
+        curvature_first,
+        curvature_second,
+    )
+    .map_err(value_error)
 }
 
 fn build_model(
@@ -3609,10 +4068,19 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PySparseOpenSystem>()?;
     module.add_class::<PySparseLuAnalysis>()?;
     module.add_class::<PySparseLuFactorization>()?;
+    module.add_class::<PyNativeModelBuilder>()?;
+    module.add_class::<PyNativeModel>()?;
+    module.add_class::<PyNativeBandResponse>()?;
+    module.add_function(wrap_pyfunction!(
+        native_response_curvature_integral,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(native_response_dipole, module)?)?;
     module.add_function(wrap_pyfunction!(validate_periodic_bands, module)?)?;
     module.add_function(wrap_pyfunction!(lead_band_evaluation, module)?)?;
     module.add_function(wrap_pyfunction!(reflection_shot_noise, module)?)?;
     module.add_function(wrap_pyfunction!(digest_uniform_pair, module)?)?;
+    module.add_function(wrap_pyfunction!(digest_uniform, module)?)?;
     module.add_function(wrap_pyfunction!(digest_gaussian, module)?)?;
     module.add_function(wrap_pyfunction!(kpm_rescale_hamiltonian, module)?)?;
     module.add_function(wrap_pyfunction!(kpm_csr_operator, module)?)?;

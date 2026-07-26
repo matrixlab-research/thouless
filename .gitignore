@@ -1,5 +1,11 @@
 /target/
-/.venv/
+/.venv*/
+/.wheel-*/
+/.compat-venv/
+/.parity-venv/
+/dist/
+/julia/Thouless/deps/usr/lib/
+/julia/Thouless/Manifest.toml
 /.pytest_cache/
 /**/__pycache__/
 *.pyc
