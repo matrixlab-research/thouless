@@ -964,7 +964,7 @@ fn boundary_shifted_frame(
             })
             .sum::<f64>();
         let phase = Complex64::from_polar(1.0, -std::f64::consts::TAU * phase_argument);
-        basis_phases.extend(std::iter::repeat(phase).take(orbital.degrees_of_freedom()));
+        basis_phases.extend(std::iter::repeat_n(phase, orbital.degrees_of_freedom()));
     }
     let mut values = frame.as_slice().to_vec();
     for row in values.chunks_mut(frame.columns()) {
