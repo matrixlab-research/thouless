@@ -2,7 +2,7 @@
 
 The `thouless-capi` crate is the language-neutral boundary to the same Rust
 scientific core used by the Rust and Python APIs. Its contract version is
-`1.0`, encoded as `major << 16 | minor` by `thouless_abi_version()`. A change
+`1.1`, encoded as `major << 16 | minor` by `thouless_abi_version()`. A change
 that removes or changes a public function, structure layout, status meaning,
 ownership rule, or numerical convention must increment the ABI major version.
 Additive functions and status values increment the minor version.
@@ -64,3 +64,12 @@ python tools/run_c_smoke.py --profile release
 
 Release archives place the generated header beside the platform dynamic
 library.
+
+## Native derivatives
+
+`thouless_ad_affine_projector_value_and_grad` evaluates an affine Hermitian
+Hamiltonian, a gauge-invariant occupied-projector objective, and its physical
+parameter gradient in the Rust core. It is the C/Julia boundary to the same
+VJP used by the Rust and Python APIs; the ABI never evaluates finite
+differences. See `docs/native-ad.md` for the mathematical convention and
+coverage boundary.

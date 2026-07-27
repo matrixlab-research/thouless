@@ -1,5 +1,6 @@
 use std::f64::consts::TAU;
 
+use thouless::ad::{AffineHermitianFamily, ModelParameters, SpectralProjectorObjective};
 use thouless::model::{Lattice, ModelBuilder, TightBindingModel};
 use thouless::observables::project_diagonal_observable;
 use thouless::topology::{
@@ -93,6 +94,22 @@ fn frame(values: &[Complex64]) -> ComplexMatrix {
 }
 
 fn main() {
+    let ad_family = AffineHermitianFamily::new(
+        matrix(&[(-1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (1.0, 0.0)]),
+        vec![matrix(&[(0.0, 0.0), (1.0, 0.0), (1.0, 0.0), (0.0, 0.0)])],
+    )
+    .unwrap();
+    let ad_objective = SpectralProjectorObjective::new(
+        &ad_family,
+        1,
+        matrix(&[(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 0.0)]),
+        1.0e-8,
+    )
+    .unwrap();
+    let (ad_value, ad_gradient) = ad_objective
+        .value_and_grad(&ModelParameters::new(vec![0.2]).unwrap())
+        .unwrap();
+
     let ssh = ssh_model();
     let zone_edge = ssh.eigensystem(&[0.5]).unwrap();
     let ssh_gap = zone_edge.eigenvalues()[1] - zone_edge.eigenvalues()[0];
@@ -153,6 +170,8 @@ fn main() {
     };
 
     let metrics = [
+        ("ad_projector_value", ad_value),
+        ("ad_projector_gradient", ad_gradient.as_slice()[0]),
         ("ssh_gap", ssh_gap),
         (
             "ssh_polarization",

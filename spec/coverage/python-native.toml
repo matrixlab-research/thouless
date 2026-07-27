@@ -4,6 +4,12 @@ artifact = "maturin-built wheel installed without repository PYTHONPATH"
 documentation = "docs/python-api.md"
 
 [[capability]]
+id = "differentiation.affine_projector"
+public_api = "thouless.ad.{affine_projector_value_and_grad,affine_projector_jvp}"
+test = "python-tests/native/test_ad.py"
+status = "implemented"
+
+[[capability]]
 id = "model.structure"
 public_api = "thouless.{Lattice,ModelBuilder,Model}"
 test = "python-tests/native/test_model_spectrum_geometry.py"

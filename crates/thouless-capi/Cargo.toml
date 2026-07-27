@@ -2,7 +2,7 @@
 name = "thouless-capi"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.81"
+rust-version = "1.85"
 license = "MIT"
 description = "Stable C ABI for the Thouless scientific core"
 repository = "https://github.com/matrixlab-research/thouless"

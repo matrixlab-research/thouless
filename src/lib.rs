@@ -9,6 +9,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod ad;
 pub mod bands;
 pub mod block_system;
 pub mod continuum;

@@ -15,6 +15,12 @@ julia_native = "https://github.com/matrixlab-research/thouless/issues/9"
 cross_language_ci = "https://github.com/matrixlab-research/thouless/issues/10"
 
 [[workflow]]
+id = "differentiation.affine_projector"
+rust = "thouless::ad"
+python = "thouless.ad"
+julia = "Thouless.AD"
+
+[[workflow]]
 id = "model.structure"
 rust = "thouless::model"
 python = "thouless.model"

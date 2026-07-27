@@ -1,3 +1,52 @@
+function _ad_affine_projector_value_and_grad(
+    base,
+    directions,
+    parameters;
+    occupied,
+    target,
+    minimum_gap=1.0e-8,
+)
+    base_matrix = _complex_matrix(base)
+    direction_matrices = [_complex_matrix(direction) for direction in directions]
+    isempty(direction_matrices) &&
+        throw(ArgumentError("at least one parameter direction is required"))
+    all(size(direction) == size(base_matrix) for direction in direction_matrices) ||
+        throw(ArgumentError("all parameter directions must match the base matrix"))
+    direction_tensor = cat(direction_matrices...; dims=3)
+    parameter_values = Float64.(collect(parameters))
+    target_matrix = _complex_matrix(target)
+    gradient = Vector{Float64}(undef, length(parameter_values))
+    value = Ref{Cdouble}()
+    status = GC.@preserve base_matrix direction_tensor parameter_values target_matrix gradient value ccall(
+        (:thouless_ad_affine_projector_value_and_grad, _library()),
+        Cint,
+        (
+            _C64View,
+            _C64Tensor3View,
+            Ptr{Cdouble},
+            Csize_t,
+            Csize_t,
+            _C64View,
+            Cdouble,
+            Ref{Cdouble},
+            Ptr{Cdouble},
+            Csize_t,
+        ),
+        _c64_view(base_matrix),
+        _c64_tensor_view(direction_tensor),
+        pointer(parameter_values),
+        length(parameter_values),
+        Int(occupied),
+        _c64_view(target_matrix),
+        minimum_gap,
+        value,
+        pointer(gradient),
+        length(gradient),
+    )
+    _check(status)
+    return (value=value[], gradient=gradient)
+end
+
 function _hermitian_eigensystem(value)
     matrix = _complex_matrix(value)
     size(matrix, 1) == size(matrix, 2) || throw(ArgumentError("matrix must be square"))
@@ -855,6 +904,13 @@ import ..Thouless
 hermitian_eigensystem(args...; kwargs...) = Thouless._hermitian_eigensystem(args...; kwargs...)
 lead_bands(args...; kwargs...) = Thouless._lead_bands(args...; kwargs...)
 export hermitian_eigensystem, lead_bands
+end
+
+module AD
+using ..Thouless: _ad_affine_projector_value_and_grad
+export affine_projector_value_and_grad
+affine_projector_value_and_grad(args...; kwargs...) =
+    _ad_affine_projector_value_and_grad(args...; kwargs...)
 end
 
 module KPM

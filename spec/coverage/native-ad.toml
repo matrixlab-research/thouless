@@ -1,0 +1,91 @@
+schema_version = 1
+overall_status = "Incomplete"
+tracking_issue = "https://github.com/matrixlab-research/thouless/issues/13"
+held_out_issue = "https://github.com/matrixlab-research/thouless-benchmark/issues/3"
+
+[[capability]]
+id = "protocol"
+requirement = "chainrules-core 0.2, Rust 1.85 MSRV, distinct tangent and cotangent types, and one-shot pullbacks"
+status = "implemented"
+evidence = "Cargo.toml; src/ad.rs; tests/native_ad.rs; .github/workflows/ci.yml native-ad job"
+
+[[capability]]
+id = "physical_parameter_spaces"
+requirement = "independent continuous physical coordinates with direct cotangent accumulation"
+status = "partial"
+evidence = "ModelParameters, ModelDirection, ModelGradient, AffineHermitianFamily, and SparseAffineOperator cover affine dense and sparse Hamiltonians"
+gap = "geometry, fields, full TightBindingModel templates, and nonlinear lead/interface layouts are not yet parameterized"
+issue = "https://github.com/matrixlab-research/thouless/issues/13"
+
+[[capability]]
+id = "adjoint_operators"
+requirement = "matrix-free adjoint action and direct parameter JVP/VJP contraction"
+status = "implemented"
+evidence = "AdjointLinearOperator for ComplexMatrix, CsrMatrix, and SparseAffineSnapshot; sparse duality tests in tests/native_ad.rs"
+
+[[capability]]
+id = "linear_solve_and_resolvent"
+requirement = "mathematical JVP/VJP rules for solves without differentiating factorization internals"
+status = "implemented"
+evidence = "LinearSolve implements dense complex JVP/VJP; SparseLinearFunctionalObjective performs one matrix-free primal GMRES and one adjoint GMRES independent of parameter count and reports both true residuals; OpenTransmissionObjective contracts the analytic Green-function cotangent"
+limitation = "reusable primal factorization or preconditioner state is not yet exposed"
+
+[[capability]]
+id = "eigenvalue_and_subspace"
+requirement = "isolated-eigenvalue and separated-projector derivative semantics with structured gap failure"
+status = "implemented"
+evidence = "IsolatedEigenvalue, ProjectorDistance, SpectralProjectorObjective, and QuantumMetricMeshObjective; finite-difference and gauge-invariance tests"
+
+[[capability]]
+id = "surface_green_and_self_energy"
+requirement = "implicit differentiation of the converged retarded surface equation"
+status = "implemented"
+evidence = "SurfaceGreenRule differentiates cell Hamiltonian, periodic hopping, energy, and broadening without unrolling Lopez-Sancho iterations; OpenSystemTransmission composes surface functions with rectangular interface couplings and embedded self-energies"
+
+[[capability]]
+id = "spectral_response_workflow"
+requirement = "parameter to occupied subspace to quantum-geometric scalar objective to physical VJP"
+status = "implemented"
+evidence = "QuantumMetricMeshObjective and SpectralProjectorObjective in src/ad.rs; tests/native_ad.rs"
+
+[[capability]]
+id = "open_transport_workflow"
+requirement = "parameter to Green function and transmission objective to physical VJP"
+status = "implemented"
+evidence = "OpenSystemTransmission differentiates device Hamiltonian, every lead cell Hamiltonian and hopping, rectangular interface coupling, shared energy, and per-lead broadening through one composed VJP; tests/native_ad.rs checks all layers against finite differences"
+
+[[capability]]
+id = "sparse_kpm_workflow"
+requirement = "large sparse parameterized KPM objective with bounded-memory reverse recurrence"
+status = "implemented"
+evidence = "KpmMomentObjective, KpmMomentReport, native_ad_benchmark, and CI operation/memory gates"
+
+[[capability]]
+id = "wannier_iterative_workflow"
+requirement = "implicit derivative of a converged Wannier or localization stationarity condition"
+status = "missing"
+gap = "no stationarity-condition pullback or gauge-uniqueness contract is implemented"
+issue = "https://github.com/matrixlab-research/thouless/issues/13"
+
+[[capability]]
+id = "language_bindings"
+requirement = "Python, Julia, and C call Rust-owned derivative truth paths"
+status = "partial"
+evidence = "affine projector value-and-gradient is exposed through thouless.ad, Thouless.AD, and thouless_ad_affine_projector_value_and_grad"
+gap = "surface, transport, quantum-metric, and sparse-KPM derivative entry points are Rust-only"
+issue = "https://github.com/matrixlab-research/thouless/issues/13"
+
+[[capability]]
+id = "correctness_and_advantage"
+requirement = "finite-difference agreement, adjoint identities, structured failures, scale behavior, and measured reverse-mode advantage"
+status = "partial"
+evidence = "tests/native_ad.rs and examples/native_ad_benchmark.rs; native-ad CI stores JSONL metrics and enforces accuracy, operation-count, memory, and speedup gates"
+gap = "broader failure injection, mesh convergence, disorder-seed generalization, and production-scale HPC runs remain"
+issue = "https://github.com/matrixlab-research/thouless/issues/13"
+
+[[capability]]
+id = "held_out_generality"
+requirement = "isolated evaluator-owned tests on unseen models, objectives, momenta, and random probes"
+status = "missing"
+gap = "held-out execution is evaluator-owned and has not run on this implementation"
+issue = "https://github.com/matrixlab-research/thouless/issues/13"

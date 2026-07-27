@@ -7,7 +7,11 @@ project = "julia/Thouless/Project.toml"
 
 [[module]]
 name = "Thouless"
-symbols = ["Lattice", "ModelBuilder", "Model", "ThoulessError", "Spectrum", "KPM", "Geometry", "Visualization", "Continuum", "Topology", "Wannier", "Response", "Observables", "Transport", "Symmetry", "Random", "Graph", "LinearAlgebra"]
+symbols = ["Lattice", "ModelBuilder", "Model", "ThoulessError", "AD", "Spectrum", "KPM", "Geometry", "Visualization", "Continuum", "Topology", "Wannier", "Response", "Observables", "Transport", "Symmetry", "Random", "Graph", "LinearAlgebra"]
+
+[[module]]
+name = "Thouless.AD"
+symbols = ["affine_projector_value_and_grad"]
 
 [[module]]
 name = "Thouless.Spectrum"

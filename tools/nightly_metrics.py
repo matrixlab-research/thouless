@@ -34,6 +34,14 @@ COMMANDS = {
         "--example",
         "language_conformance",
     ],
+    "native_ad_benchmark": [
+        "cargo",
+        "run",
+        "--release",
+        "--quiet",
+        "--example",
+        "native_ad_benchmark",
+    ],
 }
 
 

@@ -2,7 +2,7 @@
 name = "thouless-lapack"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.81"
+rust-version = "1.85"
 license = "MIT"
 description = "LAPACK-backed decomposition kernels for Thouless"
 repository = "https://github.com/matrixlab-research/thouless"

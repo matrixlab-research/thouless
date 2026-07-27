@@ -7,7 +7,11 @@ typing_marker = "python/thouless/py.typed"
 
 [[module]]
 name = "thouless"
-symbols = ["Lattice", "ModelBuilder", "Model", "ThoulessError", "geometry", "spectrum", "kpm", "topology", "wannier", "response", "observables", "transport", "continuum", "visualization", "symmetry", "random", "graph", "linalg"]
+symbols = ["Lattice", "ModelBuilder", "Model", "ThoulessError", "ad", "geometry", "spectrum", "kpm", "topology", "wannier", "response", "observables", "transport", "continuum", "visualization", "symmetry", "random", "graph", "linalg"]
+
+[[module]]
+name = "thouless.ad"
+symbols = ["affine_projector_value_and_grad", "affine_projector_jvp"]
 
 [[module]]
 name = "thouless.model"

@@ -1,5 +1,5 @@
 const ABI_VERSION_MAJOR = UInt32(1)
-const ABI_VERSION_MINOR = UInt32(0)
+const ABI_VERSION_MINOR = UInt32(1)
 const STATUS_SUCCESS = Cint(0)
 const STATUS_BUFFER_TOO_SMALL = Cint(8)
 

@@ -9,6 +9,8 @@ from pathlib import Path
 
 
 EXPECTED = {
+    "ad_projector_value": (0.5 * (1.0 - 1.0 / math.sqrt(1.04)), 1.0e-12),
+    "ad_projector_gradient": (0.1 / 1.04**1.5, 1.0e-12),
     "ssh_gap": (0.8, 1.0e-10),
     "ssh_polarization": (0.75, 1.0e-9),
     "chern_absolute": (1.0, 1.0e-9),

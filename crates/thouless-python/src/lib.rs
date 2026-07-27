@@ -1,6 +1,9 @@
 use pyo3::create_exception;
 use pyo3::exceptions::{PyIndexError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use thouless::ad::{
+    AffineHermitianFamily, ModelDirection, ModelParameters, SpectralProjectorObjective,
+};
 use thouless::bands::PeriodicBands;
 use thouless::block_system::{assemble_block_csr, SiteBlock};
 use thouless::continuum::{
@@ -4044,6 +4047,66 @@ fn continuum_landau_ladder_coefficient(
     landau_ladder_coefficient(&ladder_powers, initial_level, magnetic_field).map_err(value_error)
 }
 
+fn affine_projector_objective(
+    base: MatrixRows,
+    directions: Vec<MatrixRows>,
+    occupied: usize,
+    target: MatrixRows,
+    minimum_gap: f64,
+) -> PyResult<(AffineHermitianFamily, ComplexMatrix, usize, f64)> {
+    let family = AffineHermitianFamily::new(
+        matrix_from_rows(base)?,
+        directions
+            .into_iter()
+            .map(matrix_from_rows)
+            .collect::<PyResult<Vec<_>>>()?,
+    )
+    .map_err(value_error)?;
+    Ok((family, matrix_from_rows(target)?, occupied, minimum_gap))
+}
+
+#[pyfunction]
+fn ad_affine_projector_value_and_grad(
+    base: MatrixRows,
+    directions: Vec<MatrixRows>,
+    parameters: Vec<f64>,
+    occupied: usize,
+    target: MatrixRows,
+    minimum_gap: f64,
+) -> PyResult<(f64, Vec<f64>)> {
+    let (family, target, occupied, minimum_gap) =
+        affine_projector_objective(base, directions, occupied, target, minimum_gap)?;
+    let objective = SpectralProjectorObjective::new(&family, occupied, target, minimum_gap)
+        .map_err(value_error)?;
+    let parameters = ModelParameters::new(parameters).map_err(value_error)?;
+    objective
+        .value_and_grad(&parameters)
+        .map(|(value, gradient)| (value, gradient.as_slice().to_vec()))
+        .map_err(value_error)
+}
+
+#[pyfunction]
+fn ad_affine_projector_jvp(
+    base: MatrixRows,
+    directions: Vec<MatrixRows>,
+    parameters: Vec<f64>,
+    direction: Vec<f64>,
+    occupied: usize,
+    target: MatrixRows,
+    minimum_gap: f64,
+) -> PyResult<(f64, f64)> {
+    let (family, target, occupied, minimum_gap) =
+        affine_projector_objective(base, directions, occupied, target, minimum_gap)?;
+    let objective = SpectralProjectorObjective::new(&family, occupied, target, minimum_gap)
+        .map_err(value_error)?;
+    objective
+        .jvp(
+            &ModelParameters::new(parameters).map_err(value_error)?,
+            &ModelDirection::new(direction).map_err(value_error)?,
+        )
+        .map_err(value_error)
+}
+
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add(
@@ -4071,6 +4134,11 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyNativeModelBuilder>()?;
     module.add_class::<PyNativeModel>()?;
     module.add_class::<PyNativeBandResponse>()?;
+    module.add_function(wrap_pyfunction!(
+        ad_affine_projector_value_and_grad,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(ad_affine_projector_jvp, module)?)?;
     module.add_function(wrap_pyfunction!(
         native_response_curvature_integral,
         module

@@ -27,7 +27,7 @@ pub use model::*;
 pub use workflows::*;
 
 /// ABI contract encoded as `major << 16 | minor`.
-pub const THOULESS_ABI_VERSION: u32 = 1 << 16;
+pub const THOULESS_ABI_VERSION: u32 = (1 << 16) | 1;
 
 /// Stable status returned by every fallible C ABI function.
 #[repr(C)]

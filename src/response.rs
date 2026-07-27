@@ -232,7 +232,7 @@ impl UniformMeshBandResponse {
     ) -> Result<f64, IntrinsicResponseError> {
         occupation_weighted_berry_curvature_with_weights(
             &self.points,
-            std::iter::repeat(self.quadrature_weight()).take(self.points.len()),
+            std::iter::repeat_n(self.quadrature_weight(), self.points.len()),
             first,
             second,
         )
@@ -247,7 +247,7 @@ impl UniformMeshBandResponse {
     ) -> Result<f64, IntrinsicResponseError> {
         berry_curvature_dipole_with_weights(
             &self.points,
-            std::iter::repeat(self.quadrature_weight()).take(self.points.len()),
+            std::iter::repeat_n(self.quadrature_weight(), self.points.len()),
             derivative_direction,
             curvature_first,
             curvature_second,
