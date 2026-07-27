@@ -65,11 +65,23 @@ compatibility statistics expose portable storage counts without claiming
 MUMPS-internal measurements. The remaining validation gap is the
 evaluator-owned, isolated held-out project.
 
+Rust-native first-order automatic differentiation is now available for affine
+physical Hamiltonian parameters, linear solves, isolated eigenvalues,
+separated occupied projectors, quantum-metric meshes, implicit surface Green
+functions, complete device-and-lead transmission objectives, matrix-free
+sparse GMRES, and checkpointed sparse KPM objectives. Python, Julia, and C
+expose the same Rust projector VJP.
+Correctness, operation-count, checkpoint-memory, and measured speedup gates
+run in CI. The complete semantics, benchmark results, and explicitly
+incomplete boundaries are documented in
+[`docs/native-ad.md`](docs/native-ad.md) and
+[`spec/coverage/native-ad.toml`](spec/coverage/native-ad.toml).
+
 A green pull-request CI run means:
 
 - the Rust contract, formatting, lint, tests, and documentation pass on all
   supported operating systems;
-- built Python wheels install into clean environments and all 26 public
+- built Python wheels install into clean environments and all 27 public
   workflow rows pass without repository `PYTHONPATH`;
 - the generated C header links against the built library and `Thouless.jl`
   runs against that exact artifact on Julia LTS and current releases;
@@ -117,7 +129,7 @@ They must not contain separate scientific algorithms.
 The first-class Rust, Python, and Julia interfaces are specified in
 [`docs/native-language-api-design.md`](docs/native-language-api-design.md).
 PyO3 is the private Python boundary and the stable C ABI is the Julia boundary;
-all three language surfaces cover the same 26 scientific workflows. The
+all three language surfaces cover the same 27 scientific workflows. The
 machine-readable namespace mapping is
 [`spec/api/thouless-native-languages.toml`](spec/api/thouless-native-languages.toml).
 The implementation audit trail is retained in issues
@@ -168,6 +180,7 @@ stored fixture results.
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+cargo run --release --quiet --example native_ad_benchmark
 python tools/check_contracts.py
 python tools/check_native_api.py
 python tools/check_capi_julia.py

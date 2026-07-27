@@ -2,6 +2,13 @@ schema_version = 1
 overall_status = "Incomplete"
 
 [[capability]]
+id = "differentiation.affine_projector"
+description = "Rust-native physical parameter, tangent, and cotangent spaces with gauge-invariant occupied-projector JVP and VJP composition"
+native_api = "thouless::ad::{ModelParameters,ModelDirection,ModelGradient,AffineHermitianFamily,SpectralProjectorObjective}"
+test = "tests/native_ad.rs finite-difference agreement, real-inner-product JVP/VJP duality, gauge invariance, and structured gap failure; python-tests/native/test_ad.py and julia/Thouless/test/runtests.jl language calls into the same Rust VJP"
+status = "implemented"
+
+[[capability]]
 id = "model.structure"
 description = "Shared periodic or finite lattice, orbital, onsite, and hopping representation, including embedded Bravais geometry, exact translation domains, metric neighbor shells, and direct variable-orbital finite-system block assembly"
 native_api = "thouless::model; thouless::lattice_geometry::{EmbeddedLattice,NeighborRelation,TranslationFundamentalDomain,translation_coordinates,translation_shift,contains_translation_subgroup}; and thouless::block_system::{assemble_block_csr,SiteBlock,BlockCsrMatrix}"

@@ -4,6 +4,12 @@ artifact = "Thouless C dynamic library loaded through THOULESS_LIBRARY or releas
 documentation = "docs/julia-api.md"
 
 [[capability]]
+id = "differentiation.affine_projector"
+public_api = "Thouless.AD.affine_projector_value_and_grad"
+test = "julia/Thouless/test/runtests.jl"
+status = "implemented"
+
+[[capability]]
 id = "model.structure"
 public_api = "Thouless.{Lattice,ModelBuilder,Model}"
 test = "julia/Thouless/test/runtests.jl"

@@ -1,10 +1,14 @@
 schema_version = 1
-contract_version = "1.0"
+contract_version = "1.1"
 package_version = "0.1.0"
 status = "stable"
 header = "crates/thouless-capi/include/thouless.h"
 documentation = "docs/c-api.md"
 library = "thouless_capi"
+
+[[workflow]]
+id = "differentiation.affine_projector"
+symbols = ["thouless_ad_affine_projector_value_and_grad"]
 
 [[workflow]]
 id = "model.structure"

@@ -129,6 +129,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "chainrules-core"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "059cc45029b8cfd0f76484ee7d3ea9412d02c77002391e471fb0ccb34c5f64bf"
+dependencies = [
+ "num-complex",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1771,6 +1780,7 @@ dependencies = [
 name = "thouless"
 version = "0.1.0"
 dependencies = [
+ "chainrules-core",
  "faer",
  "md-5",
  "nalgebra",

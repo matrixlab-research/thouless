@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 import thouless
-from thouless import geometry, observables, topology, transport
+from thouless import ad, geometry, observables, topology, transport
 
 
 def ssh_model() -> thouless.Model:
@@ -30,6 +30,15 @@ def qwz_model() -> thouless.Model:
 
 
 def main() -> None:
+    ad_value, ad_gradient = ad.affine_projector_value_and_grad(
+        np.diag([-1.0, 1.0]).astype(np.complex128),
+        np.asarray([[[0.0, 1.0], [1.0, 0.0]]], dtype=np.complex128),
+        [0.2],
+        occupied=1,
+        target=np.diag([1.0, 0.0]).astype(np.complex128),
+        minimum_gap=1.0e-8,
+    )
+
     ssh = ssh_model()
     zone_edge = ssh.eigensystem([0.5]).eigenvalues
     frames = [
@@ -70,6 +79,8 @@ def main() -> None:
         invalid_shape = 1.0
 
     metrics = {
+        "ad_projector_gradient": float(ad_gradient[0]),
+        "ad_projector_value": float(ad_value),
         "ssh_gap": float(zone_edge[1] - zone_edge[0]),
         "ssh_polarization": float(polarization),
         "chern_absolute": float(chern),

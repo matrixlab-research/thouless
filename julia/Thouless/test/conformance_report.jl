@@ -22,6 +22,15 @@ function qwz_model()
     return build(builder)
 end
 
+ad_result = AD.affine_projector_value_and_grad(
+    ComplexF64[-1 0; 0 1],
+    [ComplexF64[0 1; 1 0]],
+    [0.2];
+    occupied=1,
+    target=ComplexF64[1 0; 0 0],
+    minimum_gap=1.0e-8,
+)
+
 ssh = ssh_model()
 zone_edge = eigensystem(ssh, [0.5]).values
 frames = [
@@ -63,6 +72,8 @@ catch error
 end
 
 metrics = Dict(
+    "ad_projector_gradient" => ad_result.gradient[1],
+    "ad_projector_value" => ad_result.value,
     "ssh_gap" => zone_edge[2] - zone_edge[1],
     "ssh_polarization" => polarization,
     "chern_absolute" => chern,

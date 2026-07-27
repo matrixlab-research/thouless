@@ -25,6 +25,8 @@ storage and use ordinary NumPy layouts.
 
 The public modules follow scientific workflows:
 
+- `ad` exposes Rust-native JVP and VJP workflows without Python-side finite
+  differences;
 - `model`, `geometry`, and `spectrum` construct periodic or finite systems;
 - `kpm` provides kernel-polynomial spectral workflows;
 - `topology`, `wannier`, and `response` provide gauge-covariant geometry;
@@ -41,3 +43,5 @@ entry point.
 Public exceptions derive from `ThoulessError`. Invalid scientific inputs and
 array shapes remain distinguishable from numerical solve failures. The Python
 API follows the numerical and coordinate rules in `docs/api-stability.md`.
+Native derivative semantics and current coverage are documented in
+`docs/native-ad.md`.

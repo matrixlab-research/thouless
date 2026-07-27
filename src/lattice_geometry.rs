@@ -174,7 +174,7 @@ impl EmbeddedLattice {
                     let mut local_groups = 0usize;
                     let mut previous = None;
                     for (distance, _, _, _) in &local {
-                        if previous.map_or(true, |previous: f64| {
+                        if previous.is_none_or(|previous: f64| {
                             (distance - previous).abs() > absolute_tolerance
                         }) {
                             local_groups += 1;
@@ -198,9 +198,10 @@ impl EmbeddedLattice {
         distances.sort_by(f64::total_cmp);
         let mut shells = Vec::new();
         for distance in distances {
-            if shells.last().map_or(true, |previous: &f64| {
-                (distance - previous).abs() > absolute_tolerance
-            }) {
+            if shells
+                .last()
+                .is_none_or(|previous: &f64| (distance - previous).abs() > absolute_tolerance)
+            {
                 shells.push(distance);
             }
         }

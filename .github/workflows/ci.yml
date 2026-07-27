@@ -14,6 +14,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native-ad:
+    name: Native AD correctness and advantage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@1.85
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the Fortran linker
+        run: sudo apt-get update && sudo apt-get install -y gfortran
+      - name: Check the complete workspace at the minimum supported Rust version
+        run: cargo check --workspace --all-features
+      - name: Verify native rules at the minimum supported Rust version
+        run: cargo test -p thouless --test native_ad --all-features
+      - name: Measure native reverse mode against central finite differences
+        run: |
+          cargo run --release --quiet --example native_ad_benchmark > native-ad-benchmark.jsonl
+          python tools/check_native_ad_benchmark.py native-ad-benchmark.jsonl
+      - uses: actions/upload-artifact@v6
+        with:
+          name: native-ad-benchmark
+          path: native-ad-benchmark.jsonl
+          if-no-files-found: error
+
   contracts:
     name: Versioned API contracts
     runs-on: ubuntu-latest

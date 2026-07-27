@@ -1,5 +1,9 @@
 #![allow(unused_imports)]
 
+use thouless::ad::{
+    AffineHermitianFamily, ModelDirection, ModelGradient, ModelParameters,
+    SpectralProjectorObjective,
+};
 use thouless::bands::{BandEvaluation, PeriodicBands};
 use thouless::continuum::{
     finite_difference_stencil, landau_ladder_coefficient, DifferentialFactor,

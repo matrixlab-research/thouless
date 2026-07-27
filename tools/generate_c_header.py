@@ -37,7 +37,7 @@ extern "C" {
 #endif
 
 #define THOULESS_ABI_VERSION_MAJOR 1u
-#define THOULESS_ABI_VERSION_MINOR 0u
+#define THOULESS_ABI_VERSION_MINOR 1u
 #define THOULESS_ABI_VERSION ((THOULESS_ABI_VERSION_MAJOR << 16) | THOULESS_ABI_VERSION_MINOR)
 
 typedef enum ThoulessStatus {
@@ -139,6 +139,7 @@ THOULESS_API ThoulessStatus thouless_model_finite_cluster(const ThoulessModel *h
 THOULESS_API ThoulessStatus thouless_model_finite_geometry(const ThoulessModel *handle, const int32_t *cells, const size_t *orbital_indices, size_t site_count, size_t cell_dimension, ThoulessModel **output);
 THOULESS_API ThoulessStatus thouless_model_remove_orbitals(const ThoulessModel *handle, const size_t *removed, size_t removed_count, ThoulessModel **output);
 
+THOULESS_API ThoulessStatus thouless_ad_affine_projector_value_and_grad(ThoulessC64MatrixView base, ThoulessC64Tensor3View directions, const double *parameters, size_t parameter_count, size_t occupied, ThoulessC64MatrixView target, double minimum_gap, double *value, double *gradient, size_t gradient_capacity);
 THOULESS_API ThoulessStatus thouless_hermitian_eigensystem(ThoulessC64MatrixView matrix, double *eigenvalues, size_t eigenvalue_capacity, ThoulessC64MatrixMut eigenvectors);
 THOULESS_API ThoulessStatus thouless_kpm_rescale_dense(ThoulessC64MatrixView hamiltonian, double strict_margin, bool use_explicit_bounds, double lower_bound, double upper_bound, ThoulessC64MatrixMut output, double *half_width, double *center);
 THOULESS_API ThoulessStatus thouless_lead_bands(ThoulessC64MatrixView cell_hamiltonian, ThoulessC64MatrixView inter_cell_hopping, double momentum, size_t derivative_order, double *energies, size_t energy_capacity, double *first_derivatives, size_t first_capacity, double *second_derivatives, size_t second_capacity);

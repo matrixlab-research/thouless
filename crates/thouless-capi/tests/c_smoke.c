@@ -56,6 +56,49 @@ static int run_model_case(void) {
     return 0;
 }
 
+static int run_ad_case(void) {
+    ThoulessComplex64 base_data[] = {
+        {-1.0, 0.0}, {0.0, 0.0},
+        {0.0, 0.0}, {1.0, 0.0}
+    };
+    ThoulessComplex64 direction_data[] = {
+        {0.0, 0.0}, {1.0, 0.0},
+        {1.0, 0.0}, {0.0, 0.0}
+    };
+    ThoulessComplex64 target_data[] = {
+        {1.0, 0.0}, {0.0, 0.0},
+        {0.0, 0.0}, {0.0, 0.0}
+    };
+    ThoulessC64MatrixView base = {base_data, 2, 2, 2, 1};
+    ThoulessC64Tensor3View directions = {
+        direction_data, 1, 2, 2, 4, 2, 1
+    };
+    ThoulessC64MatrixView target = {target_data, 2, 2, 2, 1};
+    double parameters[] = {0.2};
+    double value = NAN;
+    double gradient[] = {NAN};
+    if (thouless_ad_affine_projector_value_and_grad(
+            base,
+            directions,
+            parameters,
+            1,
+            1,
+            target,
+            1e-8,
+            &value,
+            gradient,
+            1) != THOULESS_SUCCESS) {
+        return 10;
+    }
+    double expected_value = 0.5 * (1.0 - 1.0 / sqrt(1.04));
+    double expected_gradient = 0.1 / pow(1.04, 1.5);
+    if (fabs(value - expected_value) > 1e-12 ||
+        fabs(gradient[0] - expected_gradient) > 1e-12) {
+        return 11;
+    }
+    return 0;
+}
+
 int main(void) {
     if (thouless_abi_version() != THOULESS_ABI_VERSION) {
         return 1;
@@ -66,5 +109,5 @@ int main(void) {
             return status;
         }
     }
-    return 0;
+    return run_ad_case();
 }

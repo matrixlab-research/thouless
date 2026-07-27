@@ -2,7 +2,7 @@
 name = "thouless"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.81"
+rust-version = "1.85"
 license = "MIT"
 description = "Rust-native tight-binding, topology, and steady-state quantum transport"
 repository = "https://github.com/matrixlab-research/thouless"
@@ -20,6 +20,7 @@ members = [
 resolver = "2"
 
 [dependencies]
+chainrules-core = { version = "0.2.0", features = ["num-complex"] }
 faer = { version = "=0.20.1", default-features = false, features = ["std", "linalg"] }
 md-5 = "0.10.6"
 nalgebra = "0.33.2"

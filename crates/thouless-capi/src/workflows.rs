@@ -1,3 +1,4 @@
+use thouless::ad::{AffineHermitianFamily, ModelParameters, SpectralProjectorObjective};
 use thouless::bands::PeriodicBands;
 use thouless::continuum::{finite_difference_stencil, DifferentialFactor};
 use thouless::decomposition::schur;
@@ -93,6 +94,56 @@ fn symmetry_class(value: u32) -> Result<SymmetryClass, AbiError> {
         9 => Ok(SymmetryClass::Ci),
         _ => Err(AbiError::invalid("unknown Altland-Zirnbauer class")),
     }
+}
+
+/// Evaluate a gauge-invariant affine-projector objective and its native VJP.
+#[no_mangle]
+pub unsafe extern "C" fn thouless_ad_affine_projector_value_and_grad(
+    base: ThoulessC64MatrixView,
+    directions: ThoulessC64Tensor3View,
+    parameters: *const f64,
+    parameter_count: usize,
+    occupied: usize,
+    target: ThoulessC64MatrixView,
+    minimum_gap: f64,
+    value: *mut f64,
+    gradient: *mut f64,
+    gradient_capacity: usize,
+) -> ThoulessStatus {
+    boundary(|| {
+        if value.is_null() {
+            return Err(AbiError::new(
+                ThoulessStatus::NullPointer,
+                "AD objective value output is null",
+            ));
+        }
+        let family = AffineHermitianFamily::new(
+            unsafe { read_complex_matrix(base, "AD affine base")? },
+            unsafe { read_complex_tensor3(directions, "AD affine directions")? },
+        )
+        .map_err(|error| AbiError::invalid(error.to_string()))?;
+        let objective = SpectralProjectorObjective::new(
+            &family,
+            occupied,
+            unsafe { read_complex_matrix(target, "AD target projector")? },
+            minimum_gap,
+        )
+        .map_err(|error| AbiError::invalid(error.to_string()))?;
+        let parameters = ModelParameters::new(
+            unsafe { borrowed_slice(parameters, parameter_count, "AD parameters")? }.to_vec(),
+        )
+        .map_err(|error| AbiError::invalid(error.to_string()))?;
+        let (objective_value, objective_gradient) = objective
+            .value_and_grad(&parameters)
+            .map_err(|error| AbiError::new(ThoulessStatus::NumericalFailure, error.to_string()))?;
+        unsafe { *value = objective_value };
+        write_f64(
+            objective_gradient.as_slice(),
+            gradient,
+            gradient_capacity,
+            "AD parameter gradient",
+        )
+    })
 }
 
 /// Diagonalize a dense Hermitian matrix.

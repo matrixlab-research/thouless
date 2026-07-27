@@ -11,7 +11,7 @@ acceptance evidence.
 - the installed Python wheel exposes a typed supported API while retaining
   `thouless._core` as a private implementation bridge;
 - `thouless-capi` provides a generated versioned C header and `Thouless.jl`
-  exposes the same 26 workflows;
+  exposes the same 27 workflows;
 - pull-request CI installs produced artifacts, exercises Rust/Python/Julia
   parity, and retains all pinned source-package tests;
 - release CI builds install-tested wheels and platform Julia/C bundles;

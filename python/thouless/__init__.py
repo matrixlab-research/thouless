@@ -1,6 +1,7 @@
 """First-class Python API for Rust-native scientific workflows."""
 
 from . import (
+    ad,
     continuum,
     geometry,
     graph,
@@ -38,6 +39,7 @@ __all__ = [
     "ShapeError",
     "ThoulessError",
     "UnsupportedError",
+    "ad",
     "continuum",
     "geometry",
     "graph",

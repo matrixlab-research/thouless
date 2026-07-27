@@ -10,6 +10,45 @@ function chain_model(; onsite=0.0)
     return build(builder)
 end
 
+@testset "native automatic differentiation" begin
+    base = ComplexF64[-0.8 0.25-0.1im; 0.25+0.1im 0.9]
+    directions = [
+        ComplexF64[1 0; 0 -1],
+        ComplexF64[0 1; 1 0],
+        ComplexF64[0 -im; im 0],
+    ]
+    parameters = [0.1, -0.05, 0.08]
+    direction = [0.2, 0.4, -0.3]
+    target = ComplexF64[1 0; 0 0]
+    result = AD.affine_projector_value_and_grad(
+        base,
+        directions,
+        parameters;
+        occupied=1,
+        target=target,
+        minimum_gap=1.0e-5,
+    )
+    step = 1.0e-6
+    positive = AD.affine_projector_value_and_grad(
+        base,
+        directions,
+        parameters .+ step .* direction;
+        occupied=1,
+        target=target,
+        minimum_gap=1.0e-5,
+    ).value
+    negative = AD.affine_projector_value_and_grad(
+        base,
+        directions,
+        parameters .- step .* direction;
+        occupied=1,
+        target=target,
+        minimum_gap=1.0e-5,
+    ).value
+    @test LA.dot(result.gradient, direction) ≈
+          (positive - negative) / (2step) rtol = 2.0e-6
+end
+
 @testset "model and spectrum" begin
     model = chain_model(onsite=0.25)
     @test state_count(model) == 1

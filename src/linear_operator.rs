@@ -212,6 +212,27 @@ pub trait LinearOperator {
     }
 }
 
+/// A matrix-free linear operator with an explicit conjugate-transpose action.
+///
+/// Reverse-mode scientific rules require the mathematical adjoint of an
+/// operator, not a reversal of the instructions used by [`LinearOperator`].
+/// Keeping the action explicit preserves sparse and matrix-free execution.
+pub trait AdjointLinearOperator: LinearOperator {
+    /// Applies the conjugate transpose, replacing all entries of `output`.
+    fn apply_adjoint_into(
+        &self,
+        input: &[Complex64],
+        output: &mut [Complex64],
+    ) -> Result<(), LinearOperatorError>;
+
+    /// Applies the conjugate transpose and returns an owned result.
+    fn apply_adjoint(&self, input: &[Complex64]) -> Result<Vec<Complex64>, LinearOperatorError> {
+        let mut output = vec![Complex64::new(0.0, 0.0); self.columns()];
+        self.apply_adjoint_into(input, &mut output)?;
+        Ok(output)
+    }
+}
+
 /// Numerical controls for restarted GMRES.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GmresOptions {
@@ -618,6 +639,22 @@ impl LinearOperator for ComplexMatrix {
     }
 }
 
+impl AdjointLinearOperator for ComplexMatrix {
+    fn apply_adjoint_into(
+        &self,
+        input: &[Complex64],
+        output: &mut [Complex64],
+    ) -> Result<(), LinearOperatorError> {
+        validate_vectors(self.columns(), self.rows(), input, output)?;
+        for (column, result) in output.iter_mut().enumerate() {
+            *result = (0..self.rows())
+                .map(|row| self.as_slice()[row * self.columns() + column].conj() * input[row])
+                .sum();
+        }
+        validate_finite_output(output)
+    }
+}
+
 /// An owned canonical compressed-sparse-row complex matrix.
 ///
 /// Column indices in every row are strictly increasing. This makes structural
@@ -887,6 +924,23 @@ impl LinearOperator for CsrMatrix {
             *result = (self.row_offsets[row]..self.row_offsets[row + 1])
                 .map(|entry| self.values[entry] * input[self.column_indices[entry]])
                 .sum();
+        }
+        validate_finite_output(output)
+    }
+}
+
+impl AdjointLinearOperator for CsrMatrix {
+    fn apply_adjoint_into(
+        &self,
+        input: &[Complex64],
+        output: &mut [Complex64],
+    ) -> Result<(), LinearOperatorError> {
+        validate_vectors(self.columns, self.rows, input, output)?;
+        output.fill(Complex64::new(0.0, 0.0));
+        for (row, &input_value) in input.iter().enumerate() {
+            for entry in self.row_offsets[row]..self.row_offsets[row + 1] {
+                output[self.column_indices[entry]] += self.values[entry].conj() * input_value;
+            }
         }
         validate_finite_output(output)
     }

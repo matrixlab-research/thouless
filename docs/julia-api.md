@@ -1,7 +1,7 @@
 # Thouless.jl
 
 `julia/Thouless` is a Julia-native interface to the versioned Thouless C ABI.
-It does not reimplement scientific algorithms in Julia. Model construction,
+It does not reimplement scientific algorithms or derivatives in Julia. Model construction,
 spectra, geometry, topology, Wannier projection, intrinsic response,
 observables, transport, symmetry, random ensembles, graphs, and dense and
 sparse algebra all execute in the Rust core.
@@ -34,6 +34,10 @@ major version before creating a model.
 - Numerical precision and coordinate conventions are identical to the Rust
   and C contracts.
 
-The workflow modules are `Spectrum`, `KPM`, `Geometry`, `Visualization`,
+The workflow modules are `AD`, `Spectrum`, `KPM`, `Geometry`, `Visualization`,
 `Continuum`, `Topology`, `Wannier`, `Response`, `Observables`, `Transport`,
 `Symmetry`, `Random`, `Graph`, and `LinearAlgebra`.
+
+`AD.affine_projector_value_and_grad` calls the Rust-native projector VJP
+through the stable C ABI. See `docs/native-ad.md` for the complex pairing,
+validity conditions, benchmarks, and remaining coverage.

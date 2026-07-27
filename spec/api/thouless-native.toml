@@ -10,6 +10,12 @@ coordinates = "primitive vectors are Cartesian rows; orbital positions and momen
 errors = "Result with non-exhaustive domain errors"
 
 [[workflow]]
+id = "differentiation.affine_projector"
+module = "thouless::ad"
+symbols = ["ModelParameters", "ModelDirection", "ModelGradient", "AffineHermitianFamily", "SpectralProjectorObjective"]
+validation = ["tests/native_ad.rs"]
+
+[[workflow]]
 id = "model.structure"
 module = "thouless::model"
 symbols = ["Lattice", "OrbitalId", "ModelBuilder", "TightBindingModel"]
