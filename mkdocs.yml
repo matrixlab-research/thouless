@@ -42,6 +42,7 @@ nav:
   - Overview: index.md
   - Getting started: getting-started.md
   - Native language design: native-language-api-design.md
+  - 100-workflow native API proposal: domain-100-native-api-design.md
   - Native automatic differentiation: native-ad.md
   - API stability: api-stability.md
   - Language interfaces:

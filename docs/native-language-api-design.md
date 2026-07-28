@@ -6,6 +6,13 @@ This document defines the implemented language-native API contract for
 Thouless. The versioned inventories and coverage matrices are executable
 acceptance evidence.
 
+The additive proposal for composing the complete 100-question domain catalog
+is documented in
+[`domain-100-native-api-design.md`](domain-100-native-api-design.md). Its
+machine-readable mapping is intentionally separate from the stable inventory:
+design coverage does not become implementation or language-surface coverage
+until the corresponding Rust capabilities and validation exist.
+
 - the Rust core implements the public scientific capabilities recorded in
   `spec/coverage/native.toml`, except isolated held-out validation;
 - the installed Python wheel exposes a typed supported API while retaining
