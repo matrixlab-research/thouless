@@ -27,3 +27,11 @@ At minimum, every contribution must:
    interface, public validation, or held-out validation remains open.
 6. Run the relevant checks documented in `README.md` before declaring a change
    ready.
+7. Extend public interfaces from first principles using the smallest
+   user-friendly abstraction that covers the complete scientific requirement
+   and generalizes across real workflows. Do not add one public API per
+   benchmark, test, or example, and do not expose internal AD machinery or
+   solver bookkeeping on the ordinary user path. A concept belongs in the
+   public interface only when it has a clear scientific meaning or is reusable
+   across multiple real workflows; keep advanced controls available without
+   making them prerequisites for common tasks.
