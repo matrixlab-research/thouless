@@ -1,0 +1,217 @@
+schema_version = 1
+status = "proposal"
+question_count = 100
+suite_count = 20
+benchmark_repository = "https://github.com/matrixlab-research/thouless-benchmark"
+benchmark_commit = "62f5e9b9ca7b3810275fa088637f0adae74aca7d"
+design_document = "docs/domain-100-native-api-design.md"
+stable_contract = "spec/api/thouless-native.toml"
+tracking_issue = "https://github.com/matrixlab-research/thouless/issues/17"
+coverage_kind = "composable design coverage, not implementation coverage"
+
+[[concept]]
+id = "model.family"
+status = "partial"
+summary = "Optional typed physical parameterization bound to an immutable model"
+issue = "https://github.com/matrixlab-research/thouless/issues/17"
+
+[[concept]]
+id = "system.views"
+status = "partial"
+summary = "Concrete periodic, finite, open, driven, and self-consistent system types"
+issue = "https://github.com/matrixlab-research/thouless/issues/17"
+
+[[concept]]
+id = "compute.request"
+status = "missing"
+summary = "Typed scientific output request with a system-specific result"
+issue = "https://github.com/matrixlab-research/thouless/issues/17"
+
+[[concept]]
+id = "study.axes"
+status = "missing"
+summary = "Iterator-compatible sweeps, ensembles, and refinement ladders"
+issue = "https://github.com/matrixlab-research/thouless/issues/17"
+
+[[concept]]
+id = "compute.context"
+status = "partial"
+summary = "Optional accuracy, resource, backend, deterministic, and reusable-state policy"
+issue = "https://github.com/matrixlab-research/thouless/issues/17"
+
+[[concept]]
+id = "compute.report"
+status = "partial"
+summary = "Value plus validity, convergence, error, resource, and provenance evidence"
+issue = "https://github.com/matrixlab-research/thouless/issues/17"
+
+[[concept]]
+id = "differentiate.objective"
+status = "partial"
+summary = "Optional physical parameter spaces and scalar objectives for native AD and inference"
+issue = "https://github.com/matrixlab-research/thouless/issues/13"
+
+[[request_family]]
+id = "spectrum"
+module = "thouless::spectrum"
+examples = ["Bands", "TargetedStates", "DensityOfStates", "FermiSurface"]
+
+[[request_family]]
+id = "topology"
+module = "thouless::topology"
+examples = ["BulkInvariant", "WilsonFlow", "LocalMarker", "NonBlochInvariant"]
+
+[[request_family]]
+id = "localization"
+module = "thouless::localization"
+examples = ["Participation", "LevelStatistics", "LocalizationLength", "MobilityEdge"]
+
+[[request_family]]
+id = "observables"
+module = "thouless::observables"
+examples = ["LocalDensity", "LocalCurrent", "Torque", "Correlation"]
+
+[[request_family]]
+id = "response"
+module = "thouless::response"
+examples = ["LinearResponse", "NonlinearResponse", "OpticalResponse", "ThermoelectricResponse"]
+
+[[request_family]]
+id = "transport"
+module = "thouless::transport"
+examples = ["Scattering", "LocalTransport", "Noise", "Embedding"]
+
+[[request_family]]
+id = "dynamics"
+module = "thouless::dynamics"
+examples = ["Evolution", "FloquetSpectrum", "Pumping"]
+
+[[request_family]]
+id = "mean_field"
+module = "thouless::mean_field"
+examples = ["SelfConsistentStates", "CompetingOrders"]
+
+[[request_family]]
+id = "inference"
+module = "thouless::inference"
+examples = ["Fit", "Identifiability", "Design"]
+
+[[coverage]]
+suite = "01-model-construction"
+questions = ["TBQ-001", "TBQ-002", "TBQ-003", "TBQ-004", "TBQ-005"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum"]
+
+[[coverage]]
+suite = "02-bands-dos-fermiology"
+questions = ["TBQ-006", "TBQ-007", "TBQ-008", "TBQ-009", "TBQ-010"]
+concepts = ["system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum"]
+
+[[coverage]]
+suite = "03-magnetic-flux-hofstadter"
+questions = ["TBQ-011", "TBQ-012", "TBQ-013", "TBQ-014", "TBQ-015"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum", "topology", "observables"]
+
+[[coverage]]
+suite = "04-bulk-topology"
+questions = ["TBQ-016", "TBQ-017", "TBQ-018", "TBQ-019", "TBQ-020"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum", "topology"]
+
+[[coverage]]
+suite = "05-boundaries-bulk-boundary"
+questions = ["TBQ-021", "TBQ-022", "TBQ-023", "TBQ-024", "TBQ-025"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum", "topology", "observables", "transport"]
+
+[[coverage]]
+suite = "06-quantum-geometry-response"
+questions = ["TBQ-026", "TBQ-027", "TBQ-028", "TBQ-029", "TBQ-030"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report", "differentiate.objective"]
+requests = ["topology", "response", "transport"]
+
+[[coverage]]
+suite = "07-disorder-localization"
+questions = ["TBQ-031", "TBQ-032", "TBQ-033", "TBQ-034", "TBQ-035"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum", "topology", "localization", "transport"]
+
+[[coverage]]
+suite = "08-open-transport"
+questions = ["TBQ-036", "TBQ-037", "TBQ-038", "TBQ-039", "TBQ-040"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["observables", "transport"]
+
+[[coverage]]
+suite = "09-superconducting-bdg"
+questions = ["TBQ-041", "TBQ-042", "TBQ-043", "TBQ-044", "TBQ-045"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum", "observables", "transport", "dynamics"]
+
+[[coverage]]
+suite = "10-non-hermitian"
+questions = ["TBQ-046", "TBQ-047", "TBQ-048", "TBQ-049", "TBQ-050"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum", "topology", "localization"]
+
+[[coverage]]
+suite = "11-floquet-dynamics"
+questions = ["TBQ-051", "TBQ-052", "TBQ-053", "TBQ-054", "TBQ-055"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum", "observables", "dynamics"]
+
+[[coverage]]
+suite = "12-interactions-self-consistency"
+questions = ["TBQ-056", "TBQ-057", "TBQ-058", "TBQ-059", "TBQ-060"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum", "observables", "mean_field"]
+
+[[coverage]]
+suite = "13-moire-strain-supercells"
+questions = ["TBQ-061", "TBQ-062", "TBQ-063", "TBQ-064", "TBQ-065"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum", "localization", "observables", "response"]
+
+[[coverage]]
+suite = "14-magnetism-spin-orbital"
+questions = ["TBQ-066", "TBQ-067", "TBQ-068", "TBQ-069", "TBQ-070"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["observables", "response", "transport"]
+
+[[coverage]]
+suite = "15-optical-thermoelectric"
+questions = ["TBQ-071", "TBQ-072", "TBQ-073", "TBQ-074", "TBQ-075"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report", "differentiate.objective"]
+requests = ["observables", "response", "transport", "dynamics"]
+
+[[coverage]]
+suite = "16-aperiodic-amorphous-fractal"
+questions = ["TBQ-076", "TBQ-077", "TBQ-078", "TBQ-079", "TBQ-080"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum", "topology", "localization", "observables"]
+
+[[coverage]]
+suite = "17-defects-interfaces"
+questions = ["TBQ-081", "TBQ-082", "TBQ-083", "TBQ-084", "TBQ-085"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum", "observables", "transport"]
+
+[[coverage]]
+suite = "18-multiscale-validation"
+questions = ["TBQ-086", "TBQ-087", "TBQ-088", "TBQ-089", "TBQ-090"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum", "topology", "localization", "observables", "response", "transport"]
+
+[[coverage]]
+suite = "19-scientific-scale-numerics"
+questions = ["TBQ-091", "TBQ-092", "TBQ-093", "TBQ-094", "TBQ-095"]
+concepts = ["system.views", "compute.request", "study.axes", "compute.context", "compute.report"]
+requests = ["spectrum", "localization", "response", "transport", "dynamics"]
+
+[[coverage]]
+suite = "20-inference-inverse-design"
+questions = ["TBQ-096", "TBQ-097", "TBQ-098", "TBQ-099", "TBQ-100"]
+concepts = ["model.family", "system.views", "compute.request", "study.axes", "compute.context", "compute.report", "differentiate.objective"]
+requests = ["spectrum", "topology", "observables", "response", "transport", "inference"]

@@ -9,6 +9,14 @@ systems, and steady-state quantum transport.
 The Rust-native API must be designed from scientific objects, invariants, and
 real workflows. It must not be a renamed copy of a source package.
 
+The complete native design target must be able to compose all 100 domain-first
+scientific questions pinned in
+[`spec/api/thouless-domain-100.toml`](../spec/api/thouless-domain-100.toml).
+This includes native future capability for time-dependent and Floquet
+dynamics, self-consistent lattice mean field, scientific-scale sparse
+numerics, and parameter inference. Design coverage is not implementation
+coverage; every unimplemented concept remains linked to an open issue.
+
 Provide source-level compatibility layers for every in-scope public interface
 of:
 
@@ -30,6 +38,10 @@ the scope:
 Wannier90 may be supported as an interoperability and model-input boundary.
 Other scientific packages may be used as independent references or conformance
 sources without becoming compatibility targets.
+
+The compatibility exclusions above do not exclude Rust-native dynamics,
+self-consistent mean-field, or inference capabilities required by the
+100-question domain catalog.
 
 Treat the work as one complete objective. Implementation order does not create
 separate completion targets. If any required capability, source interface,
@@ -117,6 +129,9 @@ backend boundary requires it.
 
 The accepted cross-language target is defined in
 [`docs/native-language-api-design.md`](../docs/native-language-api-design.md).
+The additive first-principles proposal for composing the 100 domain workflows
+is defined in
+[`docs/domain-100-native-api-design.md`](../docs/domain-100-native-api-design.md).
 Maintain
 [`spec/api/thouless-native-languages.toml`](../spec/api/thouless-native-languages.toml)
 as the executable mapping from every Rust scientific capability to its target

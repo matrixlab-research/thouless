@@ -21,6 +21,7 @@ NATIVE_LANGUAGE_CONTRACT = (
     ROOT / "spec" / "api" / "thouless-native-languages.toml"
 )
 NATIVE_LANGUAGE_DESIGN = ROOT / "docs" / "native-language-api-design.md"
+DOMAIN_API_PROPOSAL = ROOT / "spec" / "api" / "thouless-domain-100.toml"
 AGENT_ENTRYPOINT = ROOT / "AGENTS.md"
 AGENT_INSTRUCTION = ROOT / "instructions" / "scientific-software-reimplementation.md"
 AGENT_INSTRUCTION_REFERENCE = "instructions/scientific-software-reimplementation.md"
@@ -32,6 +33,29 @@ ISSUE_IN_TEXT_PATTERN = re.compile(
 )
 VALID_STATUSES = {"implemented", "partial", "missing", "blocked"}
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+TBQ_PATTERN = re.compile(r"^TBQ-([0-9]{3})$")
+EXPECTED_DOMAIN_SUITES = (
+    "01-model-construction",
+    "02-bands-dos-fermiology",
+    "03-magnetic-flux-hofstadter",
+    "04-bulk-topology",
+    "05-boundaries-bulk-boundary",
+    "06-quantum-geometry-response",
+    "07-disorder-localization",
+    "08-open-transport",
+    "09-superconducting-bdg",
+    "10-non-hermitian",
+    "11-floquet-dynamics",
+    "12-interactions-self-consistency",
+    "13-moire-strain-supercells",
+    "14-magnetism-spin-orbital",
+    "15-optical-thermoelectric",
+    "16-aperiodic-amorphous-fractal",
+    "17-defects-interfaces",
+    "18-multiscale-validation",
+    "19-scientific-scale-numerics",
+    "20-inference-inverse-design",
+)
 
 
 def fail(message: str) -> None:
@@ -209,9 +233,110 @@ def check_native_language_contract() -> None:
         )
 
 
+def check_domain_api_proposal() -> None:
+    if not DOMAIN_API_PROPOSAL.is_file():
+        fail(f"{DOMAIN_API_PROPOSAL.relative_to(ROOT)} is missing")
+    with DOMAIN_API_PROPOSAL.open("rb") as source:
+        proposal = tomllib.load(source)
+
+    if proposal.get("schema_version") != 1:
+        fail("domain API proposal has an unsupported schema")
+    if proposal.get("status") != "proposal":
+        fail("domain API design must remain a proposal until implemented")
+    if proposal.get("question_count") != 100:
+        fail("domain API proposal must declare 100 questions")
+    if proposal.get("suite_count") != 20:
+        fail("domain API proposal must declare 20 suites")
+    if not COMMIT_PATTERN.match(proposal.get("benchmark_commit", "")):
+        fail("domain API proposal does not pin the benchmark commit")
+    if not ISSUE_PATTERN.match(proposal.get("tracking_issue", "")):
+        fail("domain API proposal has no valid tracking issue")
+    for field in ("design_document", "stable_contract"):
+        reference = proposal.get(field, "")
+        if not reference or not (ROOT / reference).is_file():
+            fail(f"domain API proposal references missing {field}")
+
+    concepts = proposal.get("concept", [])
+    concept_ids = [row.get("id") for row in concepts]
+    if not concept_ids or len(concept_ids) != len(set(concept_ids)):
+        fail("domain API proposal has missing or duplicate concepts")
+    for row in concepts:
+        if row.get("status") not in {"implemented", "partial", "missing"}:
+            fail(f"domain API concept {row.get('id')} has invalid status")
+        if row.get("status") != "implemented":
+            issue = row.get("issue", "")
+            if not ISSUE_PATTERN.match(issue):
+                fail(f"domain API concept {row.get('id')} has no gap issue")
+        if not row.get("summary"):
+            fail(f"domain API concept {row.get('id')} has no summary")
+
+    request_families = proposal.get("request_family", [])
+    request_ids = [row.get("id") for row in request_families]
+    if not request_ids or len(request_ids) != len(set(request_ids)):
+        fail("domain API proposal has missing or duplicate request families")
+    for row in request_families:
+        if not row.get("module") or not row.get("examples"):
+            fail(f"request family {row.get('id')} is under-specified")
+
+    coverage = proposal.get("coverage", [])
+    suites = [row.get("suite") for row in coverage]
+    if len(coverage) != 20 or len(suites) != len(set(suites)):
+        fail("domain API proposal must contain 20 unique suite rows")
+    if tuple(suites) != EXPECTED_DOMAIN_SUITES:
+        fail("domain API proposal does not preserve the pinned suite catalog")
+
+    seen_questions: list[str] = []
+    known_concepts = set(concept_ids)
+    known_requests = set(request_ids)
+    for suite_index, row in enumerate(coverage):
+        questions = row.get("questions", [])
+        if len(questions) != 5:
+            fail(f"suite {row.get('suite')} must map exactly five questions")
+        first = suite_index * 5 + 1
+        expected_questions = {
+            f"TBQ-{number:03d}" for number in range(first, first + 5)
+        }
+        if set(questions) != expected_questions:
+            fail(
+                f"suite {row.get('suite')} does not map its pinned questions"
+            )
+        seen_questions.extend(questions)
+        if not row.get("concepts") or not row.get("requests"):
+            fail(f"suite {row.get('suite')} has an empty API composition")
+        unknown_concepts = set(row["concepts"]) - known_concepts
+        unknown_requests = set(row["requests"]) - known_requests
+        if unknown_concepts:
+            fail(
+                f"suite {row.get('suite')} references unknown concepts "
+                f"{sorted(unknown_concepts)}"
+            )
+        if unknown_requests:
+            fail(
+                f"suite {row.get('suite')} references unknown requests "
+                f"{sorted(unknown_requests)}"
+            )
+
+    if len(seen_questions) != len(set(seen_questions)):
+        fail("domain API proposal contains duplicate TBQ identifiers")
+    actual_numbers: set[int] = set()
+    for question in seen_questions:
+        match = TBQ_PATTERN.match(question)
+        if match is None:
+            fail(f"invalid domain question identifier {question!r}")
+        actual_numbers.add(int(match.group(1)))
+    expected_numbers = set(range(1, 101))
+    if actual_numbers != expected_numbers:
+        fail(
+            "domain API proposal is not a complete TBQ-001..TBQ-100 mapping: "
+            f"missing={sorted(expected_numbers - actual_numbers)}, "
+            f"extra={sorted(actual_numbers - expected_numbers)}"
+        )
+
+
 def main() -> None:
     check_agent_instructions()
     check_native_language_contract()
+    check_domain_api_proposal()
     matrices = sorted(COVERAGE.glob("*.toml"))
     if not matrices:
         fail("no coverage matrices found")
@@ -232,6 +357,7 @@ def main() -> None:
 
     print(
         "validated agent instructions, native language design, "
+        "100-question domain API proposal, "
         f"{len(matrices)} coverage matrices, {len(manifests)} upstream "
         f"manifests, and {len(tests)} test modules"
     )

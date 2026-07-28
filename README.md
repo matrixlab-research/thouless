@@ -69,6 +69,9 @@ The compatibility adapters convert values, preserve source-language state, and
 translate errors. They do not contain independent scientific algorithms or
 recognize test fixtures. The architectural contract is documented in
 [`docs/native-language-api-design.md`](docs/native-language-api-design.md);
+the minimal additive API proposal covering all 100 domain-first scientific
+questions is documented in
+[`docs/domain-100-native-api-design.md`](docs/domain-100-native-api-design.md);
 native AD semantics and current boundaries are documented in
 [`docs/native-ad.md`](docs/native-ad.md).
 
