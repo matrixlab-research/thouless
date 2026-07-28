@@ -57,6 +57,7 @@ jobs:
           python tools/check_contracts.py
           python tools/check_native_api.py --base-ref origin/main
           python tools/check_capi_julia.py
+          python tools/check_python_docs.py
           python tools/generate_c_header.py --check
 
   rust-core:

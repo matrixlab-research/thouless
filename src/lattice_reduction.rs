@@ -29,16 +29,32 @@ impl ReducedBasis {
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum LatticeReductionError {
+    /// No basis vector was supplied.
     EmptyBasis,
+    /// Basis vectors have unequal or zero dimensions.
     RaggedBasis,
+    /// The basis contains more vectors than ambient dimensions.
     TooManyBasisVectors,
+    /// Basis vectors are linearly dependent.
     DependentBasis,
+    /// The reduction parameter is outside the convergent range.
     InvalidReductionParameter,
-    InvalidTargetDimension { expected: usize, actual: usize },
+    /// A closest-vector target has the wrong ambient dimension.
+    InvalidTargetDimension {
+        /// Required number of Cartesian components.
+        expected: usize,
+        /// Supplied number of Cartesian components.
+        actual: usize,
+    },
+    /// A nearest-neighbor query requested zero neighbors.
     InvalidNeighborCount,
+    /// A tolerance is negative, NaN, or infinite.
     InvalidTolerance,
+    /// Exhaustive lattice enumeration is not supported at this dimension.
     DimensionTooLarge,
+    /// A basis or target component is NaN or infinite.
     NonFiniteValue,
+    /// The reduction iterations did not reach a stable reduced basis.
     UnstableReduction,
 }
 

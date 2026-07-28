@@ -579,25 +579,72 @@ pub fn contains_translation_subgroup(
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum LatticeGeometryError {
+    /// No primitive vector was supplied.
     EmptyPrimitiveVectors,
+    /// No basis offset was supplied.
     EmptyBasis,
+    /// Primitive vectors have unequal or zero Cartesian dimensions.
     RaggedPrimitiveVectors,
+    /// The lattice has more primitive vectors than Cartesian dimensions.
     TooManyPrimitiveVectors,
+    /// Primitive vectors are linearly dependent.
     DependentPrimitiveVectors,
-    InvalidBasisDimension { expected: usize },
+    /// A basis offset has the wrong Cartesian dimension.
+    InvalidBasisDimension {
+        /// Required number of Cartesian components.
+        expected: usize,
+    },
+    /// An input coordinate is NaN or infinite.
     NonFiniteValue,
-    BasisSiteOutOfBounds { site: usize, site_count: usize },
-    InvalidTagDimension { expected: usize, actual: usize },
-    InvalidGroupElementDimension { expected: usize, actual: usize },
-    InvalidPeriodDimension { expected: usize },
-    InvalidOtherVectorDimension { expected: usize },
+    /// A basis-site index lies outside the unit-cell basis.
+    BasisSiteOutOfBounds {
+        /// Requested zero-based basis-site index.
+        site: usize,
+        /// Number of basis sites.
+        site_count: usize,
+    },
+    /// A lattice tag has the wrong number of integer components.
+    InvalidTagDimension {
+        /// Required number of components.
+        expected: usize,
+        /// Supplied number of components.
+        actual: usize,
+    },
+    /// A translation-group element has the wrong dimension.
+    InvalidGroupElementDimension {
+        /// Required number of components.
+        expected: usize,
+        /// Supplied number of components.
+        actual: usize,
+    },
+    /// A period vector has the wrong lattice dimension.
+    InvalidPeriodDimension {
+        /// Required number of lattice components.
+        expected: usize,
+    },
+    /// An auxiliary integer vector has the wrong lattice dimension.
+    InvalidOtherVectorDimension {
+        /// Required number of lattice components.
+        expected: usize,
+    },
+    /// The fundamental-domain determinant is non-positive or not representable.
     InvalidDeterminant,
+    /// No generator was supplied for a requested translation group.
     EmptyTranslationGroup,
+    /// Translation generators are linearly dependent.
     DependentTranslations,
-    IncommensuratePeriod { period: usize },
+    /// A period is not an integer combination of the translation generators.
+    IncommensuratePeriod {
+        /// Zero-based index of the incommensurate period.
+        period: usize,
+    },
+    /// A numerical tolerance is negative, NaN, or infinite.
     InvalidTolerance,
+    /// A derived lattice dimension cannot be represented by `usize`.
     DimensionOverflow,
+    /// Exact integer-domain arithmetic overflowed.
     IntegerOverflow,
+    /// Basis reduction failed for the embedded lattice.
     LatticeReduction(LatticeReductionError),
 }
 

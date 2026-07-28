@@ -1,0 +1,4 @@
+furo==2025.7.19
+mkdocs-material==9.6.16
+sphinx==8.2.3
+sphinx-autodoc-typehints==3.2.0

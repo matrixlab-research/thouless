@@ -6,6 +6,11 @@ spectra, geometry, topology, Wannier projection, intrinsic response,
 observables, transport, symmetry, random ensembles, graphs, and dense and
 sparse algebra all execute in the Rust core.
 
+The complete exported surface is generated with Documenter.jl in the
+[Julia API reference](https://matrixlab-research.github.io/thouless/julia/).
+Documentation is checked with
+`checkdocs=:exports`, so an undocumented exported binding fails CI.
+
 ## Loading the native artifact
 
 A release bundle installs the platform library under
@@ -39,5 +44,6 @@ The workflow modules are `AD`, `Spectrum`, `KPM`, `Geometry`, `Visualization`,
 `Symmetry`, `Random`, `Graph`, and `LinearAlgebra`.
 
 `AD.affine_projector_value_and_grad` calls the Rust-native projector VJP
-through the stable C ABI. See `docs/native-ad.md` for the complex pairing,
+through the stable C ABI. See
+[Native automatic differentiation](native-ad.md) for the complex pairing,
 validity conditions, benchmarks, and remaining coverage.

@@ -1,0 +1,53 @@
+site_name: Thouless
+site_description: Rust-native tight-binding, topology, and quantum transport
+site_url: https://matrixlab-research.github.io/thouless/
+repo_url: https://github.com/matrixlab-research/thouless
+repo_name: matrixlab-research/thouless
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Use dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Use light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+
+nav:
+  - Overview: index.md
+  - Getting started: getting-started.md
+  - Native language design: native-language-api-design.md
+  - Native automatic differentiation: native-ad.md
+  - API stability: api-stability.md
+  - Language interfaces:
+      - Rust: rust-api.md
+      - Python: python-api.md
+      - Julia: julia-api.md
+      - C ABI: c-api.md
+
+strict: true

@@ -8,6 +8,7 @@
 //! status are tracked in the repository coverage matrices and issues.
 
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 pub mod ad;
 pub mod bands;

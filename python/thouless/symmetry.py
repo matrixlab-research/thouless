@@ -18,6 +18,20 @@ def _optional_matrix(value: npt.ArrayLike | None, name: str) -> object:
 
 @dataclass(frozen=True)
 class DiscreteSymmetry:
+    """Validated conservation, time-reversal, particle-hole, and chiral data.
+
+    Args:
+        projectors: Optional complete orthogonal projectors for conserved
+            sectors.
+        time_reversal: Unitary part of an antiunitary time-reversal operation.
+        particle_hole: Unitary part of an antiunitary particle-hole operation.
+        chiral: Unitary chiral-symmetry operator.
+
+    The constructor normalizes matrices in Rust and rejects inconsistent
+    dimensions, non-unitary operators, invalid antiunitary squares, or
+    incompatible combinations.
+    """
+
     projectors: tuple[np.ndarray, ...] | None = None
     time_reversal: np.ndarray | None = None
     particle_hole: np.ndarray | None = None
@@ -76,6 +90,12 @@ class DiscreteSymmetry:
         )
 
     def validate(self, matrix: npt.ArrayLike) -> tuple[str, ...]:
+        """Return labels of declared symmetries violated by ``matrix``.
+
+        A square matrix is treated as an onsite operator. A left-aligned
+        rectangular matrix is treated as a hopping block between compatible
+        symmetry sectors.
+        """
         return tuple(
             call(
                 _core.discrete_symmetry_validate,
@@ -98,6 +118,19 @@ def particle_hole_basis(
     wave_functions: npt.ArrayLike,
     particle_hole: npt.ArrayLike,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Construct a canonical basis for a particle-hole-closed subspace.
+
+    Args:
+        wave_functions: Column wave functions spanning the subspace.
+        particle_hole: Unitary part of the antiunitary particle-hole operator.
+
+    Returns:
+        Canonicalized column vectors and their deterministic source ordering.
+
+    Raises:
+        ThoulessError: If the subspace is not closed, has odd dimension, or a
+            stable canonical basis cannot be constructed.
+    """
     vectors, ordering = call(
         _core.particle_hole_basis,
         complex_matrix(wave_functions, name="wave_functions").tolist(),

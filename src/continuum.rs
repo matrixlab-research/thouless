@@ -15,7 +15,12 @@ pub enum DifferentialFactor {
     /// An opaque coefficient whose symbolic value is owned by the frontend.
     Coefficient(usize),
     /// A nonnegative power of `-i d/dx_axis`.
-    Momentum { axis: usize, power: usize },
+    Momentum {
+        /// Zero-based coordinate axis on which the operator acts.
+        axis: usize,
+        /// Nonnegative exponent of the momentum operator.
+        power: usize,
+    },
 }
 
 /// An exact shift measured in units of a discretization spacing.
@@ -101,7 +106,12 @@ pub enum ContinuumError {
     /// No coordinate axes were supplied.
     EmptyDimension,
     /// A momentum factor addresses an axis outside the supplied dimension.
-    InvalidAxis { axis: usize, dimension: usize },
+    InvalidAxis {
+        /// Requested zero-based axis.
+        axis: usize,
+        /// Number of available coordinate axes.
+        dimension: usize,
+    },
     /// A magnetic field value was NaN or infinite.
     NonFiniteField,
     /// A requested power or shift exceeded the integer representation.

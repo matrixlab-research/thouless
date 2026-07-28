@@ -15,9 +15,13 @@ const VALIDATION_TOLERANCE: f64 = 1.0e-8;
 /// A declared conservation law or discrete symmetry violated by an operator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SymmetryViolation {
+    /// The matrix mixes declared conservation-law sectors.
     ConservationLaw,
+    /// The matrix violates the declared antiunitary time-reversal operation.
     TimeReversal,
+    /// The matrix violates the declared antiunitary particle-hole operation.
     ParticleHole,
+    /// The matrix violates the declared unitary chiral operation.
     Chiral,
 }
 
@@ -38,18 +42,40 @@ impl SymmetryViolation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SymmetryError {
+    /// A conservation-law declaration supplied no sector projectors.
     EmptyProjectors,
+    /// Particle-hole basis construction received no wave functions.
     EmptyWaveFunctionBasis,
+    /// Symmetry operators, projectors, or wave functions use different dimensions.
     InconsistentDimensions,
+    /// Conservation-law projectors do not resolve the identity.
     ProjectorsNotComplete,
+    /// The product of time-reversal, particle-hole, and chiral operators is not identity.
     ProductNotIdentity,
-    OperatorNotUnitary { name: &'static str },
-    InvalidOperatorSquare { name: &'static str },
-    NonCanonicalProjectors { name: &'static str },
+    /// A declared symmetry operator is not unitary within tolerance.
+    OperatorNotUnitary {
+        /// Human-readable name of the rejected operator.
+        name: &'static str,
+    },
+    /// An antiunitary operator does not have an allowed square.
+    InvalidOperatorSquare {
+        /// Human-readable name of the rejected operator.
+        name: &'static str,
+    },
+    /// A symmetry operator maps one projector sector to multiple sectors.
+    NonCanonicalProjectors {
+        /// Human-readable name of the rejected operator.
+        name: &'static str,
+    },
+    /// Particle-hole conjugation does not close the supplied wave-function subspace.
     WaveFunctionBasisNotClosed,
+    /// A particle-hole-invariant subspace has odd dimension.
     OddParticleHoleSubspace,
+    /// Numerical construction of a canonical particle-hole basis failed.
     BasisConstructionFailed,
+    /// A rectangular validation matrix has more columns than rows.
     ValidationMatrixTooWide,
+    /// Construction of an internal dense matrix failed.
     MatrixConstruction(String),
 }
 
@@ -442,21 +468,25 @@ impl DiscreteSymmetry {
         })
     }
 
+    /// Return the conservation-law projectors, if they were declared.
     #[must_use]
     pub fn projectors(&self) -> Option<&[ComplexMatrix]> {
         self.projectors.as_deref()
     }
 
+    /// Return the unitary part of the antiunitary time-reversal operation.
     #[must_use]
     pub fn time_reversal(&self) -> Option<&ComplexMatrix> {
         self.time_reversal.as_ref()
     }
 
+    /// Return the unitary part of the antiunitary particle-hole operation.
     #[must_use]
     pub fn particle_hole(&self) -> Option<&ComplexMatrix> {
         self.particle_hole.as_ref()
     }
 
+    /// Return the unitary chiral-symmetry operator, if declared.
     #[must_use]
     pub fn chiral(&self) -> Option<&ComplexMatrix> {
         self.chiral.as_ref()

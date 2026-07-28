@@ -13,7 +13,7 @@ from ._binding import call, complex_matrix
 
 @dataclass(frozen=True)
 class Eigensystem:
-    """Ascending eigenvalues and column eigenvectors."""
+    """Ascending Hermitian eigenvalues and normalized column eigenvectors."""
 
     eigenvalues: np.ndarray
     eigenvectors: np.ndarray
@@ -21,7 +21,14 @@ class Eigensystem:
 
 @dataclass(frozen=True)
 class BandEvaluation:
-    """Lead-band energies and requested derivatives."""
+    """Lead-band energies and requested derivatives.
+
+    Attributes:
+        energies: Ascending band energies.
+        first_derivatives: Analytic group velocities, if requested.
+        second_derivatives: Analytic band curvatures, if requested.
+        eigenvectors: Normalized column eigenvectors, if requested.
+    """
 
     energies: np.ndarray
     first_derivatives: np.ndarray | None
@@ -30,7 +37,13 @@ class BandEvaluation:
 
 
 class PeriodicBands:
-    """One principal-cell Hamiltonian and neighboring-cell hopping."""
+    """One principal-cell Hamiltonian and neighboring-cell hopping.
+
+    Args:
+        cell_hamiltonian: Square Hermitian principal-cell matrix.
+        inter_cell_hopping: Hopping from the principal cell to its positive
+            neighbor, with the same square shape.
+    """
 
     def __init__(
         self,
@@ -51,6 +64,17 @@ class PeriodicBands:
         derivative_order: int = 0,
         eigenvectors: bool = False,
     ) -> BandEvaluation:
+        """Evaluate the one-dimensional Bloch bands and analytic derivatives.
+
+        Args:
+            momentum: Reduced one-dimensional momentum.
+            derivative_order: Highest requested derivative, from zero to two.
+            eigenvectors: Include normalized column eigenvectors when true.
+
+        Returns:
+            Energies and the requested first derivatives, second derivatives,
+            and eigenvectors. Unrequested arrays are ``None``.
+        """
         energies, first, second, vectors = call(
             _core.lead_band_evaluation,
             self._cell.tolist(),
@@ -68,7 +92,11 @@ class PeriodicBands:
 
 
 def hermitian_eigensystem(matrix: npt.ArrayLike) -> Eigensystem:
-    """Diagonalize a dense Hermitian matrix."""
+    """Diagonalize a dense Hermitian matrix.
+
+    Returns ascending real eigenvalues and normalized complex eigenvectors
+    stored as columns.
+    """
     value = complex_matrix(matrix, name="matrix")
     energies, vectors = call(_core.matrix_eigensystem, value.tolist())
     return Eigensystem(

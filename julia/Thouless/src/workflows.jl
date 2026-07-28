@@ -899,80 +899,190 @@ function _sparse_solve(rows, columns, row_offsets, column_indices, values, right
     return output
 end
 
+"""
+Dense Hermitian eigensystems and analytic one-dimensional lead bands.
+"""
 module Spectrum
 import ..Thouless
+"""
+    hermitian_eigensystem(matrix)
+
+Diagonalize a dense Hermitian matrix and return ascending `values` and column
+`vectors`.
+"""
 hermitian_eigensystem(args...; kwargs...) = Thouless._hermitian_eigensystem(args...; kwargs...)
+"""
+    lead_bands(cell, hopping, momentum; derivative_order=0)
+
+Evaluate lead-band energies and analytic derivatives through second order.
+"""
 lead_bands(args...; kwargs...) = Thouless._lead_bands(args...; kwargs...)
 export hermitian_eigensystem, lead_bands
 end
 
+"""
+Rust-native first-order differentiation workflows without finite differences.
+"""
 module AD
 using ..Thouless: _ad_affine_projector_value_and_grad
 export affine_projector_value_and_grad
+"""
+    affine_projector_value_and_grad(base, directions, parameters;
+                                    occupied, target, minimum_gap=1e-8)
+
+Evaluate a gauge-invariant occupied-projector loss and its physical gradient
+for the affine Hamiltonian `base + Σᵢ parameters[i] * directions[i]`.
+"""
 affine_projector_value_and_grad(args...; kwargs...) =
     _ad_affine_projector_value_and_grad(args...; kwargs...)
 end
 
+"""
+Kernel-polynomial rescaling primitives.
+"""
 module KPM
 import ..Thouless
+"""
+    rescale(hamiltonian; strict_margin=0.05, bounds=nothing)
+
+Map a dense Hermitian Hamiltonian strictly inside the Chebyshev interval and
+return `(matrix, half_width, center)`.
+"""
 rescale(args...; kwargs...) = Thouless._kpm_rescale(args...; kwargs...)
 export rescale
 end
 
+"""
+Finite-model transformations, reciprocal paths, and lattice reduction.
+"""
 module Geometry
 import ..Thouless
+"""Extract complete source cells into an open finite model."""
 finite_cluster(args...; kwargs...) = Thouless._finite_cluster(args...; kwargs...)
+"""Extract arbitrary `(cell, orbital)` sites into an open finite model."""
 finite_geometry(args...; kwargs...) = Thouless._finite_geometry(args...; kwargs...)
+"""Return a new model without the selected one-based orbitals."""
 remove_orbitals(args...; kwargs...) = Thouless._remove_orbitals(args...; kwargs...)
+"""Evaluate the complex Bloch phase for an integer translation."""
 bloch_phase(args...; kwargs...) = Thouless._bloch_phase(args...; kwargs...)
+"""
+    reciprocal_path(lattice, nodes, sample_count)
+
+Sample reduced reciprocal path points and cumulative Cartesian distances.
+"""
 reciprocal_path(args...; kwargs...) = Thouless._reciprocal_path(args...; kwargs...)
+"""Reduce a row-vector lattice basis and return its exact integer transform."""
 lll_reduce(args...; kwargs...) = Thouless._lll_reduce(args...; kwargs...)
 export finite_cluster, finite_geometry, remove_orbitals, bloch_phase, reciprocal_path, lll_reduce
 end
 
+"""
+Regular-grid fields derived from local densities and bond currents.
+"""
 module Visualization
 import ..Thouless
+"""
+    interpolate_density(points, values, reference_starts, reference_ends;
+                        absolute_width, samples_per_width=9)
+
+Smooth site-local scalar values onto a regular Cartesian grid.
+"""
 interpolate_density(args...; kwargs...) = Thouless._interpolate_density(args...; kwargs...)
 export interpolate_density
 end
 
+"""
+Coordinate-independent finite-difference primitives.
+"""
 module Continuum
 import ..Thouless
+"""
+    momentum_stencil(dimension, factors)
+
+Discretize an ordered product of momentum powers into exact stencil offsets,
+spacing powers, and complex weights.
+"""
 momentum_stencil(args...; kwargs...) = Thouless._momentum_stencil(args...; kwargs...)
 export momentum_stencil
 end
 
+"""
+Gauge-covariant topological and quantum-geometric observables.
+"""
 module Topology
 import ..Thouless
+"""Return the determinant Wilson-loop phase of a closed frame sequence."""
 wilson_phase(args...; kwargs...) = Thouless._wilson_phase(args...; kwargs...)
+"""
+    chern_numbers(model, samples, plane, occupied_states)
+
+Integrate first-Chern values on uniform momentum-grid planes. Axes and bands
+use one-based Julia indices.
+"""
 chern_numbers(args...; kwargs...) = Thouless._chern_numbers(args...; kwargs...)
+"""Evaluate the occupied-subspace Kubo quantum geometric tensor."""
 quantum_geometric_tensor(args...; kwargs...) =
     Thouless._quantum_geometric_tensor(args...; kwargs...)
+"""Evaluate a real-space local Chern marker for a finite Hamiltonian."""
 local_chern_marker(args...; kwargs...) = Thouless._local_chern_marker(args...; kwargs...)
 export wilson_phase, chern_numbers, quantum_geometric_tensor, local_chern_marker
 end
 
+"""
+Trial projection and Wannier-frame construction.
+"""
 module Wannier
 import ..Thouless
+"""
+    project_trials(frames, trials; singular_tolerance=1e-10)
+
+Project localized trial orbitals into sampled Bloch subspaces and
+Löwdin-orthonormalize each projected frame.
+"""
 project_trials(args...; kwargs...) = Thouless._project_trials(args...; kwargs...)
 export project_trials
 end
 
+"""
+Intrinsic Berry-curvature response.
+"""
 module Response
 import ..Thouless
+"""
+    intrinsic_curvature(model, momentum; chemical_potential, temperature,
+                        cartesian=false, degeneracy_tolerance=1e-10)
+
+Return the occupation-weighted intrinsic curvature tensor at one momentum.
+"""
 intrinsic_curvature(args...; kwargs...) = Thouless._intrinsic_curvature(args...; kwargs...)
 export intrinsic_curvature
 end
 
+"""
+Local-operator projections and observables.
+"""
 module Observables
 import ..Thouless
+"""
+    project_diagonal(states, diagonal)
+
+Project a diagonal observable into the column basis `states`.
+"""
 project_diagonal(args...; kwargs...) = Thouless._project_diagonal(args...; kwargs...)
 export project_diagonal
 end
 
+"""
+Steady-state coherent transport and periodic lead modes.
+"""
 module Transport
 import ..Thouless
 
+"""
+    Lead(cell_hamiltonian, inter_cell_hopping, coupling)
+
+One semi-infinite periodic lead and its coupling into a finite device.
+"""
 struct Lead
     cell_hamiltonian::Matrix{ComplexF64}
     inter_cell_hopping::Matrix{ComplexF64}
@@ -985,36 +1095,71 @@ struct Lead
     )
 end
 
+"""
+    transmissions(device_hamiltonian, leads, energy; broadening=nothing)
+
+Solve the retarded open system and return the lead-to-lead transmission matrix.
+"""
 transmissions(args...; kwargs...) = Thouless._transmissions(args...; kwargs...)
+"""Solve current-normalized propagating and stabilized modes of a periodic lead."""
 propagating_modes(args...; kwargs...) = Thouless._lead_modes(args...; kwargs...)
+"""Compute the retarded surface self energy of a periodic lead."""
 lead_self_energy(args...; kwargs...) = Thouless._lead_self_energy(args...; kwargs...)
 export Lead, transmissions, propagating_modes, lead_self_energy
 end
 
+"""
+Discrete unitary and antiunitary symmetry operations.
+"""
 module Symmetry
 import ..Thouless
+"""Return whether a Hamiltonian anticommutes with a chiral operator."""
 validate_chiral(args...; kwargs...) = Thouless._validate_chiral(args...; kwargs...)
+"""
+    particle_hole_basis(wave_functions, particle_hole)
+
+Construct a canonical basis for a particle-hole-closed wave-function subspace.
+"""
 particle_hole_basis(args...; kwargs...) = Thouless._particle_hole_basis(args...; kwargs...)
 export validate_chiral, particle_hole_basis
 end
 
+"""
+Altland-Zirnbauer random matrices and deterministic random-access variates.
+"""
 module Random
 import ..Thouless
+"""Project supplied normal components onto a Gaussian symmetry ensemble."""
 gaussian_matrix(args...; kwargs...) = Thouless._gaussian_matrix(args...; kwargs...)
+"""Map arbitrary input and salt deterministically to a uniform in `[0, 1)`."""
 uniform(input, salt) = Thouless._digest(:thouless_digest_uniform, input, salt)
+"""Map arbitrary input and salt deterministically to a standard-normal variate."""
 gaussian(input, salt) = Thouless._digest(:thouless_digest_gaussian, input, salt)
 export gaussian_matrix, uniform, gaussian
 end
 
+"""
+Compressed directed-graph construction.
+"""
 module Graph
 import ..Thouless
+"""
+    compress(node_count, edges; reverse_index=false, edge_number_map=false)
+
+Build immutable compressed adjacency arrays from one-based directed edges.
+"""
 compress(args...; kwargs...) = Thouless._compress_graph(args...; kwargs...)
 export compress
 end
 
+"""
+Dense Schur decompositions and sparse direct solves.
+"""
 module LinearAlgebra
 import ..Thouless
+"""Compute the complex Schur decomposition of a dense square matrix."""
 schur(args...; kwargs...) = Thouless._dense_schur(args...; kwargs...)
+"""Solve a complex CSR sparse system against one or more dense right sides."""
 sparse_solve(args...; kwargs...) = Thouless._sparse_solve(args...; kwargs...)
 export schur, sparse_solve
 end
