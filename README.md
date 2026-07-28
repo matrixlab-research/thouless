@@ -1,144 +1,89 @@
 # Thouless
 
-**Rust-native tight-binding, topology, and steady-state quantum transport.**
+[![CI](https://github.com/matrixlab-research/thouless/actions/workflows/ci.yml/badge.svg)](https://github.com/matrixlab-research/thouless/actions/workflows/ci.yml)
+[![Documentation](https://github.com/matrixlab-research/thouless/actions/workflows/docs.yml/badge.svg)](https://matrixlab-research.github.io/thouless/)
+[![Release](https://github.com/matrixlab-research/thouless/actions/workflows/release.yml/badge.svg)](https://github.com/matrixlab-research/thouless/releases)
+[![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-dea584.svg?logo=rust)](https://www.rust-lang.org/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![Julia 1.10+](https://img.shields.io/badge/julia-1.10%2B-9558B2.svg?logo=julia&logoColor=white)](https://julialang.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE-MIT)
 
-Thouless is intended to provide one scientific model across periodic bulk
-calculations, finite boundaries, and open-system transport. The native Rust API
-is designed from the physical objects and invariants. Separate Python
-compatibility layers will reproduce the in-scope PythTB 2.0 and Kwant 1.5
-interfaces while calling the same Rust core.
+Rust-native tight-binding, topology, and steady-state quantum transport, with
+first-class Rust, Python, and Julia interfaces.
 
-## Current status
+Thouless uses one scientific implementation across periodic bulk calculations,
+finite boundaries, and open systems. The API is organized around physical
+objects and reusable numerical capabilities. Python and Julia call the same
+Rust kernels, while optional compatibility layers reproduce the pinned
+PythTB 2.0 and Kwant 1.5 interfaces.
 
-**Rust scientific implementation, first-class Rust/Python/Julia APIs, stable C
-ABI, and source compatibility complete; isolated held-out validation pending.**
+[Documentation](https://matrixlab-research.github.io/thouless/) ·
+[Rust API](https://matrixlab-research.github.io/thouless/rust/thouless/) ·
+[Python API](https://matrixlab-research.github.io/thouless/python/) ·
+[Julia API](https://matrixlab-research.github.io/thouless/julia/) ·
+[Issues](https://github.com/matrixlab-research/thouless/issues)
 
-The repository currently exposes the same Rust scientific core through a
-versioned Rust contract, an installable typed Python API, a versioned C ABI,
-and `Thouless.jl`. It implements reusable model construction, dense
-Hermitian assembly, eigensolvers, momentum derivatives, discrete Wilson phases,
-Berry fluxes and uniform-grid Chern numbers, metric-aware reciprocal paths and
-uniform meshes with explicit quadrature measures, parallel transport,
-hybrid Wannier centers, reduced polarization, mesh-converged time-reversal
-`Z2` classification, block-sparse local densities, bond currents, onsite
-sources, local-observable projection, and structure-preserving model
-transformations in Rust. Arbitrary finite site selections provide open
-boundaries, incomplete cells, vacancies, and onsite disorder while preserving
-source-site provenance. Kernel-polynomial spectra and Kubo-Bastin responses use
-canonical CSR operators, matrix-free Lanczos rescaling, Chebyshev recurrences,
-sparse observation operators, and sparsity-preserving velocity commutators;
-scientific-scale paths never construct a dense Hamiltonian. It also provides
-discrete-symmetry validation and all ten Altland--Zirnbauer Gaussian and
-circular random-matrix ensembles through the native core, together with LLL
-lattice reduction, closest-vector search, Voronoi neighbors, gauge-covariant
-Wannier projection, sampled-frame overlaps, multidimensional FFTs, spread
-decomposition, and periodic matrix interpolation, including a native
-multidimensional maximal-localization optimizer and fixed-rank SMV
-disentanglement with frozen subspaces. The native response core additionally
-evaluates band-resolved Kubo Berry curvature, gauge-invariant
-occupation-weighted Hall geometry across internally degenerate subspaces, and
-finite-temperature Berry-curvature dipoles from explicit Hamiltonian
-derivatives and quadrature weights. Real silicon fixtures exercise an
-eight-orbital, 93-shell Wannier90 Hamiltonian, a 4x4x4 material-scale
-localization workflow, and the official 72-point, eight-band Quantum ESPRESSO
-7.6 `bands.x` output. The Python extension and compatibility layers pass all 98
-pinned PythTB 2.0 tests and all 398 pinned Kwant 1.5 tests without changing
-their tolerances. Executable API
-manifests cover the public modules, exports, and core object members of both
-source packages, including Wannier, visualization, low-level system, solver,
-linear-algebra, and local-operator entry points. Kwant density, current, and
-source evaluation now resolves the continuity equation in the shared Rust
-core; Python performs only site, callback, and array mapping. Complete
-steady-state compatibility entry points likewise delegate embedded-self-energy
-solves, Green functions, Caroli and Fisher-Lee transport, scattering states,
-channel inference, and LDOS to Rust. Device Hamiltonians and contact-local
-self-energies are assembled as canonical CSR operators and solved using
-Rust-native zero-fill incomplete-LU right preconditioning with restarted GMRES;
-100000-dimensional native and 20000-dimensional compatibility contracts reject
-dense device materialization, while the pinned quantum Hall workflow verifies
-quantized transport. Real and complex ordinary and generalized Schur paths
-preserve source dtypes, real quasi-triangular blocks, conjugate-pair order, and
-invariant-subspace reordering. The optional Kwant sparse-direct interface now
-uses Rust-native fill-reducing symbolic analysis, reusable complex sparse LU,
-multiple-right-hand-side solves, and ordered principal Schur complements;
-compatibility statistics expose portable storage counts without claiming
-MUMPS-internal measurements. The remaining validation gap is the
-evaluator-owned, isolated held-out project.
+## What is implemented
 
-Rust-native first-order automatic differentiation is now available for affine
-physical Hamiltonian parameters, linear solves, isolated eigenvalues,
-separated occupied projectors, quantum-metric meshes, implicit surface Green
-functions, complete device-and-lead transmission objectives, matrix-free
-sparse GMRES, and checkpointed sparse KPM objectives. Python, Julia, and C
-expose the same Rust projector VJP.
-Correctness, operation-count, checkpoint-memory, and measured speedup gates
-run in CI. The complete semantics, benchmark results, and explicitly
-incomplete boundaries are documented in
-[`docs/native-ad.md`](docs/native-ad.md) and
-[`spec/coverage/native-ad.toml`](spec/coverage/native-ad.toml).
+- immutable tight-binding models, Bloch Hamiltonians, eigensystems, analytic
+  momentum derivatives, supercells, arbitrary finite geometries, and vacancies;
+- reciprocal paths and meshes, Wilson loops, first and second Chern invariants,
+  quantum geometry, local Chern markers, and intrinsic Berry response;
+- local densities, bond currents, source terms, KPM spectra and response,
+  Wannier projection, localization, and interpolation;
+- periodic lead modes, surface self energies, Green functions, transmissions,
+  scattering states, LDOS, and shot noise;
+- dense Schur and generalized Schur decompositions, sparse direct solves,
+  lattice reduction, compressed graphs, discrete symmetries, and all ten
+  Altland-Zirnbauer random-matrix classes;
+- Rust-native first-order automatic differentiation for affine Hamiltonians,
+  isolated eigensystems, occupied projectors, linear solves, surface Green
+  functions, transport objectives, sparse GMRES, and checkpointed KPM.
 
-A green pull-request CI run means:
+The Rust, Python, and Julia surfaces map the same 27 stable scientific workflows
+in
+[`spec/api/thouless-native-languages.toml`](spec/api/thouless-native-languages.toml).
+The compatibility build passes all 98 pinned PythTB 2.0 tests and all 398
+pinned Kwant 1.5 tests without relaxing their tolerances.
 
-- the Rust contract, formatting, lint, tests, and documentation pass on all
-  supported operating systems;
-- built Python wheels install into clean environments and all 27 public
-  workflow rows pass without repository `PYTHONPATH`;
-- the generated C header links against the built library and `Thouless.jl`
-  runs against that exact artifact on Julia LTS and current releases;
-- generated SSH, Chern, vacancy, transport, Wilson, and error cases agree
-  through Rust, Python, and Julia;
-- all native-language and compatibility coverage matrices are internally
-  consistent;
-- the PythTB and Kwant public API inventories remain importable;
-- compatibility tests cannot accidentally run against the original packages;
-- all pinned PythTB and Kwant source tests execute through the compatibility
-  layers;
-- every intentionally skipped compatibility suite links to an open issue.
+**Project status:** the native implementation, three first-class language
+interfaces, stable C ABI, and pinned source-compatibility suites are implemented.
+Evaluator-owned isolated held-out validation remains pending in
+[issue #6](https://github.com/matrixlab-research/thouless/issues/6). Public CI
+therefore establishes executable public evidence, not independent completion
+of the held-out gate.
 
-It does **not** mean that independent held-out validation has passed.
-
-## Agent instructions
-
-All coding agents must begin with [`AGENTS.md`](AGENTS.md), which points to the
-complete repository instruction:
-[`instructions/scientific-software-reimplementation.md`](instructions/scientific-software-reimplementation.md).
-
-The instruction defines the first-principles Rust API rule, complete
-PythTB/Kwant compatibility objective, GitHub issue audit trail, source-test
-policy, anti-overfitting requirements, held-out boundary, and status semantics.
-CI verifies that this instruction remains present and reachable from
-`AGENTS.md`.
-
-## Architecture
+## Design
 
 ```text
-PythTB caller/test -> thin Python compatibility layer ----+
-                                                          |
-Kwant caller/test  -> thin Python compatibility layer ----+
-                                                          |
-Python caller      -> typed first-class Python API --------+-> Rust core
-                                                          |
-Julia caller       -> Thouless.jl -> versioned C ABI ------+
-                                                          |
-Rust caller        -> versioned native Rust API -----------+
+Rust application ------------------------------+
+                                                |
+Python application -> typed PyO3 interface -----+-> Rust scientific core
+                                                |
+Julia application -> versioned C ABI -----------+
+                                                |
+PythTB/Kwant code -> compatibility adapters ----+
 ```
 
-The compatibility layers may convert data, map state, and translate errors.
-They must not contain separate scientific algorithms.
+The compatibility adapters convert values, preserve source-language state, and
+translate errors. They do not contain independent scientific algorithms or
+recognize test fixtures. The architectural contract is documented in
+[`docs/native-language-api-design.md`](docs/native-language-api-design.md);
+native AD semantics and current boundaries are documented in
+[`docs/native-ad.md`](docs/native-ad.md).
 
-The first-class Rust, Python, and Julia interfaces are specified in
-[`docs/native-language-api-design.md`](docs/native-language-api-design.md).
-PyO3 is the private Python boundary and the stable C ABI is the Julia boundary;
-all three language surfaces cover the same 27 scientific workflows. The
-machine-readable namespace mapping is
-[`spec/api/thouless-native-languages.toml`](spec/api/thouless-native-languages.toml).
-The implementation audit trail is retained in issues
-[#7](https://github.com/matrixlab-research/thouless/issues/7),
-[#8](https://github.com/matrixlab-research/thouless/issues/8),
-[#9](https://github.com/matrixlab-research/thouless/issues/9), and
-[#10](https://github.com/matrixlab-research/thouless/issues/10).
+## Quick start
 
-The first native module is:
+Thouless currently builds from source. The minimum supported versions are Rust
+1.85, Python 3.12, and Julia 1.10. The LAPACK-backed build also needs a Fortran
+linker.
+
+### Rust
+
+```toml
+[dependencies]
+thouless = { git = "https://github.com/matrixlab-research/thouless" }
+```
 
 ```rust
 use thouless::model::{Lattice, ModelBuilder};
@@ -148,68 +93,143 @@ let lattice = Lattice::new(vec![vec![1.0]], vec![0])?;
 let mut builder = ModelBuilder::new(lattice);
 let orbital = builder.add_orbital("s", [0.0])?;
 builder.set_onsite(orbital, 0.25)?;
-builder.add_hopping(orbital, orbital, [1], Complex64::new(-1.0, 0.0))?;
+builder.add_hopping(
+    orbital,
+    orbital,
+    [1],
+    Complex64::new(-1.0, 0.0),
+)?;
 let model = builder.build()?;
-# Ok::<(), thouless::ModelError>(())
+let spectrum = model.eigensystem(&[0.25])?;
+
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-## Executable contracts
+### Python
 
-- `tests/` contains direct tests of the Rust-native API.
-- `compat-tests/` contains clean-room smoke contracts for source-compatible
-  entry points.
-- `spec/coverage/` maps scientific capabilities and source interfaces to tests,
-  implementation status, and GitHub issues.
-- `spec/api/` contains executable public API inventories for the pinned source
-  versions.
-- Exact upstream source and test baselines are pinned in `spec/upstream/`.
-  Completed PythTB compatibility work retains its audit trail in
-  [issue #4](https://github.com/matrixlab-research/thouless/issues/4);
-  completed Kwant backend work retains its audit trail in
-  [issue #5](https://github.com/matrixlab-research/thouless/issues/5).
-- Isolated held-out validation is tracked in
-  [issue #6](https://github.com/matrixlab-research/thouless/issues/6).
+```bash
+python -m pip install maturin==1.14.1
+maturin build --release --out dist
+python -m pip install dist/thouless-*.whl
+```
 
-Source tests are executable compatibility evidence, not the definition of the
-native architecture. No implementation may recognize known tests or return
-stored fixture results.
+```python
+import thouless
 
-## Local checks
+lattice = thouless.Lattice([[1.0]], [0])
+builder = thouless.ModelBuilder(lattice)
+orbital = builder.add_orbital("s", [0.0])
+builder.set_onsite(orbital, 0.25)
+builder.add_hopping(orbital, orbital, [1], -1.0)
+model = builder.build()
+energies = model.eigensystem([0.25]).eigenvalues
+```
 
-```console
+### Julia
+
+```bash
+cargo build --release -p thouless-capi
+python tools/install_julia_library.py --profile release
+julia --project=julia/Thouless
+```
+
+```julia
+using Thouless
+
+lattice = Lattice(reshape([1.0], 1, 1), [1])
+builder = ModelBuilder(lattice)
+orbital = add_orbital!(builder, "s", [0.0])
+set_onsite!(builder, orbital, 0.25)
+add_hopping!(builder, orbital, orbital, [1], -1.0)
+model = build(builder)
+energies = eigensystem(model, [0.25]).values
+```
+
+See the [getting-started guide](docs/getting-started.md) and generated
+language references for complete signatures, shapes, indexing conventions, and
+failure modes.
+
+## Documentation
+
+Documentation is generated from the public code contracts:
+
+- Rust uses rustdoc with missing public documentation denied by the crate;
+- Python uses Sphinx autodoc and an AST gate over every local `__all__` symbol
+  and public method;
+- Julia uses Documenter.jl with `checkdocs=:exports`.
+
+Build the combined portal after installing `docs/requirements.txt`, the Python
+wheel, the Julia native library, and the Julia docs environment:
+
+```bash
+python tools/check_python_docs.py
+julia --project=julia/Thouless/docs -e 'using Pkg; Pkg.instantiate()'
+python tools/build_docs.py
+```
+
+The result is written to `target/site`; CI publishes the same tree to GitHub
+Pages.
+
+## Verification
+
+The repository keeps four distinct kinds of evidence:
+
+- `tests/` directly exercises the Rust-native API;
+- `python-tests/` and `julia/Thouless/test/` exercise installed language
+  packages and cross-language semantic conformance;
+- `compat-tests/` and pinned upstream suites exercise source-compatible PythTB
+  and Kwant entry points;
+- `spec/coverage/` and `spec/api/` connect capabilities and public interfaces
+  to tests, implementation state, and issues.
+
+Run the core local checks with:
+
+```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
-cargo run --release --quiet --example native_ad_benchmark
+cargo doc --workspace --all-features --no-deps
 python tools/check_contracts.py
 python tools/check_native_api.py
 python tools/check_capi_julia.py
+python tools/check_python_docs.py
 maturin build --release --out dist
 python tools/test_built_wheel.py
 cargo build --release -p thouless-capi
 python tools/run_c_smoke.py --profile release
 python tools/install_julia_library.py --profile release
-julia --project=julia/Thouless -e 'using Pkg; Pkg.test()'
+julia --startup-file=no --project=julia/Thouless -e 'using Pkg; Pkg.test()'
 ```
 
-The strict runners execute all 398 collected Kwant tests and all 98 collected
-PythTB tests through the repository-built extension. The API checker separately
-validates the pinned public surfaces, so a green source-test run cannot hide a
-missing untested export. Real Wannier90, Quantum ESPRESSO, and material-scale
-Wannier validation augment the source suites; completed PythTB and Kwant work
-retains its audit trail in issues #4 and #5. A skip without a linked issue is a
-CI error.
+CI additionally verifies cross-language analytic invariants, realistic
+scientific fixtures, scale guards against dense materialization, AD
+correctness/performance contracts, and the complete pinned source suites. Any
+intentional source-test skip must link to an open issue.
 
-## Source baselines
+## Compatibility and provenance
 
-- [PythTB 2.0.0](https://pythtb.readthedocs.io/en/stable/)
-- [Kwant 1.5.0](https://kwant-project.org/doc/latest/)
+The source baselines are
+[PythTB 2.0.0](https://pythtb.readthedocs.io/en/stable/) and
+[Kwant 1.5.0](https://kwant-project.org/doc/latest/). No source implementation
+or upstream test has been copied into this repository. Vendored reference
+fixtures retain exact provenance and their original licenses.
 
-No source implementation or source test has been copied into this repository.
-Vendored upstream reference fixtures retain exact provenance and their original
-licenses.
+Completed compatibility work remains auditable in
+[issue #4](https://github.com/matrixlab-research/thouless/issues/4) and
+[issue #5](https://github.com/matrixlab-research/thouless/issues/5). Native
+language and AD design decisions are recorded in
+[issues #7–#10](https://github.com/matrixlab-research/thouless/issues/7) and
+[issue #14](https://github.com/matrixlab-research/thouless/issues/14).
+
+## Contributing
+
+Coding agents and human contributors should begin with
+[`AGENTS.md`](AGENTS.md). It points to the repository's complete
+first-principles reimplementation instruction, compatibility evidence policy,
+anti-overfitting constraints, issue audit trail, and status semantics.
 
 ## License
 
-Thouless is licensed under MIT. Upstream tests and fixtures, if added later,
-retain their own licenses.
+Thouless is licensed under the [MIT License](LICENSE-MIT). Upstream fixtures
+retain their own licenses as listed in
+[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).

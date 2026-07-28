@@ -14,15 +14,25 @@ use crate::{Complex64, ComplexMatrix};
 /// One of the ten Altland--Zirnbauer symmetry classes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SymmetryClass {
+    /// Unitary class A: no time-reversal, particle-hole, or chiral symmetry.
     A,
+    /// Orthogonal class AI with time-reversal square `+1`.
     Ai,
+    /// Symplectic class AII with time-reversal square `-1`.
     Aii,
+    /// Chiral unitary class AIII.
     Aiii,
+    /// Chiral orthogonal class BDI.
     Bdi,
+    /// Chiral symplectic class CII.
     Cii,
+    /// Superconducting class D with particle-hole square `+1`.
     D,
+    /// Time-reversal-invariant superconducting class DIII.
     Diii,
+    /// Superconducting class C with particle-hole square `-1`.
     C,
+    /// Time-reversal-invariant superconducting class CI.
     Ci,
 }
 
@@ -73,8 +83,11 @@ pub enum RandomMatrixError {
     MultipleOfFourRequired,
     /// A standard-normal component array has the wrong length.
     InvalidComponentCount {
+        /// Name of the rejected component array.
         name: &'static str,
+        /// Required number of scalar components.
         expected: usize,
+        /// Supplied number of scalar components.
         actual: usize,
     },
     /// A component is NaN or infinite.

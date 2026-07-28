@@ -3,6 +3,13 @@ const ABI_VERSION_MINOR = UInt32(1)
 const STATUS_SUCCESS = Cint(0)
 const STATUS_BUFFER_TOO_SMALL = Cint(8)
 
+"""
+    ThoulessError(status, message)
+
+An error reported by the versioned Thouless C ABI. `status` is the stable
+numeric status code and `message` is the native diagnostic copied at the call
+boundary.
+"""
 struct ThoulessError <: Exception
     status::Int32
     message::String
@@ -96,6 +103,12 @@ function _library()
     )
 end
 
+"""
+    abi_version() -> NamedTuple
+
+Return the loaded native library ABI as `(major, minor)`. A mismatched major
+version raises `ArgumentError` before any scientific operation is attempted.
+"""
 function abi_version()
     version = ccall((:thouless_abi_version, _library()), UInt32, ())
     major = version >> 16

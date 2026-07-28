@@ -28,6 +28,22 @@ def affine_projector_value_and_grad(
     The Hamiltonian family is ``H(theta) = base + sum_i theta[i] *
     directions[i]``.  ``target`` is the Hermitian projector defining the
     desired occupied subspace.
+
+    Args:
+        base: Parameter-independent square Hermitian Hamiltonian.
+        directions: Stack of Hermitian parameter-direction matrices.
+        parameters: Real parameter vector multiplying ``directions``.
+        occupied: Number of lowest eigenstates in the differentiated subspace.
+        target: Hermitian target projector with the same shape as ``base``.
+        minimum_gap: Smallest allowed occupied-unoccupied energy separation.
+
+    Returns:
+        Projector loss and its real reverse-mode gradient with respect to every
+        parameter.
+
+    Raises:
+        ThoulessError: If shapes are inconsistent, matrices are non-Hermitian,
+            or the occupied spectral gap is not differentiable.
     """
 
     base_array = complex_matrix(base, name="base")
@@ -56,7 +72,16 @@ def affine_projector_jvp(
     target: npt.ArrayLike,
     minimum_gap: float = 1.0e-8,
 ) -> tuple[float, float]:
-    """Return the projector loss and one analytic directional derivative."""
+    """Return the projector loss and one analytic directional derivative.
+
+    The primal Hamiltonian and validity conditions are identical to
+    :func:`affine_projector_value_and_grad`. ``direction`` is a real tangent in
+    parameter space.
+
+    Returns:
+        ``(value, directional_derivative)`` computed by the native analytic
+        JVP, without finite differences.
+    """
 
     base_array = complex_matrix(base, name="base")
     direction_array = complex_grid(directions, name="directions")

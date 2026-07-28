@@ -13,7 +13,12 @@ from .model import Model
 
 
 class BandResponse:
-    """Rust-owned band response at one momentum."""
+    """Rust-owned band response at one momentum.
+
+    Arrays expose band energies, occupations, optional Fermi-surface weights,
+    group velocities, and band-resolved Berry-curvature tensors computed from
+    one shared eigensystem.
+    """
 
     def __init__(self, native: object) -> None:
         if not isinstance(native, _core.NativeBandResponse):
@@ -22,23 +27,28 @@ class BandResponse:
 
     @property
     def energies(self) -> np.ndarray:
+        """Ascending band energies."""
         return np.asarray(self._native.energies, dtype=np.float64)
 
     @property
     def occupations(self) -> np.ndarray:
+        """Fermi occupations at the requested chemical potential and temperature."""
         return np.asarray(self._native.occupations, dtype=np.float64)
 
     @property
     def negative_occupation_derivatives(self) -> np.ndarray | None:
+        """Values of ``-df/dE``, or ``None`` at exact zero temperature."""
         values = self._native.negative_occupation_derivatives
         return None if values is None else np.asarray(values, dtype=np.float64)
 
     @property
     def group_velocities(self) -> np.ndarray:
+        """Band-energy derivatives indexed by band and momentum direction."""
         return np.asarray(self._native.group_velocities, dtype=np.float64)
 
     @property
     def berry_curvatures(self) -> np.ndarray:
+        """Band-resolved antisymmetric Berry-curvature tensors."""
         return np.asarray(self._native.berry_curvatures, dtype=np.float64)
 
 
@@ -51,6 +61,20 @@ def band_response(
     cartesian: bool = False,
     degeneracy_tolerance: float = 1.0e-10,
 ) -> BandResponse:
+    """Evaluate band energies, occupations, velocities, and Berry curvatures.
+
+    Args:
+        model: Periodic tight-binding model.
+        momentum: Reduced reciprocal coordinate.
+        chemical_potential: Fermi level.
+        temperature: Nonnegative thermal energy ``k_B T``.
+        cartesian: Return derivatives in Cartesian reciprocal coordinates.
+        degeneracy_tolerance: Energy threshold used to group degenerate bands
+            in the gauge-covariant response.
+
+    Returns:
+        Rust-owned response arrays for one momentum.
+    """
     return BandResponse(
         call(
             model._native.band_response,
@@ -72,6 +96,11 @@ def intrinsic_curvature(
     cartesian: bool = False,
     degeneracy_tolerance: float = 1.0e-10,
 ) -> np.ndarray:
+    """Sum occupation-weighted Berry curvature at one momentum.
+
+    Returns an antisymmetric tensor over momentum directions. Degenerate
+    subspaces are treated covariantly before band occupations are applied.
+    """
     return np.asarray(
         call(
             model._native.intrinsic_curvature,
@@ -95,6 +124,20 @@ def integrated_intrinsic_curvature(
     cartesian: bool = False,
     degeneracy_tolerance: float = 1.0e-10,
 ) -> np.ndarray:
+    """Average intrinsic Berry curvature on a uniform reciprocal grid.
+
+    Args:
+        model: Periodic model.
+        shape: Sample count on every periodic axis.
+        fractional_offsets: Fractional grid offset on every axis.
+        chemical_potential: Fermi level.
+        temperature: Nonnegative thermal energy ``k_B T``.
+        cartesian: Express the tensor in Cartesian reciprocal coordinates.
+        degeneracy_tolerance: Degenerate-subspace energy threshold.
+
+    Returns:
+        Brillouin-zone mean of the occupation-weighted curvature tensor.
+    """
     return np.asarray(
         call(
             model._native.integrated_intrinsic_curvature,
@@ -116,7 +159,12 @@ def berry_curvature_dipole(
     curvature_first: int,
     curvature_second: int,
 ) -> float:
-    """Integrate the Fermi-surface dipole in the shared Rust core."""
+    """Integrate one Berry-curvature-dipole component.
+
+    The integrand is ``(-df/dE) v_a Ω_bc`` using the selected derivative
+    direction ``a`` and curvature plane ``(b, c)``. ``weights`` supplies one
+    quadrature measure per momentum sample.
+    """
     sample_weights = real_vector(weights, name="weights")
     if len(samples) != sample_weights.size:
         raise ValueError("samples and weights must have the same length")
@@ -138,7 +186,11 @@ def occupation_weighted_curvature(
     first: int,
     second: int,
 ) -> float:
-    """Integrate an occupation-weighted curvature component in Rust."""
+    """Integrate one occupation-weighted Berry-curvature component.
+
+    ``first`` and ``second`` select zero-based tensor directions and
+    ``weights`` supplies one quadrature measure per :class:`BandResponse`.
+    """
     sample_weights = real_vector(weights, name="weights")
     if len(samples) != sample_weights.size:
         raise ValueError("samples and weights must have the same length")

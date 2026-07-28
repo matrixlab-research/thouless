@@ -3,6 +3,12 @@
 The `thouless` wheel exposes the Rust scientific model directly. `_core` is an
 implementation module and is not part of the supported user surface.
 
+The complete signatures, parameter descriptions, shapes, return values, and
+exceptions are generated from the installed wheel in the
+[Python API reference](https://matrixlab-research.github.io/thouless/python/).
+The documentation build fails if a locally
+defined `__all__` symbol or one of its public methods lacks a docstring.
+
 ```python
 import numpy as np
 import thouless
@@ -42,6 +48,6 @@ entry point.
 
 Public exceptions derive from `ThoulessError`. Invalid scientific inputs and
 array shapes remain distinguishable from numerical solve failures. The Python
-API follows the numerical and coordinate rules in `docs/api-stability.md`.
+API follows the numerical and coordinate rules in [API stability](api-stability.md).
 Native derivative semantics and current coverage are documented in
-`docs/native-ad.md`.
+[Native automatic differentiation](native-ad.md).

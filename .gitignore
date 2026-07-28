@@ -4,7 +4,10 @@
 /.compat-venv/
 /.parity-venv/
 /dist/
+/docs/python/generated/
 /julia/Thouless/deps/usr/lib/
+/julia/Thouless/docs/build/
+/julia/Thouless/docs/Manifest.toml
 /julia/Thouless/Manifest.toml
 /.pytest_cache/
 /**/__pycache__/

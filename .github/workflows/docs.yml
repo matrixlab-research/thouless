@@ -1,0 +1,80 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Rust, Python, and Julia references
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.10"
+      - uses: julia-actions/cache@v2
+      - name: Install native and documentation build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran
+          python -m pip install maturin==1.14.1 -r docs/requirements.txt
+      - name: Build and install the Python package
+        run: |
+          maturin build --release --out dist
+          python -m pip install dist/thouless-*.whl
+      - name: Build and install the Julia native library
+        run: |
+          cargo build --release -p thouless-capi
+          python tools/install_julia_library.py --profile release
+          julia --startup-file=no --project=julia/Thouless/docs -e 'using Pkg; Pkg.instantiate()'
+      - name: Enforce public documentation coverage
+        run: python tools/check_python_docs.py
+      - name: Build the combined documentation site
+        run: python tools/build_docs.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: thouless-documentation
+          path: target/site
+          if-no-files-found: error
+      - name: Configure GitHub Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          path: target/site
+
+  deploy:
+    name: Publish GitHub Pages
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy documentation
+        id: deployment
+        uses: actions/deploy-pages@v4

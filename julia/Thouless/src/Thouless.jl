@@ -1,3 +1,13 @@
+"""
+    Thouless
+
+Julia-native model construction and scientific workflows backed by the
+Rust-owned Thouless implementation.
+
+Orbital and lattice-axis indices are one-based at this boundary. Domain
+operations are grouped into exported modules such as [`Topology`](@ref),
+[`Transport`](@ref), and [`AD`](@ref).
+"""
 module Thouless
 
 include("_abi.jl")

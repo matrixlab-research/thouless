@@ -1,3 +1,10 @@
+"""
+    Lattice(primitive_vectors, periodic_axes)
+
+Define a Cartesian primitive-vector frame and the axes treated as periodic.
+Primitive vectors are stored as Cartesian matrix rows;
+`periodic_axes` uses one-based row indices.
+"""
 struct Lattice
     primitive_vectors::Matrix{Float64}
     periodic_axes::Vector{Int}
@@ -11,11 +18,24 @@ struct Lattice
     end
 end
 
+"""
+    ModelBuilder(lattice)
+
+Mutable, single-use builder for a Rust-owned tight-binding model. Add orbitals,
+onsite blocks, and hoppings, then call [`build`](@ref) exactly once.
+"""
 mutable struct ModelBuilder
     pointer::Ptr{Cvoid}
     consumed::Bool
 end
 
+"""
+    Model
+
+Immutable Rust-owned tight-binding model. Models are created by [`build`](@ref)
+or geometry transformations and release their native allocation through a
+Julia finalizer.
+"""
 mutable struct Model
     pointer::Ptr{Cvoid}
 end
@@ -77,6 +97,13 @@ function _live(model::Model)
     return model.pointer
 end
 
+"""
+    add_orbital!(builder, label, reduced_position; degrees_of_freedom=1)
+
+Add an orbital block to the primitive cell and return its one-based orbital
+index. `reduced_position` is expressed in the lattice primitive-vector frame
+and `degrees_of_freedom` must be positive.
+"""
 function add_orbital!(
     builder::ModelBuilder,
     label::AbstractString,
@@ -102,6 +129,13 @@ function add_orbital!(
     return Int(output[]) + 1
 end
 
+"""
+    set_onsite!(builder, orbital, energy_or_block)
+
+Set the onsite term of a one-based orbital. A scalar energy multiplies the
+identity in its internal space; a matrix must match the orbital's declared
+degrees of freedom. Returns `builder`.
+"""
 function set_onsite!(builder::ModelBuilder, orbital::Integer, energy::Real)
     status = ccall(
         (:thouless_model_builder_set_onsite, _library()),
@@ -129,6 +163,14 @@ function set_onsite!(builder::ModelBuilder, orbital::Integer, block::AbstractMat
     return builder
 end
 
+"""
+    add_hopping!(builder, target, source, cell_offset, amplitude)
+
+Add a source-to-target hopping and its Hermitian-conjugate counterpart.
+`target` and `source` are one-based orbital indices, `cell_offset` follows
+periodic-axis order, and `amplitude` may be a scalar or a
+`target_dof × source_dof` matrix. Returns `builder`.
+"""
 function add_hopping!(
     builder::ModelBuilder,
     target::Integer,
@@ -176,6 +218,12 @@ function add_hopping!(
     return builder
 end
 
+"""
+    build(builder) -> Model
+
+Consume a `ModelBuilder` and return an immutable Rust-owned model. Reusing a
+consumed builder raises `ArgumentError`.
+"""
 function build(builder::ModelBuilder)
     output = Ref{Ptr{Cvoid}}(C_NULL)
     status = ccall(
@@ -192,6 +240,11 @@ function build(builder::ModelBuilder)
     return model
 end
 
+"""
+    state_count(model) -> Int
+
+Return the Hilbert-space dimension of one model cell.
+"""
 function state_count(model::Model)
     output = Ref{Csize_t}()
     status = ccall(
@@ -205,6 +258,13 @@ function state_count(model::Model)
     return Int(output[])
 end
 
+"""
+    hamiltonian(model, momentum=Float64[]) -> Matrix{ComplexF64}
+
+Evaluate the Bloch Hamiltonian at a reduced reciprocal coordinate. Finite
+models accept the default empty momentum; periodic models require one
+component per periodic axis.
+"""
 function hamiltonian(model::Model, momentum=Float64[])
     point = Float64.(collect(momentum))
     count = state_count(model)
@@ -222,6 +282,12 @@ function hamiltonian(model::Model, momentum=Float64[])
     return output
 end
 
+"""
+    eigensystem(model, momentum=Float64[]) -> NamedTuple
+
+Diagonalize the Hermitian Bloch Hamiltonian. Returns ascending `values` and
+normalized column `vectors`.
+"""
 function eigensystem(model::Model, momentum=Float64[])
     point = Float64.(collect(momentum))
     count = state_count(model)

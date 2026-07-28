@@ -21,16 +21,23 @@ pub struct DirectedEdge {
 }
 
 impl DirectedEdge {
+    /// Construct an edge from `tail` to `head`.
+    ///
+    /// A negative endpoint denotes a dangling external node and is accepted
+    /// only by a builder created with
+    /// [`DirectedGraphBuilder::allowing_dangling_nodes`].
     #[must_use]
     pub const fn new(tail: NodeId, head: NodeId) -> Self {
         Self { tail, head }
     }
 
+    /// Return the source-node identifier.
     #[must_use]
     pub const fn tail(self) -> NodeId {
         self.tail
     }
 
+    /// Return the destination-node identifier.
     #[must_use]
     pub const fn head(self) -> NodeId {
         self.head
@@ -51,12 +58,24 @@ pub struct CompressionOptions {
 /// Errors raised by graph construction and queries.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GraphError {
+    /// A negative endpoint was added to a builder that forbids dangling nodes.
     NegativeNodesDisabled,
+    /// Both endpoints of one edge were negative.
     DoublyDanglingEdge,
-    NodeCountCannotDecrease { current: usize, requested: usize },
+    /// An explicit node-count update attempted to remove existing nodes.
+    NodeCountCannotDecrease {
+        /// Node count before the rejected update.
+        current: usize,
+        /// Requested smaller node count.
+        requested: usize,
+    },
+    /// Compression would discard a dangling-tail edge without permission.
     ReverseIndexRequiredForDanglingTail,
+    /// A query referenced a node outside the compressed graph.
     NodeDoesNotExist(NodeId),
+    /// A query referenced an absent directed edge.
     EdgeDoesNotExist,
+    /// A query needs an index that was not retained during compression.
     FeatureDisabled(&'static str),
 }
 
@@ -125,11 +144,13 @@ impl DirectedGraphBuilder {
         }
     }
 
+    /// Return whether negative identifiers are accepted as dangling endpoints.
     #[must_use]
     pub const fn allows_dangling_nodes(&self) -> bool {
         self.allow_dangling_nodes
     }
 
+    /// Return the number of non-dangling nodes, including isolated nodes.
     #[must_use]
     pub const fn node_count(&self) -> usize {
         self.node_count
@@ -147,16 +168,19 @@ impl DirectedGraphBuilder {
         Ok(())
     }
 
+    /// Return the number of edges currently held by the mutable builder.
     #[must_use]
     pub fn edge_count(&self) -> usize {
         self.edges.len()
     }
 
+    /// Return edges in their insertion order.
     #[must_use]
     pub fn edges(&self) -> &[DirectedEdge] {
         &self.edges
     }
 
+    /// Reserve storage for at least `additional` further edges.
     pub fn reserve_edges(&mut self, additional: usize) {
         self.edges.reserve(additional);
     }
@@ -341,21 +365,28 @@ pub struct CompressedGraph {
 }
 
 impl CompressedGraph {
+    /// Return whether incoming adjacency was retained during compression.
     #[must_use]
     pub const fn has_reverse_index(&self) -> bool {
         self.reverse_index
     }
 
+    /// Return whether insertion-order edge numbers can be mapped to compressed IDs.
     #[must_use]
     pub const fn has_edge_number_map(&self) -> bool {
         self.edge_number_map
     }
 
+    /// Return the number of non-dangling nodes, including isolated nodes.
     #[must_use]
     pub const fn node_count(&self) -> usize {
         self.node_count
     }
 
+    /// Return the number of edges retained in compressed storage.
+    ///
+    /// This can be smaller than the builder edge count when dangling-tail
+    /// edges were explicitly allowed to be discarded.
     #[must_use]
     pub const fn edge_count(&self) -> usize {
         self.compressed_edge_count
@@ -373,6 +404,7 @@ impl CompressedGraph {
         self.incoming_edge_count
     }
 
+    /// Return whether any retained edge has one dangling endpoint.
     #[must_use]
     pub const fn has_dangling_edges(&self) -> bool {
         self.compressed_edge_count != self.outgoing_edge_count
